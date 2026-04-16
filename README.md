@@ -1,19 +1,19 @@
-# chisel
+# axon
 
 A minimal terminal coding agent. Connects to any OpenAI-compatible LLM and gives it tools to read, list, and edit files in your codebase.
 
 ## Install
 
 ```sh
-go install github.com/atakang7/chisel@latest
+go install github.com/atakang7/axon@latest
 ```
 
 Or build from source:
 
 ```sh
-git clone https://github.com/atakang7/chisel
-cd chisel
-go build -o chisel .
+git clone https://github.com/atakang7/axon
+cd axon
+go build -o axon .
 ```
 
 ## Setup
@@ -42,10 +42,10 @@ Create `~/.config/agent/providers.json`:
 
 ```sh
 # use default provider (ollama)
-chisel
+axon
 
 # select a provider
-LLM_PROVIDER=openai chisel
+LLM_PROVIDER=openai axon
 ```
 
 ### Commands
@@ -58,6 +58,6 @@ LLM_PROVIDER=openai chisel
 
 ## How it works
 
-Each session persists to `~/.local/share/agent/session.json` — full message history and edit snapshots for undo. Resume any previous session by just running `chisel` again.
+Each session persists to `~/.local/share/agent/session.json` — full message history and edit snapshots for undo. Resume any previous session by just running `axon` again.
 
 The agent has three tools: `list_files`, `read_file`, `edit_file`. It uses them autonomously to explore and modify your codebase based on your instructions.
