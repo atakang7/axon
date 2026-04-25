@@ -1,0 +1,14 @@
+{
+  "base_url": "https://openrouter.ai/api",
+  "cwd": "/tmp/TestLiveAgentReadRoundTripWithTraceArtifacts1886564028/001",
+  "extra": {
+    "final_content": "|",
+    "first_tool_calls": 1
+  },
+  "model": "deepseek/deepseek-v3.2",
+  "prompt": "Use the read tool exactly once on hello.txt. After you receive the tool result, answer with exactly:\nFILE_OK:integration-ok\nDo not call search, exec, write, park, forget, refresh, or recall.",
+  "provider": "openrouter",
+  "session": "/tmp/TestLiveAgentReadRoundTripWithTraceArtifacts1886564028/001/session.json",
+  "test_name": "TestLiveAgentReadRoundTripWithTraceArtifacts",
+  "written_at": "2026-04-25T22:46:00+03:00"
+}

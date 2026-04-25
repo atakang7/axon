@@ -8,48 +8,33 @@ import (
 )
 
 const (
-	reset  = "\033[0m"
-	bold   = "\033[1m"
-	dim    = "\033[2m"
-	green  = "\033[32m"
-	yellow = "\033[33m"
-	red    = "\033[31m"
+	reset = "\033[0m"
+	bold  = "\033[1m"
+	dim   = "\033[2m"
+	yel   = "\033[33m"
+	red   = "\033[31m"
 )
 
-type UI struct{}
-
-func sid(s *Session) string {
-	if len(s.ID) < 8 {
-		return s.ID
-	}
-	return s.ID[:8]
-}
-
-func (UI) Header(provider, model string, s *Session) {
-	turns := (len(s.Messages) - 1) / 2
+func uiHeader(provider, model string, s *Session) {
 	fmt.Printf("\n%s  %s · %s", dim, provider, model)
-	if turns > 0 {
-		fmt.Printf("  ·  %d turns", turns)
+	if s.Turn > 0 {
+		fmt.Printf("  ·  %d turns", s.Turn)
 	}
 	fmt.Printf("%s\n\n", reset)
 }
 
-func (UI) Prompt() { fmt.Printf("%s❯%s ", bold, reset) }
+func uiPrompt()        { fmt.Printf("%s❯%s ", bold, reset) }
+func uiAfterInput()    { fmt.Println() }
+func uiStartResponse() { fmt.Print("\n") }
+func uiToken(t string) { fmt.Print(t) }
+func uiResponse()      { fmt.Print("\n\n") }
 
-func (UI) AfterInput() { fmt.Println() }
-
-func (UI) StartResponse() { fmt.Print("\n") }
-
-func (UI) Token(t string) { fmt.Print(t) }
-
-func (UI) Response() { fmt.Print("\n\n") }
-
-func (UI) Tool(name string, input []byte) {
+func uiTool(name string, input []byte) {
 	fmt.Printf("%s  ⎿  %s%s %s%s\n", dim, bold, name, input, reset)
 }
 
-func (UI) ToolResult(result string) {
-	lines := strings.Split(strings.TrimSpace(result), "\n")
+func uiToolResult(r string) {
+	lines := strings.Split(strings.TrimSpace(r), "\n")
 	if len(lines) > 8 {
 		lines = lines[len(lines)-8:]
 	}
@@ -58,22 +43,22 @@ func (UI) ToolResult(result string) {
 	}
 }
 
-func (UI) ToolError(err error) { fmt.Printf("%s  ✗  %s%s\n", red, err.Error(), reset) }
+func uiToolError(err error) { fmt.Printf("%s  ✗  %s%s\n", red, err.Error(), reset) }
+func uiError(err error)     { fmt.Printf("\n%s  ✗  %s%s\n\n", red, err.Error(), reset) }
+func uiInfo(m string)       { fmt.Printf("%s  %s%s\n", dim, m, reset) }
+func uiUndone(p string)     { fmt.Printf("%s  ↩  %s%s\n", yel, p, reset) }
+func uiMemory(m string)     { fmt.Printf("%s  ↺  %s%s\n", yel, m, reset) }
+func uiSessionNew()         { fmt.Printf("\n%s  ○  new session%s\n\n", dim, reset) }
 
-func (UI) Error(err error) { fmt.Printf("\n%s  ✗  %s%s\n\n", red, err.Error(), reset) }
-
-func (UI) Info(msg string)    { fmt.Printf("%s  %s%s\n", dim, msg, reset) }
-func (UI) Undone(path string) { fmt.Printf("%s  ↩  %s%s\n", yellow, path, reset) }
-
-func (UI) SessionNew(id string) { fmt.Printf("\n%s  ○  new session%s\n\n", dim, reset) }
-
-func (UI) SessionInfo(s *Session) {
-	turns := (len(s.Messages) - 1) / 2
-	fmt.Printf("\n%s  %s  %s  %d turns  %d edits%s\n\n",
-		dim, sid(s), s.StartedAt.Format("Jan 2 15:04"), turns, len(s.Edits), reset)
+func uiSessionInfo(s *Session) {
+	id := s.ID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	fmt.Printf("\n%s  %s  %s  %d turns  %d edits%s\n\n", dim, id, s.StartedAt.Format("Jan 2 15:04"), s.Turn, len(s.Edits), reset)
 }
 
-func (UI) Spinner() func() {
+func uiSpinner() func() {
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	done, ack := make(chan struct{}), make(chan struct{})
 	go func() {

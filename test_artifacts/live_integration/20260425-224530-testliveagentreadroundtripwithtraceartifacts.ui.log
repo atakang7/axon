@@ -1,0 +1,14 @@
+[2K[2m⠋[0m[2K[2m⠙[0m[2K[2m⠹[0m[2K[2m⠸[0m[2K[2m⠼[0m[2K[2m⠴[0m[2K[2m⠦[0m[2K[2m⠧[0m[2K[2m⠇[0m[2K[2m⠏[0m[2K[2m⠋[0m[2K[2m⠙[0m[2K[2m⠹[0m[2K[2m⠸[0m[2K[2m⠼[0m[2K[2m⠴[0m[2K[2m⠦[0m[2K[2m⠧[0m[2K[2m⠇[0m[2K[2m⠏[0m[2K[2m⠋[0m[2K[2m⠙[0m[2K[2m⠹[0m[2K[2m⠸[0m[2K[2m⠼[0m[2K[2m⠴[0m[2K[2m⠦[0m[2K[2m⠧[0m[2K
+?
+
+
+
+[2m  ⎿  [1mread {"path": "hello.txt", "mode": "full", "reason": "Read the entire hello.txt file as instructed"}[0m
+[2m     [full read: ~3 tokens. consider mode=skeleton (~10x cheaper) or mode=slice if you need only part of this file][0m
+[2m     1	integration-ok[0m
+[2m     2[0m
+[2K[2m⠋[0m[2K[2m⠙[0m[2K[2m⠹[0m[2K[2m⠸[0m[2K[2m⠼[0m[2K[2m⠴[0m[2K[2m⠦[0m[2K[2m⠧[0m[2K[2m⠇[0m[2K[2m⠏[0m[2K[2m⠋[0m[2K[2m⠙[0m[2K[2m⠹[0m[2K[2m⠸[0m[2K[2m⠼[0m[2K[2m⠴[0m[2K[2m⠦[0m[2K[2m⠧[0m[2K
+ | proceed
+
+FILE_OK:integration-ok
+

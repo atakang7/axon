@@ -9,38 +9,39 @@ import (
 )
 
 func main() {
-	ui := UI{}
-	registry := NewProviderRegistry()
-	if err := LoadConfigFile(registry); err != nil {
-		ui.Error(err)
-		return
-	}
-
-	providerName := SelectedProviderName(os.Getenv)
-	client, err := registry.NewClient(providerName)
+	providers, err := LoadProviders()
 	if err != nil {
-		ui.Error(err)
+		uiError(err)
 		return
 	}
-
+	p, err := ResolveProvider(providers)
+	if err != nil {
+		uiError(err)
+		return
+	}
+	client, err := NewClient(p)
+	if err != nil {
+		uiError(err)
+		return
+	}
 	session := LoadOrCreateSession()
-	provider, _ := registry.Get(providerName)
-	ui.Header(provider.Name, provider.Model, session)
+	uiHeader(p.Name, p.Model, session)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	tools := []ToolDefinition{ReadFileDefinition, ListFilesDefinition, EditFileDefinition(session)}
-	agent := NewAgent(client, func() (string, bool) {
-		if !scanner.Scan() {
-			return "", false
-		}
-		return scanner.Text(), true
-	}, tools, session)
-
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+	tools := BuildTools(session)
+	agent := &Agent{client: client, tools: tools, session: session,
+		input: func() (string, bool) {
+			if !scanner.Scan() {
+				return "", false
+			}
+			return scanner.Text(), true
+		},
+	}
 	if err := agent.Run(ctx); err != nil {
-		ui.Error(err)
+		uiError(err)
 	}
 }
