@@ -1,13 +1,0 @@
-[1m❯[0m 
-[2K[2m  ⎿  [1mread {"path":"a.txt","mode":"full","reason":"read a"}[0m
-[2m     [full read: ~0 tokens. consider mode=skeleton (~10x cheaper) or mode=slice if you need only part of this file][0m
-[2m     1	A[0m
-[2m  ⎿  [1mread {"path":"missing.txt","mode":"full","reason":"read missing"}[0m
-[31m  ✗  open /tmp/TestAgentIntegrationEdgeCasesmixed_multi-tool_batch_preserves_o789614301/001/missing.txt: no such file or directory[0m
-[2m  ⎿  [1mread {"path":"b.txt","mode":"full","reason":"read b"}[0m
-[2m     [full read: ~0 tokens. consider mode=skeleton (~10x cheaper) or mode=slice if you need only part of this file][0m
-[2m     1	B[0m
-[2K
-BATCH_RECOVERED
-
-[1m❯[0m 

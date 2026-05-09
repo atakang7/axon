@@ -1,7 +1,0 @@
-[1m❯[0m 
-[2K[2m  ⎿  [1mread {"path":"missing.txt","mode":"full","reason":"force read failure"}[0m
-[31m  ✗  open /tmp/TestAgentIntegrationEdgeCasestool_error_is_fed_back_into_the_ne3915864746/001/missing.txt: no such file or directory[0m
-[2K
-RECOVERED_FROM_TOOL_ERROR
-
-[1m❯[0m 
