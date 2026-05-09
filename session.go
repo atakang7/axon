@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,9 +19,18 @@ type Edit struct {
 // turn until the work is done. One task at a time; setting a new one overwrites
 // the old. Nil means no task is registered (one-shot or not yet scoped).
 type Task struct {
-	Objective        string `json:"objective"`
-	DefinitionOfDone string `json:"definition_of_done"`
-	CurrentFocus     string `json:"current_focus"`
+	Objective        string     `json:"objective"`
+	DefinitionOfDone string     `json:"definition_of_done"`
+	Hypothesis       string     `json:"hypothesis,omitempty"`
+	Steps            []TaskStep `json:"steps,omitempty"`
+	CurrentStep      int        `json:"current_step,omitempty"`
+}
+
+// TaskStep is one committed step in the task plan. Done flips to true when
+// the LLM declares the step complete via the task tool's advance_step action.
+type TaskStep struct {
+	Description string `json:"description"`
+	Done        bool   `json:"done,omitempty"`
 }
 
 type Session struct {
@@ -33,6 +44,7 @@ type Session struct {
 	NextBlockID  int                    `json:"next_block_id,omitempty"`
 	Turn         int                    `json:"turn,omitempty"`
 	path         string
+	editsMu      sync.Mutex
 }
 
 // TaskBlock returns the formatted task string injected transiently into
@@ -43,8 +55,35 @@ func (s *Session) TaskBlock() string {
 		return ""
 	}
 	t := s.CurrentTask
-	return fmt.Sprintf("[task]\n  objective:          %s\n  definition of done: %s\n  current focus:      %s",
-		t.Objective, t.DefinitionOfDone, t.CurrentFocus)
+	var b strings.Builder
+	b.WriteString("[task]")
+	if len(t.Steps) > 0 && t.CurrentStep < len(t.Steps) {
+		current := t.Steps[t.CurrentStep].Description
+		fmt.Fprintf(&b, "\n  >>> CURRENT STEP (%d/%d): %s", t.CurrentStep+1, len(t.Steps), current)
+		b.WriteString("\n  >>> Execute the entire step this turn — batch its tool calls in parallel.")
+		b.WriteString("\n  >>> After execution this turn you MUST call task action=advance, OR call task action=replan if reality contradicts the plan.")
+	} else if len(t.Steps) > 0 {
+		b.WriteString("\n  >>> ALL STEPS COMPLETE — produce the final answer to the user this turn. Do not call more tools.")
+	}
+	fmt.Fprintf(&b, "\n  objective:          %s\n  definition of done: %s",
+		t.Objective, t.DefinitionOfDone)
+	if t.Hypothesis != "" {
+		fmt.Fprintf(&b, "\n  hypothesis:         %s", t.Hypothesis)
+		b.WriteString("\n  >>> If a step's result contradicts the hypothesis, call task action=replan with a new hypothesis BEFORE advancing.")
+	}
+	if len(t.Steps) > 0 {
+		b.WriteString("\n  plan:")
+		for i, step := range t.Steps {
+			marker := "[ ]"
+			if step.Done {
+				marker = "[x]"
+			} else if i == t.CurrentStep {
+				marker = "[>]"
+			}
+			fmt.Fprintf(&b, "\n    %s %d. %s", marker, i+1, step.Description)
+		}
+	}
+	return b.String()
 }
 
 func LoadOrCreateSession() *Session {
@@ -117,12 +156,6 @@ func (s *Session) Append(m Msg) {
 		s.NextBlockID++
 		m.ID = fmt.Sprintf("m%d", s.NextBlockID)
 	}
-	// Fresh non-system blocks start with a full TTL. Without this, every new
-	// block would expire next decay tick — defeating the purpose of decay
-	// being a per-turn signal rather than an immediate axe.
-	if m.Role != "system" && !m.Parked && m.TTL == 0 {
-		m.TTL = defaultActiveTTL
-	}
 	s.Messages = append(s.Messages, m)
 }
 
@@ -154,10 +187,14 @@ func (s *Session) SetCwd(p string) error {
 }
 
 func (s *Session) RecordEdit(path, before, after string) {
+	s.editsMu.Lock()
+	defer s.editsMu.Unlock()
 	s.Edits = append(s.Edits, Edit{path, before, after})
 }
 
 func (s *Session) Undo() (Edit, bool) {
+	s.editsMu.Lock()
+	defer s.editsMu.Unlock()
 	if len(s.Edits) == 0 {
 		return Edit{}, false
 	}
