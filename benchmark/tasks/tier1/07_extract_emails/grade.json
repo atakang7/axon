@@ -1,0 +1,23 @@
+{
+  "task": "07_extract_emails",
+  "passed": 3,
+  "total": 3,
+  "ok": true,
+  "checks": [
+    {
+      "name": "3 unique emails",
+      "pass": true,
+      "detail": "['alice@example.com', 'bob.smith@company.co.uk', 'charlie+tag@domain.org']"
+    },
+    {
+      "name": "sorted",
+      "pass": true,
+      "detail": "['alice@example.com', 'bob.smith@company.co.uk', 'charlie+tag@domain.org']"
+    },
+    {
+      "name": "look like emails",
+      "pass": true,
+      "detail": "['alice@example.com', 'bob.smith@company.co.uk', 'charlie+tag@domain.org']"
+    }
+  ]
+}

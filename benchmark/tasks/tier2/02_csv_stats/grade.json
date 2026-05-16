@@ -1,0 +1,23 @@
+{
+  "task": "02_csv_stats",
+  "passed": 3,
+  "total": 3,
+  "ok": true,
+  "checks": [
+    {
+      "name": "5 lines",
+      "pass": true,
+      "detail": "['count: 8', 'mean: 78.62', 'median: 79.50', 'stdev: 12.6145', 'top3: carol,grace,eve']"
+    },
+    {
+      "name": "keys correct",
+      "pass": true,
+      "detail": "['count', 'mean', 'median', 'stdev', 'top3']"
+    },
+    {
+      "name": "top3 has 3 names",
+      "pass": true,
+      "detail": "count: 8\nmean: 78.62\nmedian: 79.50\nstdev: 12.6145\ntop3: carol,grace,eve\n"
+    }
+  ]
+}

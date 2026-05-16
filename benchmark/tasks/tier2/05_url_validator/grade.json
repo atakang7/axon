@@ -1,0 +1,38 @@
+{
+  "task": "05_url_validator",
+  "passed": 6,
+  "total": 6,
+  "ok": true,
+  "checks": [
+    {
+      "name": "is_valid('https://example.com/x') == True",
+      "pass": true,
+      "detail": "got='True' stderr=''"
+    },
+    {
+      "name": "is_valid('ftp://example.com') == False",
+      "pass": true,
+      "detail": "got='False' stderr=''"
+    },
+    {
+      "name": "is_valid('http://no dots') == False",
+      "pass": true,
+      "detail": "got='False' stderr=''"
+    },
+    {
+      "name": "is_valid('http://x.y') == True",
+      "pass": true,
+      "detail": "got='True' stderr=''"
+    },
+    {
+      "name": "is_valid('') == False",
+      "pass": true,
+      "detail": "got='False' stderr=''"
+    },
+    {
+      "name": "no urllib in source",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

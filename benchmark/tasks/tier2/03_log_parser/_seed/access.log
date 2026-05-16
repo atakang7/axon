@@ -1,0 +1,8 @@
+2024-01-01 10:00:01 INFO  user=alice action=login
+2024-01-01 10:00:05 ERROR user=bob action=login msg="bad password"
+2024-01-01 10:00:09 INFO  user=carol action=view path=/home
+2024-01-01 10:00:12 WARN  user=alice action=quota msg="80% used"
+2024-01-01 10:00:14 ERROR user=dave action=login msg="locked out"
+2024-01-01 10:00:20 INFO  user=alice action=logout
+2024-01-01 10:00:25 ERROR user=bob action=login msg="bad password"
+2024-01-01 10:00:30 INFO  user=eve action=login

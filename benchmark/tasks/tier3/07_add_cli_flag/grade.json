@@ -1,0 +1,23 @@
+{
+  "task": "07_add_cli_flag",
+  "passed": 3,
+  "total": 3,
+  "ok": true,
+  "checks": [
+    {
+      "name": "plain echo",
+      "pass": true,
+      "detail": "'hello\\nworld\\n'"
+    },
+    {
+      "name": "--upper",
+      "pass": true,
+      "detail": "'HELLO\\nWORLD\\n'"
+    },
+    {
+      "name": "no args -> nonzero",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

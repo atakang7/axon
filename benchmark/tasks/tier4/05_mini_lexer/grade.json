@@ -1,0 +1,23 @@
+{
+  "task": "05_mini_lexer",
+  "passed": 3,
+  "total": 3,
+  "ok": true,
+  "checks": [
+    {
+      "name": "token types in order",
+      "pass": true,
+      "detail": "[\"['KEYWORD', 'IDENT', 'OP', 'NUMBER', 'OP', 'STRING', 'KEYWORD', 'OP', 'IDENT', 'OP']\", \"['let', 'print']\"]"
+    },
+    {
+      "name": "keywords let, print",
+      "pass": true,
+      "detail": "[\"['KEYWORD', 'IDENT', 'OP', 'NUMBER', 'OP', 'STRING', 'KEYWORD', 'OP', 'IDENT', 'OP']\", \"['let', 'print']\"]"
+    },
+    {
+      "name": "unexpected char raises ValueError",
+      "pass": true,
+      "detail": "odule>\n  File \"/home/zperson/axon/benchmark/tasks/tier4/05_mini_lexer/lex.py\", line 81, in tokenize\n    raise ValueError(f\"unexpected char {ch!r} at pos {i}\")\nValueError: unexpected char '@' at pos 0\n"
+    }
+  ]
+}

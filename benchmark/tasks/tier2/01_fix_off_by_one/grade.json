@@ -1,0 +1,13 @@
+{
+  "task": "01_fix_off_by_one",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "output matches",
+      "pass": true,
+      "detail": "'[4,5]\\n[1,2,3]\\n[]\\n[]\\n'"
+    }
+  ]
+}

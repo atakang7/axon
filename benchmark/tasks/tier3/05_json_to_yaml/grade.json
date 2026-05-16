@@ -1,0 +1,18 @@
+{
+  "task": "05_json_to_yaml",
+  "passed": 1,
+  "total": 2,
+  "ok": false,
+  "checks": [
+    {
+      "name": "source has no 'yaml'",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "yaml parses back to same dict",
+      "pass": false,
+      "detail": "parsed='' ref='{\"bool\": true, \"key\": \"value:colon\", \"list\": [\"a\"], \"null\": null, \"num\": \"123\", \"ws\": \"  space\"}'"
+    }
+  ]
+}

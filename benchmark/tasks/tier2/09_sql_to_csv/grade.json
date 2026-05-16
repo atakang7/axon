@@ -1,0 +1,18 @@
+{
+  "task": "09_sql_to_csv",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "header",
+      "pass": true,
+      "detail": "'id,name,age,city'"
+    },
+    {
+      "name": "ordered eve,bob,alice,dave,carol",
+      "pass": true,
+      "detail": "['id,name,age,city', '5,eve,22,berlin', '2,bob,25,london', '1,alice,30,paris', '4,dave,38,london', '3,carol,45,paris']"
+    }
+  ]
+}

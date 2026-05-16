@@ -1,0 +1,4 @@
+Here is some prose with emails embedded. Contact alice@example.com for inquiries.
+Also reach out to bob.smith@company.co.uk if needed. For urgent matters, contact
+alice@example.com again (duplicate). Lastly, charlie+tag@domain.org is another
+email address. That's all.

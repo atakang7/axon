@@ -1,0 +1,11 @@
+{
+  "task": "01_rename_symbol",
+  "duration_sec": 168.3,
+  "exit_code": 0,
+  "timed_out": false,
+  "turns": 0,
+  "event_counts": {},
+  "tool_call_sequence": [],
+  "final_assistant_text": "",
+  "stderr_tail": null
+}

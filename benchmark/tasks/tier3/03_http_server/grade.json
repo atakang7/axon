@@ -1,0 +1,13 @@
+{
+  "task": "03_http_server",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "verify.sh exits 0 with OK",
+      "pass": true,
+      "detail": "out='Testing /ping endpoint...\\n  \u2713 /ping endpoint passed\\nTesting /sum with valid params...\\n  \u2713 /sum with valid params passed\\nTesting /sum with missing params...\\n  \u2713 /sum with missing params passed\\nOK\\n' err='7.0.0.1 - - [08/May/2026 23:01:01] \"GET /ping HTTP/1.1\" 200 -\\n127.0.0.1 - - [08/May/2026 23:01:01] \"GET /sum?a=5&b=3 HTTP/1.1\" 200 -\\n127.0.0.1 - - [08/May/2026 23:01:01] \"GET /sum?a=5 HTTP/1.1\" 400 -\\n'"
+    }
+  ]
+}

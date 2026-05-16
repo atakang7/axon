@@ -1,0 +1,18 @@
+{
+  "task": "05_csv_column",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "4 lines printed",
+      "pass": true,
+      "detail": "['25', '30', '35', '40']"
+    },
+    {
+      "name": "all integers",
+      "pass": true,
+      "detail": "['25', '30', '35', '40']"
+    }
+  ]
+}

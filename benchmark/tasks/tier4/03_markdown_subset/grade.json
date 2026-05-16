@@ -1,0 +1,48 @@
+{
+  "task": "03_markdown_subset",
+  "passed": 8,
+  "total": 8,
+  "ok": true,
+  "checks": [
+    {
+      "name": "contains '<h1>Hi</h1>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    },
+    {
+      "name": "contains '<strong>world</strong>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    },
+    {
+      "name": "contains '<em>peace</em>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    },
+    {
+      "name": "contains '<code>code</code>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    },
+    {
+      "name": "contains '<ul>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    },
+    {
+      "name": "contains '<li>one</li>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    },
+    {
+      "name": "contains '<li>two</li>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    },
+    {
+      "name": "contains '<a href=\"http://x.y\">link</a>'",
+      "pass": true,
+      "detail": "<h1>Hi</h1>\n<p>Hello <strong>world</strong> and <em>peace</em> and <code>code</code>.</p>\n<ul><li>one</li><li>two</li></ul>\n<p><a href=\"http://x.y\">link</a></p>\n"
+    }
+  ]
+}

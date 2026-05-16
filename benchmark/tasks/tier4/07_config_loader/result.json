@@ -1,0 +1,39 @@
+{
+  "task": "07_config_loader",
+  "duration_sec": 392.77,
+  "exit_code": 0,
+  "timed_out": false,
+  "turns": 1,
+  "event_counts": {
+    "session_start": 1,
+    "prompt": 1,
+    "user": 1,
+    "assistant_text": 19,
+    "tool_call": 18,
+    "tool_result": 18,
+    "turn_end": 1,
+    "done": 1
+  },
+  "tool_call_sequence": [
+    "read",
+    "read",
+    "write",
+    "exec",
+    "read",
+    "write",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec"
+  ],
+  "final_assistant_text": "**Kitchen clean:** The workspace contains config.py (the required file), defaults.yaml (shipped), TASK.md, events.jsonl, _seed/, and __pycache__ (auto-generated). The verification passes exactly as required. The task is complete.",
+  "stderr_tail": null
+}

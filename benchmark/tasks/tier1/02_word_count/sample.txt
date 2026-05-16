@@ -1,0 +1,5 @@
+This is the first line of the sample file.
+Second line has more words here.
+Third line: mixed content with punctuation, numbers 123, and special characters!
+Fourth line adds variety with CAPITAL letters.
+Fifth line concludes the sample with different spacing   between    words.

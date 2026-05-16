@@ -1,0 +1,7 @@
+This is a normal line.
+Here is an error message.
+Another line without error.
+ERROR in uppercase.
+Something else.
+Error with capital E.
+Just a line.

@@ -1,0 +1,23 @@
+{
+  "task": "01_rename_symbol",
+  "passed": 3,
+  "total": 3,
+  "ok": true,
+  "checks": [
+    {
+      "name": "compute_total fully renamed",
+      "pass": true,
+      "detail": "''"
+    },
+    {
+      "name": "main.py runs",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "output looks like 'total: <num>'",
+      "pass": true,
+      "detail": "'total: 53.1\\n'"
+    }
+  ]
+}

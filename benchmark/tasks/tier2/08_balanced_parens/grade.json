@@ -1,0 +1,33 @@
+{
+  "task": "08_balanced_parens",
+  "passed": 5,
+  "total": 5,
+  "ok": true,
+  "checks": [
+    {
+      "name": "balanced('([]{})')==True",
+      "pass": true,
+      "detail": "'True\\n'"
+    },
+    {
+      "name": "balanced('([)]')==False",
+      "pass": true,
+      "detail": "'False\\n'"
+    },
+    {
+      "name": "balanced('hello (world)')==True",
+      "pass": true,
+      "detail": "'True\\n'"
+    },
+    {
+      "name": "balanced('(')==False",
+      "pass": true,
+      "detail": "'False\\n'"
+    },
+    {
+      "name": "balanced('')==True",
+      "pass": true,
+      "detail": "'True\\n'"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "task": "09_extract_helper",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "private helper defined",
+      "pass": true,
+      "detail": "def _report(items):\n    s = \"REPORT:\"\n    s += \"\\n========\"\n    for item in items:\n        s += f\"\\n- {item}\"\n    s += \"\\n========\"\n    return s\n\n\ndef report_users(users):\n    return _report(users)\n\n\ndef report_orders(orders):\n    return _report(orders)\n\n\ndef report_errors(errs):\n    return _report("
+    },
+    {
+      "name": "report_users behavior preserved",
+      "pass": true,
+      "detail": "'REPORT:\\n========\\n- a\\n- b\\n========\\n'"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "task": "07_topo_sort",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "output abcde",
+      "pass": true,
+      "detail": "'a\\nb\\nc\\nd\\ne\\n'"
+    }
+  ]
+}

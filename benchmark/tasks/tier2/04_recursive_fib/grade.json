@@ -1,0 +1,23 @@
+{
+  "task": "04_recursive_fib",
+  "passed": 3,
+  "total": 3,
+  "ok": true,
+  "checks": [
+    {
+      "name": "fib(10)==55",
+      "pass": true,
+      "detail": "'55\\n'"
+    },
+    {
+      "name": "fib(100) fast & correct",
+      "pass": true,
+      "detail": "'354224848179261915075\\n' err=''"
+    },
+    {
+      "name": "uses def fib",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

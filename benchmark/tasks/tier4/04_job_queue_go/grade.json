@@ -1,0 +1,28 @@
+{
+  "task": "04_job_queue_go",
+  "passed": 3,
+  "total": 4,
+  "ok": false,
+  "checks": [
+    {
+      "name": "output format",
+      "pass": true,
+      "detail": "'submitted=100 completed=100 failed=18 panicked=14\\n'"
+    },
+    {
+      "name": "submitted=100",
+      "pass": true,
+      "detail": "100"
+    },
+    {
+      "name": "c+f+p == 100",
+      "pass": false,
+      "detail": "100+18+14"
+    },
+    {
+      "name": "no -race failures",
+      "pass": true,
+      "detail": "n every 7th\npanic recovered: panic on every 7th\npanic recovered: panic on every 7th\npanic recovered: panic on every 7th\npanic recovered: panic on every 7th\npanic recovered: panic on every 7th\npanic recovered: panic on every 7th\npanic recovered: panic on every 7th\npanic recovered: panic on every 7th\n"
+    }
+  ]
+}

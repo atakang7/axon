@@ -1,0 +1,33 @@
+{
+  "task": "04_resolve_merge",
+  "passed": 5,
+  "total": 5,
+  "ok": true,
+  "checks": [
+    {
+      "name": "no conflict markers",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "greet('alice','en') == 'Hello, alice!'",
+      "pass": true,
+      "detail": "'Hello, alice!\\n'"
+    },
+    {
+      "name": "greet('alice','fr') == 'Bonjour, alice!'",
+      "pass": true,
+      "detail": "'Bonjour, alice!\\n'"
+    },
+    {
+      "name": "greet('alice','jp') == 'Hi, alice'",
+      "pass": true,
+      "detail": "'Hi, alice\\n'"
+    },
+    {
+      "name": "shout('alice') == 'HELLO, ALICE!'",
+      "pass": true,
+      "detail": "'HELLO, ALICE!\\n'"
+    }
+  ]
+}

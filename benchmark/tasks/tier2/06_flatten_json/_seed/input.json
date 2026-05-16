@@ -1,0 +1,8 @@
+{
+  "user": {
+    "name": "alice",
+    "addr": {"city": "paris", "zip": "75001"}
+  },
+  "tags": ["a","b"],
+  "active": true
+}

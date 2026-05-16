@@ -1,0 +1,13 @@
+{
+  "task": "06_find_dead_code",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "contents match",
+      "pass": true,
+      "detail": "['mod_a:dead_helper', 'mod_b:orphan']"
+    }
+  ]
+}

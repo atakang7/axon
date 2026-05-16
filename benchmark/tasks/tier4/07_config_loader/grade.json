@@ -1,0 +1,18 @@
+{
+  "task": "07_config_loader",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "runs",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "merged config exact",
+      "pass": true,
+      "detail": "'{\"db\": {\"pool\": 5, \"url\": \"postgres://x\"}, \"debug\": true, \"host\": \"localhost\", \"port\": 9090}\\n'"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "task": "10_instrument_logging",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "6 INFO lines on stderr",
+      "pass": true,
+      "detail": "got=6 err=\"ame': 'alice'}\\nINFO enter transform args={'id': 42, 'name': 'alice'}\\nINFO exit transform result={'id': 42, 'name': 'ALICE'}\\nINFO enter save args={'id': 42, 'name': 'ALICE'}\\nINFO exit save result=True\\n\""
+    },
+    {
+      "name": "import path returns True cleanly",
+      "pass": true,
+      "detail": "'True\\n' err=''"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "task": "03_json_pretty",
+  "passed": 3,
+  "total": 3,
+  "ok": true,
+  "checks": [
+    {
+      "name": "valid JSON",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "keys sorted (a before b)",
+      "pass": true,
+      "detail": "['a', 'b']"
+    },
+    {
+      "name": "2-space indent present",
+      "pass": true,
+      "detail": "'{\\n  \"a\": 1,\\n  \"b\": 2\\n}\\n'"
+    }
+  ]
+}

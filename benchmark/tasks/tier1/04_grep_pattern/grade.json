@@ -1,0 +1,13 @@
+{
+  "task": "04_grep_pattern",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "only matching lines",
+      "pass": true,
+      "detail": "['Here is an error message.', 'Another line without error.', 'ERROR in uppercase.', 'Error with capital E.']"
+    }
+  ]
+}

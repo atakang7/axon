@@ -1,0 +1,31 @@
+{
+  "task": "04_resolve_merge",
+  "duration_sec": 103.06,
+  "exit_code": 0,
+  "timed_out": false,
+  "turns": 1,
+  "event_counts": {
+    "session_start": 1,
+    "prompt": 1,
+    "user": 1,
+    "assistant_text": 7,
+    "tool_call": 10,
+    "tool_result": 10,
+    "turn_end": 1,
+    "done": 1
+  },
+  "tool_call_sequence": [
+    "read",
+    "read",
+    "read",
+    "write",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "read",
+    "exec"
+  ],
+  "final_assistant_text": "Great. Also test default language (lang=\"en\" default) works. The shout function uses greet(name) with default lang=\"en\". That's already verified via shout test (HELLO, ALICE!). That's fine.\n\nNow final kitchen clean: ensure no stray files created. We only touched conflicted.py. No extra files. No need to clean.\n\nAll success criteria satisfied. We can stop.\n\n**Task completed.**",
+  "stderr_tail": null
+}

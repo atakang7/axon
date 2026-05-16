@@ -1,0 +1,18 @@
+{
+  "task": "10_state_machine",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "happy path -> IDLE",
+      "pass": true,
+      "detail": "'IDLE\\n'''"
+    },
+    {
+      "name": "dispense from idle raises",
+      "pass": true,
+      "detail": "'Traceback (most recent call last):\\n  File \"<string>\", line 1, in <module>\\n  File \"/home/zperson/axon/benchmark/tasks/tier2/10_state_machine/vending.py\", line 32, in dispense\\n    raise ValueError(\"Cannot dispense without selecting item first\")\\nValueError: Cannot dispense without selecting item first\\n'"
+    }
+  ]
+}

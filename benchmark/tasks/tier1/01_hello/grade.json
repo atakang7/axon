@@ -1,0 +1,18 @@
+{
+  "task": "01_hello",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "runs",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "output equals 'hello, world\\n'",
+      "pass": true,
+      "detail": "'hello, world\\n'"
+    }
+  ]
+}

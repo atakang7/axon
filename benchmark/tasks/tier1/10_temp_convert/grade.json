@@ -1,0 +1,18 @@
+{
+  "task": "10_temp_convert",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "100C -> 212.00",
+      "pass": true,
+      "detail": "'212.00\\n'"
+    },
+    {
+      "name": "32F -> 0.00",
+      "pass": true,
+      "detail": "'0.00\\n'"
+    }
+  ]
+}

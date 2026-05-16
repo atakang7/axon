@@ -1,0 +1,13 @@
+{
+  "task": "06_flatten_json",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "exact output",
+      "pass": true,
+      "detail": "'active=True\\ntags.0=a\\ntags.1=b\\nuser.addr.city=paris\\nuser.addr.zip=75001\\nuser.name=alice\\n'"
+    }
+  ]
+}

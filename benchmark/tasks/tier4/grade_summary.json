@@ -1,0 +1,62 @@
+[
+  {
+    "task": "01_todo_cli",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "02_lru_cache",
+    "passed": 3,
+    "total": 3,
+    "ok": true
+  },
+  {
+    "task": "03_markdown_subset",
+    "passed": 8,
+    "total": 8,
+    "ok": true
+  },
+  {
+    "task": "04_job_queue_go",
+    "passed": 3,
+    "total": 4,
+    "ok": false
+  },
+  {
+    "task": "05_mini_lexer",
+    "passed": 3,
+    "total": 3,
+    "ok": true
+  },
+  {
+    "task": "06_diff_dirs",
+    "passed": 4,
+    "total": 4,
+    "ok": true
+  },
+  {
+    "task": "07_config_loader",
+    "passed": 2,
+    "total": 2,
+    "ok": true
+  },
+  {
+    "task": "08_fix_broken_repo",
+    "passed": 0,
+    "total": 2,
+    "ok": false
+  },
+  {
+    "task": "09_retry_lib",
+    "passed": 2,
+    "total": 2,
+    "ok": true
+  },
+  {
+    "task": "10_minishell",
+    "passed": 0,
+    "total": 2,
+    "ok": false
+  }
+]

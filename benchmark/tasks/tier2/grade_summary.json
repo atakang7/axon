@@ -1,0 +1,62 @@
+[
+  {
+    "task": "01_fix_off_by_one",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "02_csv_stats",
+    "passed": 3,
+    "total": 3,
+    "ok": true
+  },
+  {
+    "task": "03_log_parser",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "04_recursive_fib",
+    "passed": 3,
+    "total": 3,
+    "ok": true
+  },
+  {
+    "task": "05_url_validator",
+    "passed": 6,
+    "total": 6,
+    "ok": true
+  },
+  {
+    "task": "06_flatten_json",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "07_topo_sort",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "08_balanced_parens",
+    "passed": 5,
+    "total": 5,
+    "ok": true
+  },
+  {
+    "task": "09_sql_to_csv",
+    "passed": 2,
+    "total": 2,
+    "ok": true
+  },
+  {
+    "task": "10_state_machine",
+    "passed": 2,
+    "total": 2,
+    "ok": true
+  }
+]

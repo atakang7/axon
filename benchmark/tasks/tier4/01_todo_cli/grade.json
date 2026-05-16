@@ -1,0 +1,13 @@
+{
+  "task": "01_todo_cli",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "end-to-end script passes",
+      "pass": true,
+      "detail": "rc=0 out='OK\\n' err=''"
+    }
+  ]
+}

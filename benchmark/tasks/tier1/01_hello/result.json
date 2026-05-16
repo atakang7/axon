@@ -1,0 +1,25 @@
+{
+  "task": "01_hello",
+  "duration_sec": 44.11,
+  "exit_code": 0,
+  "timed_out": false,
+  "turns": 1,
+  "event_counts": {
+    "session_start": 1,
+    "prompt": 1,
+    "user": 1,
+    "assistant_text": 4,
+    "tool_call": 4,
+    "tool_result": 4,
+    "turn_end": 1,
+    "done": 1
+  },
+  "tool_call_sequence": [
+    "read",
+    "write",
+    "exec",
+    "exec"
+  ],
+  "final_assistant_text": "**ATTENTION**\n\nGOAL: Complete the task end-to-end without asking any questions. When all success criteria are met, stop.\n\nSTATE: hello.py exists at /home/zperson/axon/benchmark/tasks/tier1/01_hello/hello.py (46 bytes), python3 hello.py prints \"hello, world\" followed by a newline (cat -A shows $).\n\nHISTORY: Read TASK.md, created hello.py, verified output matches \"hello, world\", final verification with cat -A confirms newline.\n\nCONSTRAINTS: Must meet all success criteria: hello.py exists, python3 hello.py prints \"hello, world\" followed by a newline.\n\nMOVES:\n1. Declare done - all criteria satisfied (lowest tokens-to-done)\n2. Run additional edge-case tests (unnecessary, high tokens)\n3. Check if any other files need cleanup (low risk but extra tokens)\n4. Verify file permissions (not required by spec, extra tokens)\n\nDIMENSION: tokens-to-done\n\nAll success criteria are met: kitchen clean - hello.py exists and outputs correctly. Task is complete.",
+  "stderr_tail": null
+}

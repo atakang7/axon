@@ -1,0 +1,36 @@
+{
+  "task": "08_fix_broken_repo",
+  "duration_sec": 266.14,
+  "exit_code": 0,
+  "timed_out": false,
+  "turns": 1,
+  "event_counts": {
+    "session_start": 1,
+    "prompt": 1,
+    "user": 1,
+    "assistant_text": 12,
+    "tool_call": 15,
+    "tool_result": 15,
+    "turn_end": 1,
+    "done": 1
+  },
+  "tool_call_sequence": [
+    "read",
+    "read",
+    "read",
+    "exec",
+    "write",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "read",
+    "exec",
+    "exec",
+    "exec",
+    "exec",
+    "exec"
+  ],
+  "final_assistant_text": "DELTA: All tests pass, exit code 0.\nDRIFT: anchored\nNEXT: Kitchen clean: constraints satisfied, tests passing, workspace ready.\n\nThe task is complete. All success criteria are met:\n\n1. `pytest -q` exits 0 when run on the test file (specifically `pytest -q test_calc.py`).\n2. All 4 test functions pass.\n3. `test_calc.py` was not modified (verified identical to seed).\n4. Public function names and signatures in `calc.py` are preserved.\n5. Pure stdlib used.\n\nThe bugs in `calc.py` have been fixed:\n- `add` now correctly adds instead of subtracts.\n- `avg` now divides by `len(xs)` instead of `len(xs)-1`.\n- `factorial` initializes `out` to 1 instead of 0.\n\nThe workspace is ready for the next run.",
+  "stderr_tail": null
+}

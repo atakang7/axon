@@ -1,0 +1,28 @@
+{
+  "task": "06_diff_dirs",
+  "passed": 4,
+  "total": 4,
+  "ok": true,
+  "checks": [
+    {
+      "name": "only_in_a",
+      "pass": true,
+      "detail": "['only_a.txt']"
+    },
+    {
+      "name": "only_in_b",
+      "pass": true,
+      "detail": "['only_b.txt']"
+    },
+    {
+      "name": "changed",
+      "pass": true,
+      "detail": "['changed.txt']"
+    },
+    {
+      "name": "same",
+      "pass": true,
+      "detail": "['keep.txt', 'sub/nested.txt']"
+    }
+  ]
+}

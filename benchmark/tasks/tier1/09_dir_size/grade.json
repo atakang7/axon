@@ -1,0 +1,13 @@
+{
+  "task": "09_dir_size",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "matches du -sb",
+      "pass": true,
+      "detail": "got='8470' want='8470'"
+    }
+  ]
+}

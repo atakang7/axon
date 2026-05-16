@@ -1,0 +1,13 @@
+{
+  "task": "02_word_count",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "output is integer matching wc -w",
+      "pass": true,
+      "detail": "got='43' want='43'"
+    }
+  ]
+}

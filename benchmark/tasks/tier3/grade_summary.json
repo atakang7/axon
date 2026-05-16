@@ -1,0 +1,62 @@
+[
+  {
+    "task": "01_rename_symbol",
+    "passed": 3,
+    "total": 3,
+    "ok": true
+  },
+  {
+    "task": "02_write_test_suite",
+    "passed": 2,
+    "total": 2,
+    "ok": true
+  },
+  {
+    "task": "03_http_server",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "04_resolve_merge",
+    "passed": 5,
+    "total": 5,
+    "ok": true
+  },
+  {
+    "task": "05_json_to_yaml",
+    "passed": 1,
+    "total": 2,
+    "ok": false
+  },
+  {
+    "task": "06_find_dead_code",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "07_add_cli_flag",
+    "passed": 3,
+    "total": 3,
+    "ok": true
+  },
+  {
+    "task": "08_dependency_graph",
+    "passed": 1,
+    "total": 1,
+    "ok": true
+  },
+  {
+    "task": "09_extract_helper",
+    "passed": 2,
+    "total": 2,
+    "ok": true
+  },
+  {
+    "task": "10_instrument_logging",
+    "passed": 2,
+    "total": 2,
+    "ok": true
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "task": "10_minishell",
+  "passed": 0,
+  "total": 2,
+  "ok": false,
+  "checks": [
+    {
+      "name": "happy path output",
+      "pass": false,
+      "detail": "rc=1 out=''"
+    },
+    {
+      "name": "exit 7 propagates",
+      "pass": false,
+      "detail": "1"
+    }
+  ]
+}

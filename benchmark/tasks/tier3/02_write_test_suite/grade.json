@@ -1,0 +1,18 @@
+{
+  "task": "02_write_test_suite",
+  "passed": 2,
+  "total": 2,
+  "ok": true,
+  "checks": [
+    {
+      "name": "pytest exits 0",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": ">=8 tests passed",
+      "pass": true,
+      "detail": "........                                                                 [100%]\n8 passed in 0.02s\n"
+    }
+  ]
+}

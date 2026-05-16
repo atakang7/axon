@@ -1,0 +1,13 @@
+{
+  "task": "06_dedupe",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "output abc preserve order",
+      "pass": true,
+      "detail": "'a\\nb\\nc\\n'"
+    }
+  ]
+}

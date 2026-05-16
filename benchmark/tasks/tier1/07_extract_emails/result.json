@@ -1,0 +1,35 @@
+{
+  "task": "07_extract_emails",
+  "duration_sec": 134.07,
+  "exit_code": 0,
+  "timed_out": false,
+  "turns": 1,
+  "event_counts": {
+    "session_start": 1,
+    "prompt": 1,
+    "user": 1,
+    "assistant_text": 9,
+    "tool_call": 14,
+    "tool_result": 14,
+    "turn_end": 1,
+    "done": 1
+  },
+  "tool_call_sequence": [
+    "read",
+    "write",
+    "write",
+    "exec",
+    "exec",
+    "exec",
+    "task",
+    "task",
+    "task",
+    "exec",
+    "task",
+    "exec",
+    "exec",
+    "task"
+  ],
+  "final_assistant_text": "**Task completed successfully.**\n\nAll success criteria from TASK.md have been satisfied:\n\n1. \u2705 `emails.py` exists and implements email extraction from stdin, deduplication, and sorting.\n2. \u2705 `text.txt` contains 3 distinct emails (`alice@example.com`, `bob.smith@company.co.uk`, `charlie+tag@domain.org`) with one duplicate (`alice@example.com` appears twice).\n3. \u2705 `python3 emails.py < text.txt` prints exactly the 3 unique emails, sorted alphabetically:\n   ```\n   alice@example.com\n   bob.smith@company.co.uk\n   charlie+tag@domain.org\n   ```\n4. \u2705 No errors; the workspace is clean with only the required files plus the pre\u2011existing `events.jsonl`.\n\nThe task is fully implemented and verified.",
+  "stderr_tail": null
+}

@@ -1,0 +1,13 @@
+{
+  "task": "03_log_parser",
+  "passed": 1,
+  "total": 1,
+  "ok": true,
+  "checks": [
+    {
+      "name": "expected output",
+      "pass": true,
+      "detail": "'bob: 2\\ndave: 1\\n'"
+    }
+  ]
+}

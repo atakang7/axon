@@ -1,0 +1,9 @@
+{
+  "name": "alice",
+  "active": true,
+  "tags": ["a", "b"],
+  "address": {
+    "city": "paris",
+    "zip": "75001"
+  }
+}
