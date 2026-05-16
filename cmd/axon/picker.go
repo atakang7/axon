@@ -1,13 +1,16 @@
-package agent
+package main
 
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/atakang7/axon/agent"
 )
 
 // lastChoice persists the user's previously selected providers so subsequent
@@ -19,7 +22,7 @@ type lastChoice struct {
 }
 
 func lastChoicePath() string {
-	return filepath.Join(dataDir(), "last_choice.json")
+	return filepath.Join(agent.DataDir(), "last_choice.json")
 }
 
 func loadLastChoice() lastChoice {
@@ -33,7 +36,7 @@ func loadLastChoice() lastChoice {
 }
 
 func saveLastChoice(lc lastChoice) {
-	_ = os.MkdirAll(dataDir(), 0755)
+	_ = os.MkdirAll(agent.DataDir(), 0755)
 	data, err := json.MarshalIndent(lc, "", "  ")
 	if err != nil {
 		return
@@ -42,14 +45,11 @@ func saveLastChoice(lc lastChoice) {
 }
 
 // pickProvider prints the available providers and reads a choice from stdin.
-// `defaultKey` (if present in `providers`) is selectable by pressing Enter.
-// `allowNone` adds an option to skip selection entirely (used for the pruner,
-// which is optional). Returns the chosen key, or "" if the user picked none.
-func pickProvider(role, defaultKey string, providers map[string]Provider, allowNone bool) string {
-	keys := providerNames(providers)
+func pickProvider(role, defaultKey string, providers map[string]agent.Provider, allowNone bool) string {
+	keys := agent.ProviderNames(providers)
 	if len(keys) == 0 {
 		if !allowNone {
-			fmt.Fprintln(os.Stderr, "no providers configured; create "+providersPath())
+			fmt.Fprintln(os.Stderr, "no providers configured; create "+agent.ProvidersPath())
 			os.Exit(1)
 		}
 		return ""
@@ -83,7 +83,6 @@ func pickProvider(role, defaultKey string, providers map[string]Provider, allowN
 		if choice == "" && defaultKey != "" {
 			return defaultKey
 		}
-		// Allow typing a key directly.
 		if _, ok := providers[strings.ToLower(choice)]; ok {
 			return strings.ToLower(choice)
 		}
@@ -102,50 +101,41 @@ func pickProvider(role, defaultKey string, providers map[string]Provider, allowN
 	}
 }
 
-// resolveProviderInteractive picks the main provider, falling back to the
-// interactive picker when the env-driven resolution can't decide.
-func resolveProviderInteractive(providers map[string]Provider, defaultKey string) (Provider, string, error) {
-	if p, err := ResolveProvider(providers); err == nil {
-		// Env / single-provider path — return whatever it picked. We still
-		// record the canonical key when we can.
+func resolveProviderInteractive(providers map[string]agent.Provider, defaultKey string) (agent.Provider, string, error) {
+	if p, err := agent.ResolveProvider(providers); err == nil {
 		key := canonicalKey(providers, p)
 		return p, key, nil
-	} else if err != ErrAmbiguousProvider {
-		return Provider{}, "", err
+	} else if !errors.Is(err, agent.ErrAmbiguousProvider) {
+		return agent.Provider{}, "", err
 	}
 	key := pickProvider("main agent", defaultKey, providers, false)
 	if key == "" {
-		return Provider{}, "", fmt.Errorf("no main agent selected")
+		return agent.Provider{}, "", fmt.Errorf("no main agent selected")
 	}
-	p, err := applyProviderEnvOverrides(providers[key])
+	p, err := agent.ApplyProviderEnvOverrides(providers[key])
 	return p, key, err
 }
 
-// resolvePrunerInteractive picks the pruner provider. Returns ("", nil) if the
-// user opted out (pruner disabled).
-func resolvePrunerInteractive(providers map[string]Provider, defaultKey string) (Provider, string, error) {
-	// Allow LLM_PRUNER_PROVIDER to bypass the picker, mirroring LLM_PROVIDER.
-	if sel := strings.TrimSpace(envString("LLM_PRUNER_PROVIDER")); sel != "" {
+func resolvePrunerInteractive(providers map[string]agent.Provider, defaultKey string) (agent.Provider, string, error) {
+	if sel := strings.TrimSpace(agent.EnvString("LLM_PRUNER_PROVIDER")); sel != "" {
 		if sel == "off" || sel == "none" {
-			return Provider{}, "", nil
+			return agent.Provider{}, "", nil
 		}
 		if p, ok := providers[strings.ToLower(sel)]; ok {
-			pp, err := applyProviderEnvOverrides(p)
+			pp, err := agent.ApplyProviderEnvOverrides(p)
 			return pp, strings.ToLower(sel), err
 		}
-		return Provider{}, "", fmt.Errorf("LLM_PRUNER_PROVIDER=%q not found in %s", sel, providersPath())
+		return agent.Provider{}, "", fmt.Errorf("LLM_PRUNER_PROVIDER=%q not found in %s", sel, agent.ProvidersPath())
 	}
 	key := pickProvider("pruner (cleans context when it grows)", defaultKey, providers, true)
 	if key == "" {
-		return Provider{}, "", nil
+		return agent.Provider{}, "", nil
 	}
-	p, err := applyProviderEnvOverrides(providers[key])
+	p, err := agent.ApplyProviderEnvOverrides(providers[key])
 	return p, key, err
 }
 
-// canonicalKey returns the providers-map key for a resolved Provider, or
-// empty when the provider came from raw env (not in the map).
-func canonicalKey(providers map[string]Provider, p Provider) string {
+func canonicalKey(providers map[string]agent.Provider, p agent.Provider) string {
 	want := strings.ToLower(p.Name) + "/" + p.Model
 	if _, ok := providers[want]; ok {
 		return want

@@ -1,12 +1,15 @@
-package agent
+package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/atakang7/axon/agent"
 )
 
 // Color palette modeled on Claude Code's CLI: orange-tinted brand accent,
@@ -58,7 +61,7 @@ var ui = &uiState{atLineStart: true}
 // pollute logs.
 var uiSilent bool
 
-func uiHeader(provider, model string, s *Session) {
+func uiHeader(provider, model string, s *agent.Session) {
 	if uiSilent {
 		return
 	}
@@ -316,7 +319,7 @@ func uiSessionNew() {
 	fmt.Printf("\n%s  ○  new session%s\n\n", mute, reset)
 }
 
-func uiSessionInfo(s *Session) {
+func uiSessionInfo(s *agent.Session) {
 	if uiSilent {
 		return
 	}
@@ -376,3 +379,85 @@ func prettyArgs(raw []byte) string {
 	}
 	return string(out)
 }
+
+// ttyHandler renders runtime events to the terminal. Owns the streaming
+// state (spinner, fence detection, line tracking) that used to live in
+// the global ui state and dispatches each event Kind to the matching
+// ui* helper above.
+type ttyHandler struct {
+	mu          sync.Mutex
+	spinnerStop func()
+	streamOpen  bool // assistant token stream has started this turn
+}
+
+func newTTYHandler() *ttyHandler { return &ttyHandler{} }
+
+func (h *ttyHandler) Handle(_ context.Context, e agent.Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch e.Kind {
+	case agent.KindUserInput:
+		// Echo handled by the line reader; nothing to print.
+	case agent.KindAPICall:
+		uiInfo("calling API...")
+		if h.spinnerStop != nil {
+			h.spinnerStop()
+		}
+		h.spinnerStop = uiSpinner()
+		h.streamOpen = false
+	case agent.KindToken:
+		if h.spinnerStop != nil {
+			h.spinnerStop()
+			h.spinnerStop = nil
+		}
+		if !h.streamOpen {
+			uiStartResponse()
+			h.streamOpen = true
+		}
+		uiToken(e.Text)
+	case agent.KindReasoning:
+		if h.spinnerStop != nil {
+			h.spinnerStop()
+			h.spinnerStop = nil
+		}
+		uiReasoning(e.Text)
+	case agent.KindToolArgDelta:
+		if h.spinnerStop != nil {
+			h.spinnerStop()
+			h.spinnerStop = nil
+		}
+		if e.Tool != nil {
+			uiToolArgDelta(e.Tool.Name, e.Tool.ArgsDelta)
+		}
+	case agent.KindAssistantEnd:
+		if h.streamOpen {
+			uiResponse()
+			h.streamOpen = false
+		}
+	case agent.KindToolCall:
+		if h.spinnerStop != nil {
+			h.spinnerStop()
+			h.spinnerStop = nil
+		}
+		if e.Tool != nil {
+			uiTool(e.Tool.Name, []byte(e.Tool.Args))
+		}
+	case agent.KindToolResult:
+		if e.Tool != nil {
+			uiToolResult(e.Tool.Result)
+		}
+	case agent.KindToolError:
+		if e.Err != nil {
+			uiToolError(e.Err)
+		}
+	case agent.KindPruneStart:
+		uiInfo("pruning context...")
+	case agent.KindInfo:
+		uiInfo(e.Text)
+	case agent.KindError:
+		if e.Err != nil {
+			uiError(e.Err)
+		}
+	}
+}
+

@@ -25,9 +25,16 @@ import (
 // Custom tool descriptions reach the model through the LLM provider's
 // tool schema, not the prompt. Agents that need to mention their custom
 // tools explicitly should do so in their role prompt.
-func buildSystemPrompt(s *Session, cfg *AgentConfig) string {
-	parts := []string{rolePrompt(cfg)}
-	parts = append(parts, builtinToolCatalog(cfg))
+// buildSystemPrompt composes the full system message:
+//
+//	[role prompt] + [built-in tool catalog] + [language/build probes] + [project orientation]
+//
+// rolePromptText is the agent's role text (empty = default). disabledBuiltins
+// names built-ins the catalog should omit (used by NewBare-style callers that
+// strip built-ins; for New() agents this is nil).
+func buildSystemPrompt(s *Session, rolePromptText string, disabledBuiltins map[string]bool) string {
+	parts := []string{rolePrompt(rolePromptText)}
+	parts = append(parts, builtinToolCatalog(disabledBuiltins))
 	if probes := runProbes(s.Cwd); probes != "" {
 		parts = append(parts, probes)
 	}
@@ -35,30 +42,17 @@ func buildSystemPrompt(s *Session, cfg *AgentConfig) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// rolePrompt resolves the role section: agent config wins, otherwise the
-// built-in default. Errors loading a config-declared prompt fall back to
-// the default with a stderr note (we do not want a missing file to crash
-// the agent at every turn).
-func rolePrompt(cfg *AgentConfig) string {
-	if cfg == nil {
-		return defaultRolePrompt
-	}
-	body, err := cfg.LoadSystemPrompt()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "warning: agent system_prompt:", err)
-		return defaultRolePrompt
-	}
+// rolePrompt returns body trimmed, or the runtime default when body is empty.
+func rolePrompt(body string) string {
 	if strings.TrimSpace(body) == "" {
 		return defaultRolePrompt
 	}
 	return strings.TrimRight(body, "\n")
 }
 
-// builtinToolCatalog produces the "# TOOLS" section listing only the
-// built-in tools still enabled for this agent. The text is intentionally
-// terse — full mode docs live in each tool's Description field, which the
-// LLM provider sees via the tool schema.
-func builtinToolCatalog(cfg *AgentConfig) string {
+// builtinToolCatalog lists the built-ins still active. Built-ins named in
+// disabled are skipped.
+func builtinToolCatalog(disabled map[string]bool) string {
 	type row struct{ name, blurb string }
 	rows := []row{
 		{toolRead, "Read files (skeleton / slice / full)."},
@@ -72,7 +66,7 @@ func builtinToolCatalog(cfg *AgentConfig) string {
 	var b strings.Builder
 	b.WriteString("# BUILT-IN TOOLS\n")
 	for _, r := range rows {
-		if cfg != nil && cfg.DisabledBuiltin(r.name) {
+		if disabled[r.name] {
 			continue
 		}
 		fmt.Fprintf(&b, "\n%q — %s", r.name, r.blurb)

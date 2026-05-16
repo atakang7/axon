@@ -161,28 +161,73 @@ func newAgent(cfg Config, withBuiltins bool) (*Agent, error) {
 		tools = append(tools, t)
 	}
 
-	// Synthesize the AgentConfig that the current prompt builder expects.
-	// This bridge goes away in commit 2b when AgentConfig moves out of
-	// the runtime and the prompt builder takes the inputs it actually
-	// needs directly.
-	bridgeCfg := &AgentConfig{
-		Name:               "embed",
-		SystemPromptInline: cfg.SystemPrompt,
+	disabled := map[string]bool{}
+	if !withBuiltins {
+		for _, name := range builtinToolNames() {
+			disabled[name] = true
+		}
 	}
 
 	if len(session.Messages) == 0 {
-		session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(session, bridgeCfg)}}
+		session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(session, cfg.SystemPrompt, disabled)}}
 	}
 
 	a := &Agent{
-		client:  client,
-		tools:   tools,
-		session: session,
-		pruner:  cfg.Pruner,
-		handler: cfg.Handler,
-		cfg:     bridgeCfg,
+		client:           client,
+		tools:            tools,
+		session:          session,
+		pruner:           cfg.Pruner,
+		handler:          cfg.Handler,
+		systemPrompt:     cfg.SystemPrompt,
+		disabledBuiltins: disabled,
+		withBuiltins:     withBuiltins,
+		customTools:      cfg.Tools,
 	}
 	return a, nil
+}
+
+// Reset wipes the session and rebuilds the system prompt and tool set.
+// Equivalent to /new in the CLI. Background shells are killed.
+func (a *Agent) Reset() {
+	bgReg.killAll()
+	a.session.Reset()
+	a.initSessionMessages()
+	var tools []Tool
+	if a.withBuiltins {
+		tools = builtinTools(a.session)
+	}
+	tools = append(tools, a.customTools...)
+	a.tools = tools
+}
+
+// Undo reverts the last recorded edit (atomic file write). Returns the
+// path that was restored and true, or ("", false) if nothing to undo.
+func (a *Agent) Undo() (string, bool) {
+	e, ok := a.session.Undo()
+	if !ok {
+		return "", false
+	}
+	if err := writeBytesRaw(e.Path, []byte(e.Before)); err != nil {
+		return "", false
+	}
+	_ = a.session.Save()
+	return e.Path, true
+}
+
+// Cd changes the agent's working directory. Returns the resolved absolute
+// path on success.
+func (a *Agent) Cd(target string) (string, error) {
+	if err := a.session.SetCwd(target); err != nil {
+		return "", err
+	}
+	_ = a.session.Save()
+	return a.session.Cwd, nil
+}
+
+// builtinToolNames returns the names of the runtime's built-in tools.
+// Used by NewBare's catalog suppression and by the slash-command Reset.
+func builtinToolNames() []string {
+	return []string{toolRead, toolWrite, toolExec, toolBashOutput, toolKillShell, toolSearch, toolTask}
 }
 
 // Step submits one user message and drives the loop until the assistant
@@ -269,16 +314,11 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	}
 }
 
-// RunWith drives the loop using the supplied InputFunc until input is
+// Run drives the loop using the supplied InputFunc until input is
 // exhausted (returns false) or ctx is cancelled. Each line of input
 // becomes one Step. Errors from Step are returned immediately; callers
 // who want to keep going on per-turn errors should drive Step themselves.
-//
-// Naming: this is RunWith rather than Run because the existing Run
-// method (defined in agent.go) is the legacy REPL entry point that
-// commit 2b will collapse into this. Keeping both during the transition
-// avoids breaking Main().
-func (a *Agent) RunWith(ctx context.Context, input InputFunc) error {
+func (a *Agent) Run(ctx context.Context, input InputFunc) error {
 	for {
 		line, ok := input()
 		if !ok {
@@ -303,6 +343,13 @@ func (a *Agent) RunWith(ctx context.Context, input InputFunc) error {
 func (a *Agent) Close() error {
 	bgReg.killAll()
 	return nil
+}
+
+// Session returns the agent's current Session. The returned pointer is
+// the live session; mutations affect runtime state. Treat it as
+// read-mostly; use Reset to wipe and Undo to revert edits.
+func (a *Agent) Session() *Session {
+	return a.session
 }
 
 // SessionPath returns the on-disk path of the current session file.

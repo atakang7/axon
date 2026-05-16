@@ -32,7 +32,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -77,49 +76,6 @@ const (
 	searchRegex   = "regex"
 	searchTrace   = "trace"
 )
-
-// BuildTools assembles the tool set for one agent. Built-ins ("hands and
-// legs": read, write, exec, search, task, bash_output, kill_shell) are
-// always added unless the agent config explicitly disables them. Custom
-// tools declared in cfg.Tools are appended.
-//
-// cfg may be nil — in that case every built-in is enabled and no custom
-// tools are added, matching the pre-config default behavior.
-//
-// Returns an error only if a custom tool fails to build (bad template,
-// unknown type). Built-in construction is infallible.
-func BuildTools(s *Session, cfg *AgentConfig) ([]Tool, error) {
-	type builtin struct {
-		name string
-		make func(*Session) Tool
-	}
-	builtins := []builtin{
-		{toolRead, ReadTool},
-		{toolWrite, WriteTool},
-		{toolExec, ExecTool},
-		{toolBashOutput, BashOutputTool},
-		{toolKillShell, KillShellTool},
-		{toolSearch, SearchTool},
-		{toolTask, TaskTool},
-	}
-	var tools []Tool
-	for _, b := range builtins {
-		if cfg != nil && cfg.DisabledBuiltin(b.name) {
-			continue
-		}
-		tools = append(tools, b.make(s))
-	}
-	if cfg != nil {
-		for _, tc := range cfg.Tools {
-			t, err := buildCustomTool(tc)
-			if err != nil {
-				return nil, fmt.Errorf("custom tool %q: %w", tc.Name, err)
-			}
-			tools = append(tools, t)
-		}
-	}
-	return tools, nil
-}
 
 // ---------------------------------------------------------------------------
 // Schema helpers

@@ -1,4 +1,4 @@
-package agent
+package main
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"text/template"
 	"time"
+
+	"github.com/atakang7/axon/agent"
 )
 
 // customtool.go — adapter that turns a ToolConfig into a Tool the runtime
@@ -21,25 +23,25 @@ const defaultShellToolTimeout = 60 * time.Second
 // buildCustomTool produces a Tool from a validated ToolConfig. The returned
 // Tool's Fn renders the configured command template against the LLM-supplied
 // args and runs it bound to the turn context.
-func buildCustomTool(tc ToolConfig) (Tool, error) {
+func buildCustomTool(tc ToolConfig) (agent.Tool, error) {
 	switch tc.Type {
 	case "shell":
 		return buildShellTool(tc)
 	default:
-		return Tool{}, fmt.Errorf("unsupported tool type %q", tc.Type)
+		return agent.Tool{}, fmt.Errorf("unsupported tool type %q", tc.Type)
 	}
 }
 
-func buildShellTool(tc ToolConfig) (Tool, error) {
+func buildShellTool(tc ToolConfig) (agent.Tool, error) {
 	cmdTpl, err := template.New("cmd").Funcs(shellFuncs).Parse(tc.Command)
 	if err != nil {
-		return Tool{}, fmt.Errorf("parse command template: %w", err)
+		return agent.Tool{}, fmt.Errorf("parse command template: %w", err)
 	}
 	var cwdTpl *template.Template
 	if tc.Cwd != "" {
 		cwdTpl, err = template.New("cwd").Funcs(shellFuncs).Parse(tc.Cwd)
 		if err != nil {
-			return Tool{}, fmt.Errorf("parse cwd template: %w", err)
+			return agent.Tool{}, fmt.Errorf("parse cwd template: %w", err)
 		}
 	}
 	timeout := time.Duration(tc.TimeoutSeconds) * time.Second
@@ -48,10 +50,10 @@ func buildShellTool(tc ToolConfig) (Tool, error) {
 	}
 	schema := tc.Schema
 	if schema == nil {
-		schema = obj("object", nil, nil)
+		schema = map[string]any{"type": "object", "additionalProperties": false}
 	}
 
-	return Tool{
+	return agent.Tool{
 		Name:        tc.Name,
 		Description: tc.Description,
 		Schema:      schema,
