@@ -41,7 +41,6 @@ type AgentConfig struct {
 	Description        string       `yaml:"description,omitempty"`
 	SystemPrompt       string       `yaml:"system_prompt,omitempty"`
 	SystemPromptInline string       `yaml:"system_prompt_inline,omitempty"`
-	DisableBuiltins    []string     `yaml:"disable_builtins,omitempty"`
 	Tools              []ToolConfig `yaml:"tools,omitempty"`
 
 	sourcePath string `yaml:"-"`
@@ -104,11 +103,6 @@ func LoadAgentConfig(name string) (*AgentConfig, error) {
 }
 
 func (c *AgentConfig) validate() error {
-	for _, b := range c.DisableBuiltins {
-		if !builtinNames[b] {
-			return fmt.Errorf("disable_builtins: unknown built-in tool %q", b)
-		}
-	}
 	seen := map[string]bool{}
 	for i, t := range c.Tools {
 		if t.Name == "" {
@@ -154,11 +148,8 @@ func (c *AgentConfig) LoadSystemPrompt() (string, error) {
 	return string(data), nil
 }
 
-// ToAgentConfig converts the YAML personality into the runtime's
-// agent.Config shape. Custom shell tools are built here; the runtime
-// then gets a flat tool list it can dispatch directly. disable_builtins
-// is honored by using agent.NewBare + manually composed built-ins
-// (handled in main.go).
+// BuildTools materializes the YAML tool list as runtime tools (shell
+// templates rendered into agent.Tool values).
 func (c *AgentConfig) BuildTools() ([]agent.Tool, error) {
 	var tools []agent.Tool
 	for _, tc := range c.Tools {
@@ -171,12 +162,3 @@ func (c *AgentConfig) BuildTools() ([]agent.Tool, error) {
 	return tools, nil
 }
 
-// DisabledBuiltin reports whether the agent has disabled the named built-in.
-func (c *AgentConfig) DisabledBuiltin(name string) bool {
-	for _, b := range c.DisableBuiltins {
-		if b == name {
-			return true
-		}
-	}
-	return false
-}

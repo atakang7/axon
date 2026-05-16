@@ -4,7 +4,7 @@
 
 Axon is a small library that runs the agent loop — streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under pressure, and emitting structured events at every step. Embedders supply a provider, optional tools, and a handler; the runtime drives the loop.
 
-The repo also ships a reference CLI (`cmd/axon`) that wires the runtime to a terminal: an interactive provider picker, a YAML loader for agent personalities, a colored TTY renderer, an optional JSONL event log, and slash commands. The CLI is one consumer of the library, not the product.
+The repo also ships a reference CLI (`cmd/axon`) that wires the runtime to a terminal: an interactive provider picker, a YAML loader for agent personalities, a colored TTY renderer, and slash commands. The CLI is one consumer of the library, not the product.
 
 ```
 github.com/atakang7/axon/agent     ← the runtime (import this)
@@ -40,7 +40,11 @@ That's the whole minimum. `New` constructs an agent with the runtime's built-in 
 deployTool := agent.Tool{
     Name:        "deploy",
     Description: "Deploy a service to staging.",
-    Schema:      json.RawMessage(`{"type":"object","properties":{"service":{"type":"string"}},"required":["service"]}`),
+    Schema: map[string]any{
+        "type": "object",
+        "properties": map[string]any{"service": map[string]any{"type": "string"}},
+        "required": []string{"service"},
+    },
     Fn: func(ctx context.Context, args json.RawMessage) (string, error) {
         var p struct{ Service string }
         if err := json.Unmarshal(args, &p); err != nil { return "", err }
@@ -55,47 +59,26 @@ ag, _ := agent.New(agent.Config{
 })
 ```
 
-`Tools` is appended to the built-ins. Names that collide with built-ins are rejected.
-
-If you want **no** built-ins (a strictly scoped agent — say, deploy-only), use `agent.NewBare`:
-
-```go
-ag, _ := agent.NewBare(agent.Config{
-    Provider: myProvider,
-    Tools:    []agent.Tool{deployTool, rollbackTool, statusTool},
-})
-```
-
-You can also compose explicitly with `agent.Builtins(session)` if you want some built-ins but not all.
+`Tools` is appended to the built-ins. Names that collide with built-ins are rejected. Built-ins (read, write, exec, search, task, bash_output, kill_shell) are always present — there is no knob to remove them.
 
 ### Observability
 
-The runtime emits events through a `Handler` interface — the same shape as `slog.Handler`:
+`Config.OnEvent` is a plain function field. The runtime calls it at every meaningful moment with an `Event`:
 
 ```go
-type Handler interface {
-    Handle(ctx context.Context, e Event)
+cfg.OnEvent = func(ctx context.Context, e agent.Event) {
+    switch e.Kind {
+    case agent.KindToken:
+        httpResp.Write([]byte(e.Text)) // stream tokens to a client
+    case agent.KindToolCall:
+        log.Printf("tool %s: %s", e.Tool.Name, e.Tool.Args)
+    }
 }
 ```
 
-Helpers in the package:
+Event kinds: `KindUserInput`, `KindToken`, `KindReasoning`, `KindAssistantEnd`, `KindToolCall`, `KindToolResult`, `KindToolError`, `KindTurnEnd`, `KindPruneStart`/`KindPruneEnd`, `KindError`. See `agent/handler.go` for the full set.
 
-- `agent.HandlerFunc(fn)` — adapt a plain function.
-- `agent.MultiHandler(a, b, c)` — fan out to multiple sinks.
-- `agent.DiscardHandler` — drop everything (default).
-
-```go
-cfg.Handler = agent.MultiHandler(
-    metricsSink,
-    agent.HandlerFunc(func(ctx context.Context, e agent.Event) {
-        if e.Kind == agent.KindToken {
-            httpResp.Write([]byte(e.Text))   // stream tokens to a client
-        }
-    }),
-)
-```
-
-Event kinds include `KindToken`, `KindReasoning`, `KindToolCall`, `KindToolResult`, `KindToolError`, `KindTurnEnd`, `KindPruneStart`/`KindPruneEnd`, `KindError`. See `agent/handler.go` for the full set.
+Fan-out is a one-liner — just call multiple sinks inside the closure. No `MultiHandler` ceremony needed.
 
 ### Owning vs. driving the loop
 
@@ -138,7 +121,6 @@ go build -o axon ./cmd/axon
 ./axon                                  # interactive
 ./axon --prompt "summarize TODOs"       # single-shot
 ./axon --agent reviewer                 # load ~/.config/axon/agents/reviewer.yaml
-./axon --log-json /tmp/run.jsonl        # capture structured events
 ```
 
 ### Provider config
@@ -170,7 +152,6 @@ Place YAML configs under `${AXON_AGENTS_DIR:-~/.config/axon/agents}/`:
 ```yaml
 name: reviewer
 system_prompt: ./reviewer.md
-disable_builtins: [write, exec]
 tools:
   - name: submit_review
     type: shell

@@ -1,14 +1,13 @@
 // Command axon is the reference CLI built on the axon agent runtime.
 //
 // All runtime logic lives in github.com/atakang7/axon/agent. This binary
-// is one consumer of that library: it adds flag parsing, an interactive
-// provider picker, a YAML loader for agent personalities, a terminal
-// renderer (TTYHandler), an optional JSONL event log (JSONLHandler),
-// and slash-command dispatch (/cd, /undo, /new, /session, /pwd).
+// wires the runtime to a terminal: an interactive provider picker, a
+// YAML loader for agent personalities, a colored TTY renderer, and
+// slash commands. It is one consumer of the library, not the product.
 //
 // Embedders building agents in Go should import the agent package
-// directly and bring their own Handler — this CLI is a reference, not
-// the only shape a consumer can take.
+// directly — this CLI is a reference, not the only shape a consumer
+// can take. See examples/minimal for the minimum-viable embed.
 package main
 
 import (
@@ -25,9 +24,8 @@ import (
 
 func main() {
 	var (
-		flagPrompt  = flag.String("prompt", "", "Run a single prompt non-interactively and exit when the assistant emits a final reply (no tool calls). Requires LLM_PROVIDER env to be set to skip the provider picker.")
-		flagLogJSON = flag.String("log-json", "", "Write a JSONL event log to this path.")
-		flagAgent   = flag.String("agent", "", "Named agent config to load from $AXON_AGENTS_DIR (default ~/.config/axon/agents/<name>.yaml). Empty = built-in default agent.")
+		flagPrompt = flag.String("prompt", "", "Run a single prompt non-interactively and exit when the assistant emits a final reply. Requires LLM_PROVIDER env to be set to skip the provider picker.")
+		flagAgent  = flag.String("agent", "", "Named agent config to load from $AXON_AGENTS_DIR (default ~/.config/axon/agents/<name>.yaml). Empty = built-in default CLI agent.")
 	)
 	flag.Parse()
 
@@ -40,17 +38,6 @@ func main() {
 	nonInteractive := *flagPrompt != ""
 	if nonInteractive {
 		uiSilent = true
-	}
-
-	var jsonlH *jsonlHandler
-	if *flagLogJSON != "" {
-		h, err := newJSONLHandler(*flagLogJSON)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "log-json:", err)
-			os.Exit(1)
-		}
-		jsonlH = h
-		defer jsonlH.Close()
 	}
 
 	providers, err := agent.LoadProviders()
@@ -112,12 +99,12 @@ func main() {
 		saveLastChoice(lastChoice{Main: mainKey, Pruner: prunerKey})
 	}
 
-	// Resolve agent personality into the runtime's Config inputs.
-	systemPrompt := ""
+	// Resolve system prompt: YAML wins, otherwise the CLI's default.
+	systemPrompt := defaultCLIPrompt
 	if agentCfg != nil {
-		if body, err := agentCfg.LoadSystemPrompt(); err == nil {
+		if body, err := agentCfg.LoadSystemPrompt(); err == nil && strings.TrimSpace(body) != "" {
 			systemPrompt = body
-		} else {
+		} else if err != nil {
 			fmt.Fprintln(os.Stderr, "warning: agent system_prompt:", err)
 		}
 	}
@@ -127,51 +114,23 @@ func main() {
 		return
 	}
 
-	// Compose handlers: TTY (when not silent) + optional JSONL.
-	var handlers []agent.Handler
-	if !uiSilent {
-		handlers = append(handlers, newTTYHandler())
-	}
-	if jsonlH != nil {
-		handlers = append(handlers, jsonlH)
-	}
-	handler := agent.MultiHandler(handlers...)
+	tty := newTTYHandler()
 
-	cfg := agent.Config{
+	ag, err := agent.New(agent.Config{
 		Provider:     p,
 		SystemPrompt: systemPrompt,
 		Tools:        customTools,
 		Pruner:       pruner,
-		Handler:      handler,
-	}
-
-	// disable_builtins requires NewBare + explicit composition since
-	// New() always includes the full built-in set.
-	var ag *agent.Agent
-	if agentCfg != nil && len(agentCfg.DisableBuiltins) > 0 {
-		session := agent.LoadOrCreateSession()
-		builtins := agent.Builtins(session)
-		var kept []agent.Tool
-		for _, t := range builtins {
-			if !agentCfg.DisabledBuiltin(t.Name) {
-				kept = append(kept, t)
-			}
-		}
-		cfg.Session = session
-		cfg.Tools = append(kept, customTools...)
-		ag, err = agent.NewBare(cfg)
-	} else {
-		ag, err = agent.New(cfg)
-	}
+		OnEvent:      tty.Handle,
+	})
 	if err != nil {
 		uiError(err)
 		return
 	}
 	defer ag.Close()
 
-	session := ag.Session()
 	if !nonInteractive {
-		uiHeader(p.Name, p.Model, session)
+		uiHeader(p.Name, p.Model, ag.Session())
 		if pruner != nil {
 			uiInfo(fmt.Sprintf("pruner: %s/%s", prunerProvider.Name, prunerProvider.Model))
 		} else {
@@ -220,3 +179,9 @@ func main() {
 		}
 	}
 }
+
+// defaultCLIPrompt is the role text the reference CLI uses when no
+// --agent personality is supplied. The runtime itself has no default
+// prompt; if you're building a different product on top of the agent
+// package you should provide your own.
+const defaultCLIPrompt = `You are a helpful AI assistant with file-system and shell tools. Read, write, search, and execute commands to accomplish what the user asks. Be concise; act rather than narrate.`

@@ -5,52 +5,51 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 )
 
 // api.go — public library API.
 //
-// This is the surface a Go program imports to embed axon. The CLI in
-// cmd/axon is one consumer of this API; HTTP servers, orchestrators, and
-// test harnesses are others. The runtime makes no assumptions about who
-// is calling — no flags, no signals, no terminal, no os.Exit.
+// The surface a Go program imports to embed axon. The reference CLI in
+// cmd/axon is one consumer of this API; HTTP servers, orchestrators,
+// and test harnesses are others. The runtime makes no assumptions about
+// who is calling — no flags, no signals, no terminal, no os.Exit.
 //
-// Construction:    New(Config) (*Agent, error)
-// Drive loop:      (*Agent).Run(ctx, InputFunc) error
-// Single step:     (*Agent).Step(ctx, string) (StepResult, error)
-// Cancel a turn:   (*Agent).Interrupt() bool
-// Release:         (*Agent).Close() error
+// Construction:  New(Config) (*Agent, error)
+// Drive loop:    (*Agent).Run(ctx, InputFunc) error
+// Single step:   (*Agent).Step(ctx, string) (StepResult, error)
+// Cancel turn:   (*Agent).Interrupt() bool
+// Release:       (*Agent).Close() error
 //
-// Built-ins are unconditional in New: every agent has the "hands and
-// legs" (read, write, exec, search, task, bash_output, kill_shell).
-// Embedders who want a strictly custom toolset use NewBare, which omits
-// them entirely. Builtins() exposes the built-in set for manual
-// composition.
+// Built-in tools (read, write, exec, search, task, bash_output,
+// kill_shell) are unconditional — every agent has them. Custom tools
+// supplied via Config.Tools are appended.
 
-// Sentinel errors. Wrap with %w when returning from internals; check with
-// errors.Is at the boundary.
+// Sentinel errors. Wrap with %w when returning from internals; check
+// with errors.Is at the boundary.
 var (
-	ErrNoProvider    = errors.New("agent: no provider configured")
-	ErrToolNotFound  = errors.New("agent: tool not found")
-	ErrDuplicateTool = errors.New("agent: duplicate tool name")
-	ErrInterrupted   = errors.New("agent: turn interrupted")
+	ErrNoProvider     = errors.New("agent: no provider configured")
+	ErrNoSystemPrompt = errors.New("agent: Config.SystemPrompt is required")
+	ErrToolNotFound   = errors.New("agent: tool not found")
+	ErrDuplicateTool  = errors.New("agent: duplicate tool name")
+	ErrInterrupted    = errors.New("agent: turn interrupted")
 )
 
-// Config is the contract for constructing an Agent. Provider is the only
-// required field; every other field has a sensible zero-value default.
+// Config is the contract for constructing an Agent. Provider and
+// SystemPrompt are required; every other field has a zero-value default.
 type Config struct {
 	// Provider selects the LLM endpoint. Required.
 	Provider Provider
 
-	// SystemPrompt is the agent's role text. Empty means the runtime's
-	// built-in default prompt is used. The runtime appends the tool
-	// catalog and project orientation automatically — your prompt should
-	// describe behavior, not enumerate the tools.
+	// SystemPrompt is the agent's role text — the entire "who am I"
+	// answer the runtime sends to the model. Required. The runtime
+	// appends the built-in tool catalog and project orientation
+	// automatically; the role text should describe behavior, not
+	// enumerate tools.
 	SystemPrompt string
 
-	// Tools are appended to the built-in tool set (read, write, exec,
-	// search, task, bash_output, kill_shell). Names must not collide
-	// with built-ins. Use NewBare if you want NO built-ins.
+	// Tools are appended to the built-in tool set. Names must not
+	// collide with built-ins (read, write, exec, search, task,
+	// bash_output, kill_shell).
 	Tools []Tool
 
 	// Pruner, when non-nil, lets the runtime drop or park old messages
@@ -58,29 +57,30 @@ type Config struct {
 	Pruner *Pruner
 
 	// Cwd is the working directory the agent operates against. Empty
-	// means os.Getwd at New() time.
+	// means the current process cwd at New() time.
 	Cwd string
 
-	// Session, when non-nil, is reused (e.g., resuming an existing
-	// conversation). nil means the runtime loads or creates the default
-	// on-disk session at sessionPath().
+	// Session, when non-nil, is reused (e.g. resuming an existing
+	// conversation). nil means the runtime loads or creates the
+	// default on-disk session at SessionPath().
 	Session *Session
 
-	// Handler receives observability events emitted by the runtime
+	// OnEvent receives observability events emitted by the runtime
 	// (tokens, tool calls, turn boundaries, prune cycles). nil means
-	// events are dropped. Compose multiple sinks with MultiHandler.
-	Handler Handler
+	// events are dropped. Fan out by wrapping multiple sinks inside
+	// the closure.
+	OnEvent func(ctx context.Context, e Event)
 }
 
-// InputFunc supplies user input to Run. It returns (line, true) for each
-// turn and (_, false) when input is exhausted, at which point Run returns
-// nil. Reading from a terminal, a channel, or an HTTP request body all
-// satisfy this contract.
+// InputFunc supplies user input to Run. Returns (line, true) for each
+// turn and (_, false) when input is exhausted, at which point Run
+// returns nil. Reading from a terminal, a channel, or an HTTP request
+// body all satisfy this contract.
 type InputFunc func() (string, bool)
 
 // StepResult summarizes one Step call. Assistant holds the final
 // assistant text emitted with no further tool calls; ToolCalls lists
-// every tool invocation that happened on the way there (in order); Turn
+// every tool invocation that happened on the way there, in order; Turn
 // is the session turn counter after the step completes.
 type StepResult struct {
 	Assistant string
@@ -88,45 +88,14 @@ type StepResult struct {
 	Turn      int
 }
 
-// New constructs an Agent with the runtime's built-in tools plus the
-// caller's Tools appended. Most embedders want this.
+// New constructs an Agent. Built-in tools are always present; cfg.Tools
+// are appended.
 func New(cfg Config) (*Agent, error) {
-	return newAgent(cfg, true)
-}
-
-// NewBare constructs an Agent with ONLY the caller's Tools — no
-// built-ins. Use this for specialized agents whose capability surface
-// must be strictly limited (e.g., a deploy-only agent that should never
-// touch the filesystem). The caller is responsible for supplying every
-// tool the agent will need.
-func NewBare(cfg Config) (*Agent, error) {
-	return newAgent(cfg, false)
-}
-
-// Builtins returns the runtime's built-in tool set bound to the given
-// session. Useful for manual composition with NewBare:
-//
-//	tools := append(agent.Builtins(sess), myTool)
-//	ag, _ := agent.NewBare(agent.Config{... Tools: tools ...})
-func Builtins(s *Session) []Tool {
-	return builtinTools(s)
-}
-
-func builtinTools(s *Session) []Tool {
-	return []Tool{
-		ReadTool(s),
-		WriteTool(s),
-		ExecTool(s),
-		BashOutputTool(s),
-		KillShellTool(s),
-		SearchTool(s),
-		TaskTool(s),
-	}
-}
-
-func newAgent(cfg Config, withBuiltins bool) (*Agent, error) {
 	if cfg.Provider.Name == "" && cfg.Provider.BaseURL == "" && cfg.Provider.Model == "" {
 		return nil, ErrNoProvider
+	}
+	if cfg.SystemPrompt == "" {
+		return nil, ErrNoSystemPrompt
 	}
 	client, err := NewClient(cfg.Provider)
 	if err != nil {
@@ -143,12 +112,7 @@ func newAgent(cfg Config, withBuiltins bool) (*Agent, error) {
 		}
 	}
 
-	// Compose the tool list. Built-ins (when enabled) first, then the
-	// caller's tools. Reject collisions.
-	var tools []Tool
-	if withBuiltins {
-		tools = builtinTools(session)
-	}
+	tools := builtinTools(session)
 	seen := map[string]bool{}
 	for _, t := range tools {
 		seen[t.Name] = true
@@ -161,41 +125,40 @@ func newAgent(cfg Config, withBuiltins bool) (*Agent, error) {
 		tools = append(tools, t)
 	}
 
-	disabled := map[string]bool{}
-	if !withBuiltins {
-		for _, name := range builtinToolNames() {
-			disabled[name] = true
-		}
-	}
-
 	if len(session.Messages) == 0 {
-		session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(session, cfg.SystemPrompt, disabled)}}
+		session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(session, cfg.SystemPrompt)}}
 	}
 
-	a := &Agent{
-		client:           client,
-		tools:            tools,
-		session:          session,
-		pruner:           cfg.Pruner,
-		handler:          cfg.Handler,
-		systemPrompt:     cfg.SystemPrompt,
-		disabledBuiltins: disabled,
-		withBuiltins:     withBuiltins,
-		customTools:      cfg.Tools,
+	return &Agent{
+		client:       client,
+		tools:        tools,
+		session:      session,
+		pruner:       cfg.Pruner,
+		onEvent:      cfg.OnEvent,
+		systemPrompt: cfg.SystemPrompt,
+		customTools:  cfg.Tools,
+	}, nil
+}
+
+func builtinTools(s *Session) []Tool {
+	return []Tool{
+		ReadTool(s),
+		WriteTool(s),
+		ExecTool(s),
+		BashOutputTool(s),
+		KillShellTool(s),
+		SearchTool(s),
+		TaskTool(s),
 	}
-	return a, nil
 }
 
 // Reset wipes the session and rebuilds the system prompt and tool set.
-// Equivalent to /new in the CLI. Background shells are killed.
+// Background shells are killed.
 func (a *Agent) Reset() {
 	bgReg.killAll()
 	a.session.Reset()
 	a.initSessionMessages()
-	var tools []Tool
-	if a.withBuiltins {
-		tools = builtinTools(a.session)
-	}
+	tools := builtinTools(a.session)
 	tools = append(tools, a.customTools...)
 	a.tools = tools
 }
@@ -214,8 +177,8 @@ func (a *Agent) Undo() (string, bool) {
 	return e.Path, true
 }
 
-// Cd changes the agent's working directory. Returns the resolved absolute
-// path on success.
+// Cd changes the agent's working directory. Returns the resolved
+// absolute path on success.
 func (a *Agent) Cd(target string) (string, error) {
 	if err := a.session.SetCwd(target); err != nil {
 		return "", err
@@ -224,16 +187,8 @@ func (a *Agent) Cd(target string) (string, error) {
 	return a.session.Cwd, nil
 }
 
-// builtinToolNames returns the names of the runtime's built-in tools.
-// Used by NewBare's catalog suppression and by the slash-command Reset.
-func builtinToolNames() []string {
-	return []string{toolRead, toolWrite, toolExec, toolBashOutput, toolKillShell, toolSearch, toolTask}
-}
-
-// Step submits one user message and drives the loop until the assistant
-// emits a text response with no further tool calls. Returns when the
-// turn settles or ctx is cancelled. For a long-lived REPL-style loop,
-// use Run instead.
+// Step submits one user message and drives the loop until the
+// assistant emits text with no further tool calls.
 func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) {
 	if userInput == "" {
 		return StepResult{}, fmt.Errorf("agent: empty input")
@@ -314,10 +269,8 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	}
 }
 
-// Run drives the loop using the supplied InputFunc until input is
-// exhausted (returns false) or ctx is cancelled. Each line of input
-// becomes one Step. Errors from Step are returned immediately; callers
-// who want to keep going on per-turn errors should drive Step themselves.
+// Run drives the loop using input until it returns false or ctx is
+// cancelled. Each line becomes one Step.
 func (a *Agent) Run(ctx context.Context, input InputFunc) error {
 	for {
 		line, ok := input()
@@ -338,30 +291,21 @@ func (a *Agent) Run(ctx context.Context, input InputFunc) error {
 	}
 }
 
-// Close releases resources held by the agent: background shells spawned
-// via the exec tool, file handles, etc. Idempotent.
+// Close releases resources held by the agent: background shells, file
+// handles, etc. Idempotent.
 func (a *Agent) Close() error {
 	bgReg.killAll()
 	return nil
 }
 
-// Session returns the agent's current Session. The returned pointer is
-// the live session; mutations affect runtime state. Treat it as
-// read-mostly; use Reset to wipe and Undo to revert edits.
-func (a *Agent) Session() *Session {
-	return a.session
-}
+// Session returns the agent's current Session. Treat it as read-mostly;
+// use Reset to wipe and Undo to revert edits.
+func (a *Agent) Session() *Session { return a.session }
 
 // SessionPath returns the on-disk path of the current session file.
-// Useful for embedders that want to persist or display where state lives.
 func (a *Agent) SessionPath() string {
 	if a.session == nil {
 		return ""
 	}
 	return a.session.path
 }
-
-// ensure unused-import suppression in early builds (os is referenced
-// transitively in cfg defaults that may move; keep this here to stop
-// import churn during the transition).
-var _ = os.Getwd

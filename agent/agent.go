@@ -34,24 +34,15 @@ type Agent struct {
 	// Interrupt() to fire it (e.g. from a SIGINT handler).
 	turnCancel atomic.Pointer[context.CancelFunc]
 
-	// handler is the public event sink. nil means events are discarded.
-	handler Handler
+	// onEvent is the public event sink. nil means events are discarded.
+	onEvent func(ctx context.Context, e Event)
 
 	// systemPrompt is the agent's role text, captured at construction so
 	// Reset can rebuild the system message after the session is wiped.
 	systemPrompt string
 
-	// disabledBuiltins names built-ins suppressed from the tool catalog.
-	// Used by NewBare-style callers; nil for New() agents.
-	disabledBuiltins map[string]bool
-
-	// withBuiltins records whether the agent was built with New (true) or
-	// NewBare (false). Reset uses this to decide whether to re-bind the
-	// session-aware built-ins after a session wipe.
-	withBuiltins bool
-
 	// customTools holds the caller-supplied tools (Config.Tools). Reset
-	// preserves these across session wipes; only built-ins are rebound.
+	// preserves these across session wipes; built-ins are rebound.
 	customTools []Tool
 }
 
@@ -67,7 +58,7 @@ func (a *Agent) Interrupt() bool {
 }
 
 func (a *Agent) initSessionMessages() {
-	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.session, a.systemPrompt, a.disabledBuiltins)}}
+	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.session, a.systemPrompt)}}
 }
 
 func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {

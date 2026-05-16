@@ -9,24 +9,28 @@ and this project adheres to [Semantic Versioning](https://www.semver.org/spec/v2
 
 ### Added
 
-- **Public Go library API.** The runtime is now importable as `github.com/atakang7/axon/agent`. New surface: `Config`, `New`, `NewBare`, `Builtins`, `Step`, `Run`, `Interrupt`, `Reset`, `Undo`, `Cd`, `Session`, `Close`, `SessionPath`. Embedders construct agents from Go directly; YAML is no longer the only way in.
-- **`Handler` interface for observability** (slog-style). `Handler.Handle(ctx, Event)`, plus `HandlerFunc`, `MultiHandler`, `DiscardHandler`. The runtime emits structured `Event`s with a `Kind` discriminator (KindToken, KindToolCall, KindToolResult, KindTurnEnd, KindPruneStart/End, ...). The terminal renderer and JSONL log are now both Handlers built on this.
-- **Sentinel errors:** `ErrNoProvider`, `ErrToolNotFound`, `ErrDuplicateTool`, `ErrInterrupted`.
-- **Exports for CLI consumers:** `DataDir`, `ConfigDir`, `ProvidersPath`, `SessionPath`, `EnvString`, `ApplyProviderEnvOverrides`, `ProviderNames` — small surface so CLIs can resolve XDG paths without re-implementing them.
+- **Public Go library API.** The runtime is importable as `github.com/atakang7/axon/agent`. Surface: `Config`, `New`, `Step`, `Run`, `Interrupt`, `Reset`, `Undo`, `Cd`, `Session`, `Close`, `SessionPath`.
+- **`Config.OnEvent`** — plain `func(ctx, Event)` field for observability. The runtime emits structured `Event`s with a `Kind` discriminator (`KindToken`, `KindToolCall`, `KindToolResult`, `KindTurnEnd`, `KindPruneStart`/`End`, ...). Fan-out is whatever the embedder writes inside the closure; no Handler interface, no MultiHandler ceremony.
+- **Sentinel errors:** `ErrNoProvider`, `ErrNoSystemPrompt`, `ErrToolNotFound`, `ErrDuplicateTool`, `ErrInterrupted`.
+- **CLI exports:** `DataDir`, `ConfigDir`, `ProvidersPath`, `SessionPath`, `EnvString`, `ApplyProviderEnvOverrides`, `ProviderNames` — small surface so CLIs can resolve XDG paths without re-implementing them.
+- **`examples/minimal/main.go`** — the 30-line embed.
 
 ### Changed
 
 - **Repository structure flipped:** runtime is `agent/`; reference CLI is `cmd/axon/`. The `internal/` boundary that made the runtime un-importable is gone.
-- **CLI shell moved out of the runtime.** `Main()`, the interactive provider picker, `lastChoice` persistence, the YAML loader, `customtool.go`, `ui.go`, `jsonl_logger.go`, and the `pasteAwareInput` reader all live in `cmd/axon` now. The runtime no longer writes to stdout — all output goes through `Handler`.
+- **CLI shell moved out of the runtime.** `Main()`, the interactive provider picker, `lastChoice` persistence, the YAML loader, `customtool.go`, `ui.go`, and the `pasteAwareInput` reader all live in `cmd/axon` now. The runtime no longer writes to stdout — all output goes through `Config.OnEvent`.
 - **Slash commands are CLI-only.** `/new`, `/undo`, `/cd`, `/pwd`, `/session` live in `cmd/axon/commands.go` and map onto methods on `*Agent`.
-- **Built-ins are unconditional in `New`.** The old `DisableBuiltins` knob on the runtime is gone; use `NewBare` plus `Builtins` for explicit composition. The CLI still honors YAML's `disable_builtins` by going through `NewBare`.
-- **`buildSystemPrompt` no longer takes `*AgentConfig`** — it takes a system-prompt string and a "disabled built-ins" set. Decouples the runtime from any config-file format.
+- **`Config.SystemPrompt` is required.** The runtime has no opinion of its own about what an agent is; the role text is the embedder's call. CLI ships a small default-prompt string for its own use.
 
 ### Removed
 
-- `agent.Main()` — replaced by `New` + `Step`/`Run` on the embedder side. `cmd/axon/main.go` is the new CLI entry.
+- `agent.Main()` — replaced by `New` + `Step`/`Run`.
 - `agent.BuildTools` — `New` does the composition.
-- Direct `ui*` and `logger.Emit` calls from the runtime — every observable moment is an `Event` now.
+- `agent.NewBare`, `agent.Builtins`, `Config.DisableBuiltins`, YAML `disable_builtins` — built-ins are unconditional. One constructor.
+- `agent.Handler` interface, `HandlerFunc`, `MultiHandler`, `DiscardHandler` — replaced by `Config.OnEvent`. Composition is a closure.
+- JSONL event log and `--log-json` flag. Embedders who want structured logs write 5 lines of `OnEvent` that delegate to `slog` or anything else.
+- `defaultRolePrompt` — the runtime no longer ships a coding-agent personality.
+- Direct `ui*` and `logger.Emit` calls from the runtime.
 - All test files. They referenced the pre-refactor types and will be reintroduced against the new API in a follow-up.
 
 ## [0.3.0] - 2026-05-07

@@ -13,9 +13,9 @@ The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. E
 
 ```
 agent/
-  api.go              Config, New, NewBare, Step, Run, Reset, Undo, Cd, Session, Close
+  api.go              Config, New, Step, Run, Reset, Undo, Cd, Session, Close
   agent.go            Agent struct, chat/retry, runTool
-  handler.go          Handler interface, HandlerFunc, MultiHandler, Event, Kind
+  handler.go          Event, Kind, ToolEvent, PruneInfo (emitted via Config.OnEvent)
   exports.go          DataDir, ProvidersPath, EnvString, ... (helpers CLIs need)
   session.go          Session struct, append-only log, edit history, undo
   memory.go           park/recall/forget projections; TaskTool lives here
@@ -35,8 +35,7 @@ cmd/axon/
   picker.go           interactive provider picker, lastChoice persistence
   yamlcfg.go          YAML agent personality loader (AgentConfig, ToolConfig)
   customtool.go       YAML ToolConfig → agent.Tool adapter (shell only today)
-  tty_handler.go      terminal renderer + ttyHandler implementing agent.Handler
-  jsonl_handler.go    JSONL event log + jsonlHandler implementing agent.Handler
+  tty_handler.go      terminal renderer + ttyHandler that consumes agent.Event
   commands.go         slash-command dispatch (/new, /undo, /cd, /pwd, /session)
   input.go            paste-aware stdin reader, single-shot input
 ```
@@ -56,7 +55,7 @@ prune? ──► Pruner.Prune (parks/forgets old blocks)
 chat() ──► Client.ChatStream
    │           │       │      │
    │       tokens   reasoning  tool-arg deltas
-   │           └──► Handler.Handle(Event{...})
+   │           └──► Config.OnEvent(ctx, Event{...})
    │
    ▼
 tool_calls?
@@ -79,10 +78,8 @@ emit AssistantEnd, TurnEnd, return StepResult
 The whole API of `package agent`:
 
 ```go
-// Construction
-func New(Config) (*Agent, error)         // built-ins + user tools
-func NewBare(Config) (*Agent, error)     // user tools only
-func Builtins(*Session) []Tool           // expose built-ins for manual composition
+// Construction — built-ins are always present; cfg.Tools are appended.
+func New(Config) (*Agent, error)
 
 // Agent
 type Agent struct{ /* opaque */ }
@@ -95,13 +92,13 @@ func (a *Agent) Cd(path) (string, error)
 func (a *Agent) Session() *Session
 func (a *Agent) Close() error
 
-// Config
+// Config — Provider and SystemPrompt are required.
 type Config struct {
     Provider     Provider
     SystemPrompt string
     Tools        []Tool
     Pruner       *Pruner
-    Handler      Handler
+    OnEvent      func(ctx, Event)
     Cwd          string
     Session      *Session
 }
@@ -114,27 +111,25 @@ type Tool struct {
     Fn          func(ctx, args) (string, error)
 }
 
-// Observability — slog-style
-type Handler interface { Handle(ctx, Event) }
-type HandlerFunc func(ctx, Event)        // adapter
-func MultiHandler(...Handler) Handler    // fan-out
-var DiscardHandler Handler               // drop everything
+// Observability — plain function field on Config. Fan-out is a
+// one-line closure that calls multiple sinks.
 
 // Errors
 var (
-    ErrNoProvider, ErrToolNotFound, ErrDuplicateTool, ErrInterrupted
+    ErrNoProvider, ErrNoSystemPrompt, ErrToolNotFound,
+    ErrDuplicateTool, ErrInterrupted
 )
 ```
 
 ## Invariants
 
 - **`Session.Messages` is append-only.** Park / recall / forget are projections built in `ContextMessages`, never mutations. Audit history survives pruning.
-- **Built-ins are unconditional in `New`.** No "subtract this built-in" knob. Use `NewBare` + `Builtins` for explicit composition.
+- **Built-ins are unconditional.** Every agent has the hands-and-legs tools (read, write, exec, search, task, bash_output, kill_shell). No knob to remove them.
 - **Tool execution is turn-scoped.** Ctrl-C / `Interrupt` cancels the in-flight chat AND kills the running tool's process group. Background shells outlive turns but die on `Close` or process exit.
 - **Custom tool names cannot collide with built-ins.** Enforced at `New` time.
 - **Writes are atomic.** Every file mutation goes through `writeBytesRaw` (tmp + rename). Formatters run after, never during, so `Undo` is byte-exact.
 - **Reason field required on every tool call.** The model must articulate intent before paying the call's token cost.
-- **The runtime never writes to stdout.** All observability goes through `Handler`. The CLI's `ttyHandler` is the only thing that prints.
+- **The runtime never writes to stdout.** All observability goes through `Config.OnEvent`. The CLI's `ttyHandler` is the only thing that prints.
 
 ## How `cmd/axon` consumes the runtime
 
@@ -151,13 +146,12 @@ agent.LoadProviders()           ← reads ~/.config/agent/providers.json
 pickProvider (interactive)
    │
    ▼
-ttyH := newTTYHandler()
-jsonlH := newJSONLHandler(--log-json)   (optional)
+tty := newTTYHandler()
    │
    ▼
 ag, _ := agent.New(agent.Config{
     Provider, SystemPrompt, Tools (from YAML),
-    Pruner, Handler: MultiHandler(ttyH, jsonlH),
+    Pruner, OnEvent: tty.Handle,
 })
    │
    ▼
@@ -166,14 +160,12 @@ for line := range stdin:
    else:      ag.Step(ctx, line)
 ```
 
-When the YAML config sets `disable_builtins`, the CLI uses `agent.NewBare` and composes the kept built-ins manually via `agent.Builtins`.
-
 ## Extending
 
 - **New built-in tool** → add `tool_<name>.go` with a `<Name>Tool(s *Session) Tool` constructor; register in `builtinTools` in `api.go`.
 - **New custom tool kind** (e.g. MCP) → add the arm in `buildCustomTool` (`cmd/axon/customtool.go`). The runtime needs no changes — MCP would be `Tool` values whose `Fn` happens to do an RPC.
 - **New slash command** → add a case in `cmd/axon/commands.go`. Add the underlying operation as a method on `*Agent` if needed.
-- **New observability sink** → implement `agent.Handler`. Compose with `MultiHandler`.
+- **New observability sink** → write a function and pass it as `Config.OnEvent`. Fan-out is a one-line closure.
 - **New session store** → embedders pass their own `*Session` to `Config.Session`. The runtime works with whatever it gets.
 - **New provider** → extend `LoadProviders` in `providers.go`; the streaming layer is OpenAI-compatible and already handles most.
 
