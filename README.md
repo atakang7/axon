@@ -1,287 +1,215 @@
 # axon
 
-A minimal terminal coding agent for developers. Connects to any OpenAI‑compatible LLM and gives it flat tools to read files, write files, search text, run shell commands, and manage context with TTL-based memory.
+**A Go runtime for building LLM agents.**
 
-**Principles**
+Axon is a small library that runs the agent loop — streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under pressure, and emitting structured events at every step. Embedders supply a provider, optional tools, and a handler; the runtime drives the loop.
 
-- **Config without magic defaults** – runtime behavior comes from provider config or env
-- **Session persistence** – every conversation is saved and resumes automatically
-- **TTL-based context management** – automatic parking/recall based on token pressure
-- **Deterministic** – follows a structured turn lifecycle
-- **Undo‑ready** – every file edit can be reverted with `/undo`
+The repo also ships a reference CLI (`cmd/axon`) that wires the runtime to a terminal: an interactive provider picker, a YAML loader for agent personalities, a colored TTY renderer, an optional JSONL event log, and slash commands. The CLI is one consumer of the library, not the product.
 
----
-
-## Install
-
-### From source
-
-```sh
-git clone https://github.com/atakang7/axon
-cd axon
-go build -o axon .
-# optionally move to your PATH
-mv axon ~/.local/bin/
 ```
-
-### With `go install`
-
-```sh
-go install github.com/atakang7/axon@latest
+github.com/atakang7/axon/agent     ← the runtime (import this)
+github.com/atakang7/axon/cmd/axon  ← the reference CLI
 ```
 
 ---
 
-## Setup
+## The library
 
-### 1. Provider config file
+### Minimum viable embed
 
-Create `${XDG_CONFIG_HOME:-~/.config}/agent/providers.json`, or point `AXON_PROVIDERS_PATH` at a different file:
+```go
+import "github.com/atakang7/axon/agent"
+
+ag, err := agent.New(agent.Config{
+    Provider: agent.Provider{
+        Name: "openai", Model: "gpt-4o", BaseURL: "https://api.openai.com",
+        APIKey: os.Getenv("OPENAI_API_KEY"),
+    },
+})
+if err != nil { return err }
+defer ag.Close()
+
+res, err := ag.Step(ctx, "list every TODO comment under cmd/")
+```
+
+That's the whole minimum. `New` constructs an agent with the runtime's built-in tools (read, write, exec, search, task, bash_output, kill_shell) attached. `Step` drives one user turn to completion and returns the assistant text + every tool call that happened.
+
+### Adding your own tools
+
+```go
+deployTool := agent.Tool{
+    Name:        "deploy",
+    Description: "Deploy a service to staging.",
+    Schema:      json.RawMessage(`{"type":"object","properties":{"service":{"type":"string"}},"required":["service"]}`),
+    Fn: func(ctx context.Context, args json.RawMessage) (string, error) {
+        var p struct{ Service string }
+        if err := json.Unmarshal(args, &p); err != nil { return "", err }
+        return runDeploy(ctx, p.Service)
+    },
+}
+
+ag, _ := agent.New(agent.Config{
+    Provider:     myProvider,
+    SystemPrompt: "You are a deployment assistant.",
+    Tools:        []agent.Tool{deployTool},
+})
+```
+
+`Tools` is appended to the built-ins. Names that collide with built-ins are rejected.
+
+If you want **no** built-ins (a strictly scoped agent — say, deploy-only), use `agent.NewBare`:
+
+```go
+ag, _ := agent.NewBare(agent.Config{
+    Provider: myProvider,
+    Tools:    []agent.Tool{deployTool, rollbackTool, statusTool},
+})
+```
+
+You can also compose explicitly with `agent.Builtins(session)` if you want some built-ins but not all.
+
+### Observability
+
+The runtime emits events through a `Handler` interface — the same shape as `slog.Handler`:
+
+```go
+type Handler interface {
+    Handle(ctx context.Context, e Event)
+}
+```
+
+Helpers in the package:
+
+- `agent.HandlerFunc(fn)` — adapt a plain function.
+- `agent.MultiHandler(a, b, c)` — fan out to multiple sinks.
+- `agent.DiscardHandler` — drop everything (default).
+
+```go
+cfg.Handler = agent.MultiHandler(
+    metricsSink,
+    agent.HandlerFunc(func(ctx context.Context, e agent.Event) {
+        if e.Kind == agent.KindToken {
+            httpResp.Write([]byte(e.Text))   // stream tokens to a client
+        }
+    }),
+)
+```
+
+Event kinds include `KindToken`, `KindReasoning`, `KindToolCall`, `KindToolResult`, `KindToolError`, `KindTurnEnd`, `KindPruneStart`/`KindPruneEnd`, `KindError`. See `agent/handler.go` for the full set.
+
+### Owning vs. driving the loop
+
+Two ways to use the agent:
+
+```go
+// You own the loop — good for HTTP handlers, orchestrators, tests.
+res, err := ag.Step(ctx, userMessage)
+
+// The runtime drives the loop — good for REPLs, batch runs.
+err := ag.Run(ctx, func() (string, bool) { return readLine() })
+```
+
+Both are first-class. `Run` is just sugar over `Step` for the input-source-driven case.
+
+### Operations exposed on `*Agent`
+
+```go
+ag.Step(ctx, input)         // one user turn
+ag.Run(ctx, inputFn)        // loop until input exhausts
+ag.Interrupt() bool         // cancel the in-flight turn
+ag.Reset()                  // wipe session, rebuild system prompt
+ag.Undo() (string, bool)    // revert the last file edit
+ag.Cd(path) (string, error) // change cwd
+ag.Session() *Session       // read live session state
+ag.SessionPath() string     // on-disk path of the session file
+ag.Close() error            // release background shells
+```
+
+### Pluggable session storage
+
+`Config.Session` accepts a `*agent.Session`. Most embedders leave it nil and let the runtime load or create the default on-disk session at `agent.SessionPath()`. If you want sessions in Postgres / Redis / RAM, construct your own `*Session` and pass it in.
+
+---
+
+## The reference CLI
+
+```sh
+go build -o axon ./cmd/axon
+./axon                                  # interactive
+./axon --prompt "summarize TODOs"       # single-shot
+./axon --agent reviewer                 # load ~/.config/axon/agents/reviewer.yaml
+./axon --log-json /tmp/run.jsonl        # capture structured events
+```
+
+### Provider config
+
+The CLI reads `${XDG_CONFIG_HOME:-~/.config}/agent/providers.json` (override with `AXON_PROVIDERS_PATH`):
 
 ```json
 {
   "providers": [
-    {
-      "name": "ollama",
-      "base_url": "http://localhost:11434",
-      "model": "llama3"
-    },
-    {
-      "name": "openai",
-      "base_url": "https://api.openai.com",
-      "model": "gpt-4o",
-      "api_key": "sk-..."
-    },
-    {
-      "name": "claude",
-      "base_url": "https://api.anthropic.com",
-      "model": "claude-3-opus-20240229",
-      "api_key": "sk-ant-..."
-    },
-    {
-      "name": "lmstudio",
-      "base_url": "http://localhost:1234",
-      "model": "local-model"
-    }
+    { "name": "ollama",   "base_url": "http://localhost:11434", "model": "llama3" },
+    { "name": "openai",   "base_url": "https://api.openai.com", "model": "gpt-4o",   "api_key": "sk-..." },
+    { "name": "claude",   "base_url": "https://api.anthropic.com", "model": "claude-3-opus", "api_key": "sk-ant-..." }
   ]
 }
 ```
 
-- `name` – used in `LLM_PROVIDER`
-- `base_url` – API endpoint (axon adds `/v1` if missing)
-- `model` – model identifier for that provider
-- `api_key` – optional; bearer token sent in `Authorization` header
-- `provider` – optional extra provider‑specific JSON (e.g., `"openai"` for LiteLLM)
-
-If exactly one provider is configured, axon uses it automatically. If multiple providers are configured, set `LLM_PROVIDER`.
-
-### 2. Env-only provider config
-
-You can skip the config file and launch directly with env vars:
+Or pure env:
 
 ```sh
-LLM_MODEL=gpt-4o \
-LLM_BASE_URL=https://api.openai.com \
-LLM_API_KEY=sk-... \
-axon
+LLM_MODEL=gpt-4o LLM_BASE_URL=https://api.openai.com LLM_API_KEY=sk-... ./axon
 ```
+
+`LLM_PROVIDER` selects one when multiple are configured. The CLI offers an interactive picker otherwise.
+
+### YAML agents (CLI-only)
+
+Place YAML configs under `${AXON_AGENTS_DIR:-~/.config/axon/agents}/`:
+
+```yaml
+name: reviewer
+system_prompt: ./reviewer.md
+disable_builtins: [write, exec]
+tools:
+  - name: submit_review
+    type: shell
+    description: "Submit a GitHub PR review."
+    schema:
+      type: object
+      properties:
+        verdict: { type: string, enum: [approve, request_changes] }
+        body:    { type: string }
+      required: [verdict, body]
+    command: gh pr review --{{.verdict}} --body {{.body | shellQuote}}
+    timeout_seconds: 10
+```
+
+YAML is **a CLI concern**. The runtime knows nothing about it. Library users build `agent.Config` directly.
+
+### Slash commands
+
+- `/new` — wipe session, restart
+- `/undo` — revert the last file edit
+- `/cd <path>` — change cwd
+- `/pwd` — show cwd
+- `/session` — show session info
 
 ---
 
-## Usage
+## Design
 
-### Start a session
+- **One LLM, no subagents.** The cost lever is aggressive forgetting via the secondary pruner LLM, not parallel agents.
+- **Append-only session log.** Park/recall/forget are projections (`ContextMessages`), never mutations. `/undo` is byte-exact because edits are atomic (tmp + rename).
+- **Turn-scoped cancellation.** One `context.Context` per turn covers the HTTP stream *and* every tool subprocess. `Interrupt()` fires that cancel.
+- **Every tool call requires a `reason`.** The model must articulate intent before paying the call's token cost.
+- **No global state.** Two agents in one process is supported by construction.
+- **No sandbox or permission prompt today.** Ctrl-C and `/undo` are the guardrails. A permission layer can be added on top via a tool wrapper.
 
-```sh
-axon                     # uses the only configured provider
-LLM_PROVIDER=openai axon # select one configured provider
-LLM_MODEL=gpt-4o LLM_BASE_URL=https://api.openai.com axon
-```
-
-### In‑session commands
-
-| Command    | Description                             |
-| ---------- | --------------------------------------- |
-| `/new`     | Start a fresh session (clears history)  |
-| `/undo`    | Revert the last file edit               |
-| `/session` | Show session ID, turn count, edit count |
-| Ctrl‑C     | Abort in‑flight LLM request             |
-
-### Example workflow
-
-```
-❯ Create a Go HTTP server on port 8080 with /health endpoint
-
-> 1. GOAL: Create server.go with basic HTTP server
-> 2. CONSTRAINTS: Go language, port 8080, /health endpoint
-> 3. ACTION: task + write
-> 4. TRASH: none
-
-  ⎿  task { "objective": "Create Go HTTP server", "definition_of_done": "Server compiles and responds on port 8080", "hypothesis": "Go has built-in net/http", "steps": ["Write server.go with HTTP handler", "Verify with go build"], "reason": "Starting server creation task" }
-  ⎿  write { "path": "server.go", "mode": "create", "content": "package main\n\nimport (...)", "reason": "Creating HTTP server implementation" }
-
-  ⎿  exec { "mode": "verify", "tail_lines": 20, "expected_outcome": "Server compiles", "reason": "Verify server compiles without errors" }
-
-  Done. Server created and verified.
-```
-
----
-
-## How it works
-
-### Session persistence
-
-Every session is saved to `${XDG_DATA_HOME:-~/.local/share}/agent/session.json` by default, or to `AXON_SESSION_PATH` if set:
-
-- Full message history (user, assistant, tool calls/results)
-- File‑edit snapshots (for undo)
-- Current working directory
-- Turn counter
-
-Run `axon` again and you resume exactly where you left off.
-
-### The turn lifecycle
-
-Every turn follows a structured lifecycle:
-
-1. **REALITY CHECK** – Output GOAL, CONSTRAINTS, ACTION, TRASH before any tool
-2. **ANCHORING PASS** – Full reasoning with ATTENTION block (GOAL, STATE, HISTORY, CONSTRAINTS, MOVES, DIMENSION)
-3. **MOMENTUM BEAT** – Three-line reasoning between tool calls (DELTA, DRIFT, NEXT)
-4. **GATHER & COMMENCE** – Bundle task + first action if requirements clear
-5. **EXECUTE & VERIFY** – One code change per turn, mandatory verification
-6. **PURGE CONTEXT** – Forget raw data immediately, manage TTL pressure
-7. **DELIVER & HALT** – Memory tools last, silent completion
-
-### Tools
-
-| Tool          | Description                                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------------- |
-| `read`        | Read files (skeleton/slice/full modes) with line numbers                                          |
-| `write`       | Create, overwrite, or modify files (create/overwrite/replace_string/replace_lines/insert_at_line) |
-| `search`      | Search file contents (literal/regex/trace modes)                                                  |
-| `exec`        | Run shell commands (run/verify modes) with output tailing                                         |
-| `bash_output` | Read new output from a background shell (delta only)                                              |
-| `kill_shell`  | Stop a background shell                                                                           |
-| `task`        | Register/advance/replan task objectives                                                           |
-| `park`        | Replace block content with breadcrumb (recoverable)                                               |
-| `recall`      | Restore parked content                                                                            |
-| `forget`      | Remove block entirely (irrecoverable)                                                             |
-| `refresh`     | Reset TTL for active blocks                                                                       |
-
-### Task tool
-
-For multi-step work, use the `task` tool with actions:
-
-- **register**: Commit objective, definition_of_done, hypothesis, and step list (min 2 steps)
-- **advance**: Mark current step done, move to next
-- **replan**: Replace hypothesis and steps (when foundation collapses)
-
-```json
-{
-  "action": "register",
-  "objective": "Create Go HTTP server",
-  "definition_of_done": "Server compiles and responds on port 8080",
-  "hypothesis": "Go has built-in net/http",
-  "steps": ["Write server.go with HTTP handler", "Verify with go build"],
-  "reason": "Starting server creation task"
-}
-```
-
-### Memory system (TTL-based)
-
-The agent manages context automatically using TTL:
-
-- Each active block has a TTL that decrements each turn
-- Dashboard shows TTL counts: `#m3 TTL=2` means 2 turns until auto-park
-- Pruner fires when context exceeds ~10,000 tokens
-- Blocks auto-park when TTL reaches 0
-- Use `refresh` to keep blocks active, `park` for recoverable compression, `forget` for removal
-
-**State model:**
-
-| State     | Description                                                    |
-| --------- | -------------------------------------------------------------- |
-| Active    | Full content in message stream                                 |
-| Parked    | Replaced by breadcrumb: `[#m3 parked \| reason: X \| gist: Y]` |
-| Forgotten | Dropped entirely (no breadcrumb)                               |
-
-### Safety guards
-
-- Never edits files the user didn't ask about
-- Never runs mutating shell commands without explicit `allow_write=true`
-- Never uses `exec` to hunt for problems the user didn't point at
-- Mutating command detection (`rm`, `mv`, `go fmt`, `git add`, etc.) blocks execution unless `allow_write=true`
-
----
-
-## Configuration reference
-
-### Environment variables
-
-| Variable                    | Default                                               | Purpose                                                                  |
-| --------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------ |
-| `LLM_PROVIDER`              | none                                                  | Which configured provider to use when more than one exists               |
-| `LLM_PROVIDER_NAME`         | `env`                                                 | Name to use for an env-only provider                                     |
-| `LLM_MODEL`                 | none                                                  | Model for env-only config, or override the selected provider model       |
-| `LLM_BASE_URL`              | none                                                  | Base URL for env-only config, or override the selected provider base URL |
-| `LLM_API_KEY`               | none                                                  | API key for env-only config, or override the selected provider API key   |
-| `LLM_PROVIDER_EXTRA`        | none                                                  | Raw provider JSON for env-only config or provider override               |
-| `AXON_CONFIG_DIR`           | `${XDG_CONFIG_HOME:-~/.config}/agent`                 | Config directory override                                                |
-| `AXON_DATA_DIR`             | `${XDG_DATA_HOME:-~/.local/share}/agent`              | Data directory override                                                  |
-| `AXON_PROVIDERS_PATH`       | `${XDG_CONFIG_HOME:-~/.config}/agent/providers.json`  | Provider config file path                                                |
-| `AXON_SESSION_PATH`         | `${XDG_DATA_HOME:-~/.local/share}/agent/session.json` | Session file path                                                        |
-| `AXON_READ_LIMIT`           | `200`                                                 | Default max lines returned by `read`                                     |
-| `AXON_SEARCH_LIMIT`         | `100`                                                 | Default max matches returned by `search`                                 |
-| `AXON_SEARCH_OUTPUT_LIMIT`  | `12000`                                               | Max captured bytes for `search` output                                   |
-| `AXON_EXEC_TIMEOUT_SECONDS` | `30`                                                  | Default timeout for `exec`                                               |
-| `AXON_EXEC_OUTPUT_LIMIT`    | `12000`                                               | Max captured bytes for `exec` output                                     |
-| `AXON_EXEC_TAIL_LINES`      | `50`                                                  | Default trailing lines kept for `exec` output                            |
-| `AXON_EXEC_MAX_TAIL_LINES`  | `500`                                                 | Hard cap for `exec.tail_lines`                                           |
-
-### File locations
-
-| Path                                                  | Purpose                          |
-| ----------------------------------------------------- | -------------------------------- |
-| `${XDG_CONFIG_HOME:-~/.config}/agent/providers.json`  | Default provider config location |
-| `${XDG_DATA_HOME:-~/.local/share}/agent/session.json` | Default session location         |
-
----
-
-## Development
-
-### Build and test
-
-```sh
-go build ./...
-go test ./...
-```
-
-### Architecture
-
-- `main.go` – entry point, provider selection, session load
-- `agent.go` – core loop, turn lifecycle, slash-command handling
-- `llm.go` – OpenAI‑compatible HTTP client with streaming
-- `session.go` – persistent session (history, edits, undo)
-- `memory.go` – TTL-based context management (park/recall/forget/refresh)
-- `pruner.go` – automatic context pruning based on token pressure
-- `tools.go` – flat tool implementations (`read`, `write`, `exec`, `search`)
-- `ui.go` – terminal UI (spinner, colors, prompts)
-- `config.go` – provider resolution, env/config loading
-- `picker.go` – model picker for multi-model providers
-- `probes.go` – system probes (git status, go version, etc.)
-
-### Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Keep changes minimal, focused, and tested.
-
----
-
-## Changelog
-
-See [CHANGELOG.md](./CHANGELOG.md).
+See `ARCHITECTURE.md` for the loop, the pruner contract, and the extension points.
 
 ---
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+MIT. See `LICENSE`.

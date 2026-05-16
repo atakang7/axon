@@ -1,150 +1,187 @@
 # Axon — Architecture
 
-Core agent runtime. One binary, many agents.
+A Go runtime for building LLM agents. One library, one loop, pluggable everything that can vary.
 
-The runtime ships a fixed set of built-in tools (the "hands and legs": read,
-write, exec, search, task, bash_output, kill_shell). Agents are YAML files
-that combine a role prompt with optional custom tools. The same loop runs
-every agent — there is no agent-specific code in the runtime.
+```
+github.com/atakang7/axon/agent     ← the runtime (library)
+github.com/atakang7/axon/cmd/axon  ← reference CLI built on the runtime
+```
+
+The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. Everything terminal-shaped lives in `cmd/axon`.
 
 ## Layout
 
 ```
-cmd/axon/main.go              entry point — calls agent.Main()
-internal/agent/               package agent — all runtime logic
-  run.go                      Main(): flags, providers, agent config, REPL wire-up
-  agent.go                    Agent struct + Run loop (chat → tool calls → repeat)
-  commands.go                 slash commands (/reset, /undo, ...)
-  prompt.go                   role prompt + tool catalog + project orientation
-  session.go                  Session struct, persistence, undo log, tasks
-  memory.go                   park/recall/forget projections; TaskTool lives here
-  llm.go / providers.go       provider-agnostic chat client + provider resolution
-  pruner.go                   secondary LLM that drops/parks old messages
-  agentconfig.go              YAML loader for agent personalities
-  customtool.go               adapter: ToolConfig → Tool (today: shell only)
-  tools.go                    Tool type, BuildTools, schema helpers
-  tools_helpers.go            atomic writes, formatters, binary refusal
-  tool_{read,write,search,exec}.go  built-in tool implementations
-  bg.go                       background shell registry (servers, watchers)
-  picker.go / config.go       provider picker + env tunables
-  ui.go / probes.go / input.go / jsonl_logger.go   terminal I/O + observability
-examples/agents/              reference agent configs
+agent/
+  api.go              Config, New, NewBare, Step, Run, Reset, Undo, Cd, Session, Close
+  agent.go            Agent struct, chat/retry, runTool
+  handler.go          Handler interface, HandlerFunc, MultiHandler, Event, Kind
+  exports.go          DataDir, ProvidersPath, EnvString, ... (helpers CLIs need)
+  session.go          Session struct, append-only log, edit history, undo
+  memory.go           park/recall/forget projections; TaskTool lives here
+  prompt.go           buildSystemPrompt (role + catalog + probes + orientation)
+  pruner.go           secondary LLM that drops/parks old blocks
+  providers.go        Provider type + LoadProviders
+  config.go           env/XDG path resolution
+  llm.go              OpenAI-compatible streaming chat client
+  tools.go            Tool type, schema helpers, tool-name constants
+  tools_helpers.go    atomic writes, formatters, binary refusal
+  tool_{read,write,search,exec}.go   built-in tool implementations
+  bg.go               background shell registry (servers, watchers)
+  probes.go           language/build detection injected into the system prompt
+
+cmd/axon/
+  main.go             entry point: flags → Config → agent.New → REPL
+  picker.go           interactive provider picker, lastChoice persistence
+  yamlcfg.go          YAML agent personality loader (AgentConfig, ToolConfig)
+  customtool.go       YAML ToolConfig → agent.Tool adapter (shell only today)
+  tty_handler.go      terminal renderer + ttyHandler implementing agent.Handler
+  jsonl_handler.go    JSONL event log + jsonlHandler implementing agent.Handler
+  commands.go         slash-command dispatch (/new, /undo, /cd, /pwd, /session)
+  input.go            paste-aware stdin reader, single-shot input
 ```
 
 ## The turn loop
 
 ```
-user input
-    │
-    ▼
-Agent.Run ──► chat() ──► Client.ChatStream (provider streaming)
-    ▲             │
-    │             ▼
-    │       tool_calls?
-    │         │     │
-    │        no    yes
-    │         │     │
-    │         │     ▼
-    │         │   runTool() → Tool.Fn (built-in OR custom)
-    │         │     │
-    │         │     ▼
-    │         │   append result to Session.Messages
-    │         └────►(loop until assistant emits text)
-    │
-    ▼
-Pruner.ShouldFire? → Pruner.Prune (parks/forgets old blocks)
-    │
-    ▼
-Session.Save (JSON on disk)
+Step(ctx, input)
+   │
+   ▼
+append user msg ─► session.Save
+   │
+   ▼
+prune? ──► Pruner.Prune (parks/forgets old blocks)
+   │
+   ▼
+chat() ──► Client.ChatStream
+   │           │       │      │
+   │       tokens   reasoning  tool-arg deltas
+   │           └──► Handler.Handle(Event{...})
+   │
+   ▼
+tool_calls?
+   │     │
+   no   yes
+   │     │
+   │     ▼
+   │   for each tc: runTool → append result → emit ToolResult
+   │     │
+   │     └────►(loop)
+   │
+   ▼
+emit AssistantEnd, TurnEnd, return StepResult
 ```
 
-Built-in and custom tools share the same `Tool` shape — once `BuildTools`
-returns the list, the loop is indifferent to origin.
+`Run(ctx, inputFn)` is sugar over `Step` for the input-source-driven case.
 
-## Agents
+## Public API surface
 
-An agent is a YAML file at `$AXON_AGENTS_DIR/<name>.yaml`
-(default `~/.config/axon/agents/`). Selected with `axon --agent <name>`.
-No flag = built-in default agent.
+The whole API of `package agent`:
 
-```yaml
-name: reviewer
-system_prompt: ./reviewer.md          # role behavior, NOT tool docs
-disable_builtins: [write, exec]       # subtract from the "hands and legs"
-tools:                                # add specialized capabilities
-  - name: submit_review
-    type: shell                       # only kind today; mcp is reserved
-    description: ...
-    schema: { ... JSON Schema ... }
-    command: gh pr review --{{.verdict}} --body {{.body | shellQuote}}
-    timeout_seconds: 10
+```go
+// Construction
+func New(Config) (*Agent, error)         // built-ins + user tools
+func NewBare(Config) (*Agent, error)     // user tools only
+func Builtins(*Session) []Tool           // expose built-ins for manual composition
+
+// Agent
+type Agent struct{ /* opaque */ }
+func (a *Agent) Step(ctx, input) (StepResult, error)
+func (a *Agent) Run(ctx, InputFunc) error
+func (a *Agent) Interrupt() bool
+func (a *Agent) Reset()
+func (a *Agent) Undo() (path string, ok bool)
+func (a *Agent) Cd(path) (string, error)
+func (a *Agent) Session() *Session
+func (a *Agent) Close() error
+
+// Config
+type Config struct {
+    Provider     Provider
+    SystemPrompt string
+    Tools        []Tool
+    Pruner       *Pruner
+    Handler      Handler
+    Cwd          string
+    Session      *Session
+}
+
+// Tools — the extension surface
+type Tool struct {
+    Name        string
+    Description string
+    Schema      map[string]any
+    Fn          func(ctx, args) (string, error)
+}
+
+// Observability — slog-style
+type Handler interface { Handle(ctx, Event) }
+type HandlerFunc func(ctx, Event)        // adapter
+func MultiHandler(...Handler) Handler    // fan-out
+var DiscardHandler Handler               // drop everything
+
+// Errors
+var (
+    ErrNoProvider, ErrToolNotFound, ErrDuplicateTool, ErrInterrupted
+)
 ```
-
-The runtime composes the final system prompt as:
-
-```
-[role prompt: user-supplied or defaultRolePrompt]
-[built-in tool catalog: only enabled built-ins]
-[runProbes(cwd) — language/build probes if any]
-[projectOrientation(cwd) — file tree snapshot]
-```
-
-Custom tools advertise themselves through the LLM tool schema, not the
-prompt.
-
-## Custom tools
-
-Today only `type: shell`. Implementation in `customtool.go`:
-
-1. Parse `command` and `cwd` as Go `text/template`.
-2. At call time, JSON-decode the LLM's args into a map.
-3. Render the templates against the map; values can be piped through
-   `shellQuote` (POSIX single-quote escaping) to prevent injection.
-4. Spawn `sh -c <rendered>` bound to the turn context, with a per-tool
-   timeout (default 60s). Combined stdout/stderr is the tool result.
-
-`type: mcp` is rejected at load time as "reserved" — it is the
-single extension point. Adding it later means one more arm in
-`buildCustomTool`'s switch; nothing else in the framework changes.
 
 ## Invariants
 
-- **`Session.Messages` is append-only.** Park/recall/forget are
-  projections built in `ContextMessages`, never mutations. Audit
-  history stays intact even after pruning.
-- **Built-ins are always available unless explicitly disabled.** An
-  agent config can subtract, never silently replace.
-- **Custom tool names cannot collide with built-ins.** Enforced at
-  load time in `AgentConfig.validate`.
-- **Writes are atomic.** Every file mutation goes through
-  `writeBytesRaw` (tmp-file + rename). Formatters run after, never
-  during, so /undo is byte-exact.
-- **Tool execution is turn-scoped.** Ctrl-C cancels the in-flight
-  chat AND kills the running tool's process group. Background shells
-  (`bg.go`) outlive turns but die on process exit.
-- **Reason field required on every tool call.** Forces the model to
-  articulate intent before paying the call's token cost.
+- **`Session.Messages` is append-only.** Park / recall / forget are projections built in `ContextMessages`, never mutations. Audit history survives pruning.
+- **Built-ins are unconditional in `New`.** No "subtract this built-in" knob. Use `NewBare` + `Builtins` for explicit composition.
+- **Tool execution is turn-scoped.** Ctrl-C / `Interrupt` cancels the in-flight chat AND kills the running tool's process group. Background shells outlive turns but die on `Close` or process exit.
+- **Custom tool names cannot collide with built-ins.** Enforced at `New` time.
+- **Writes are atomic.** Every file mutation goes through `writeBytesRaw` (tmp + rename). Formatters run after, never during, so `Undo` is byte-exact.
+- **Reason field required on every tool call.** The model must articulate intent before paying the call's token cost.
+- **The runtime never writes to stdout.** All observability goes through `Handler`. The CLI's `ttyHandler` is the only thing that prints.
 
-## Things that are intentionally NOT here
+## How `cmd/axon` consumes the runtime
 
-- No subagents. One LLM, full context every turn, aggressive forgetting
-  is the cost lever.
-- No HTTP/API layer. Was removed during the framework refactor; the
-  runtime is CLI-only.
-- No agent registry / discovery / lifecycle management. That belongs to
-  a higher layer (the "docker for agents" surface), not the runtime.
-- No MCP client yet. Reserved, not implemented.
-- No sandbox or per-tool permission prompt. The LLM decides what's
-  destructive; the user gates with Ctrl-C and undo.
+```
+flag.Parse
+   │
+   ▼
+LoadAgentConfig(--agent name)   ← reads YAML
+   │
+   ▼
+agent.LoadProviders()           ← reads ~/.config/agent/providers.json
+   │
+   ▼
+pickProvider (interactive)
+   │
+   ▼
+ttyH := newTTYHandler()
+jsonlH := newJSONLHandler(--log-json)   (optional)
+   │
+   ▼
+ag, _ := agent.New(agent.Config{
+    Provider, SystemPrompt, Tools (from YAML),
+    Pruner, Handler: MultiHandler(ttyH, jsonlH),
+})
+   │
+   ▼
+for line := range stdin:
+   if slash:  handleSlash(ag, line)
+   else:      ag.Step(ctx, line)
+```
+
+When the YAML config sets `disable_builtins`, the CLI uses `agent.NewBare` and composes the kept built-ins manually via `agent.Builtins`.
 
 ## Extending
 
-- **New built-in tool** → add `tool_<name>.go` with a `<Name>Tool(s *Session) Tool`
-  constructor and register it in `BuildTools` in `tools.go`.
-- **New custom tool type** (e.g. `mcp`) → add the arm in
-  `buildCustomTool` in `customtool.go`. Validation slot is already in
-  `AgentConfig.validate`.
-- **New slash command** → add a case in `Agent.handleSlash` in
-  `commands.go`.
-- **New provider** → extend `LoadProviders` in `providers.go`; the
-  streaming layer is OpenAI-compatible and already handles most.
+- **New built-in tool** → add `tool_<name>.go` with a `<Name>Tool(s *Session) Tool` constructor; register in `builtinTools` in `api.go`.
+- **New custom tool kind** (e.g. MCP) → add the arm in `buildCustomTool` (`cmd/axon/customtool.go`). The runtime needs no changes — MCP would be `Tool` values whose `Fn` happens to do an RPC.
+- **New slash command** → add a case in `cmd/axon/commands.go`. Add the underlying operation as a method on `*Agent` if needed.
+- **New observability sink** → implement `agent.Handler`. Compose with `MultiHandler`.
+- **New session store** → embedders pass their own `*Session` to `Config.Session`. The runtime works with whatever it gets.
+- **New provider** → extend `LoadProviders` in `providers.go`; the streaming layer is OpenAI-compatible and already handles most.
+
+## Things intentionally NOT here
+
+- **No subagents.** One LLM, full context every turn, aggressive forgetting is the cost lever.
+- **No HTTP/API layer.** Build one on top with `Step`.
+- **No agent registry / discovery / lifecycle.** That belongs to a higher layer (the "docker for agents" surface this runtime was extracted to support).
+- **No MCP client yet.** Reserved as a tool kind, not implemented.
+- **No sandbox or per-tool permission prompt.** The model decides what's destructive; the embedder gates with `Interrupt` and `Undo`.
+- **No YAML in the runtime.** YAML is a CLI concern. The runtime's contract is `Config`.
