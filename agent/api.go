@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -64,6 +65,11 @@ type Config struct {
 	// conversation). nil means the runtime loads or creates the default
 	// on-disk session at sessionPath().
 	Session *Session
+
+	// Handler receives observability events emitted by the runtime
+	// (tokens, tool calls, turn boundaries, prune cycles). nil means
+	// events are dropped. Compose multiple sinks with MultiHandler.
+	Handler Handler
 }
 
 // InputFunc supplies user input to Run. It returns (line, true) for each
@@ -173,6 +179,7 @@ func newAgent(cfg Config, withBuiltins bool) (*Agent, error) {
 		tools:   tools,
 		session: session,
 		pruner:  cfg.Pruner,
+		handler: cfg.Handler,
 		cfg:     bridgeCfg,
 	}
 	return a, nil
@@ -191,15 +198,21 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	if err := a.session.Save(); err != nil {
 		return StepResult{}, fmt.Errorf("agent: save session: %w", err)
 	}
+	a.emit(ctx, Event{Kind: KindUserInput, Text: userInput})
 
 	var calls []ToolCall
 	var assistantText string
 
 	for {
 		if a.pruner != nil && a.pruner.ShouldFire(a.session, a.lastPruneTokens) {
+			before := a.lastPruneTokens
+			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
 			next, err := a.pruner.Prune(ctx, a.session, a.lastPruneTokens)
 			if err == nil {
 				a.lastPruneTokens = next
+				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: next}})
+			} else {
+				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
 			}
 		}
 
@@ -221,11 +234,13 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 		if msg.Content != "" {
 			assistantText = msg.Content
+			a.emit(ctx, Event{Kind: KindAssistantEnd, Text: msg.Content})
 		}
 
 		if len(msg.ToolCalls) == 0 {
 			a.turnCancel.Store(nil)
 			cancel()
+			a.emit(ctx, Event{Kind: KindTurnEnd})
 			return StepResult{
 				Assistant: assistantText,
 				ToolCalls: calls,
@@ -235,12 +250,19 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 		for _, tc := range msg.ToolCalls {
 			calls = append(calls, tc)
+			a.emit(ctx, Event{Kind: KindToolCall, Tool: &ToolEvent{
+				ID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments),
+			}})
 			result := a.runTool(turnCtx, tc)
 			a.session.Append(result)
-			if id := a.session.Messages[len(a.session.Messages)-1].ID; id != "" {
-				a.session.Messages[len(a.session.Messages)-1].Content = "[#" + id + "]\n" + result.Content
+			blockID := a.session.Messages[len(a.session.Messages)-1].ID
+			if blockID != "" {
+				a.session.Messages[len(a.session.Messages)-1].Content = "[#" + blockID + "]\n" + result.Content
 			}
 			a.session.Save()
+			a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
+				ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
+			}})
 		}
 		a.turnCancel.Store(nil)
 		cancel()

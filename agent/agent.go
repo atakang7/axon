@@ -33,8 +33,15 @@ type Agent struct {
 	turnCancel atomic.Pointer[context.CancelFunc]
 
 	// logger is optional; when non-nil, the agent emits structured JSONL events
-	// for non-interactive observation (e.g. benchmarking).
+	// for non-interactive observation (e.g. benchmarking). Kept during the
+	// transition to the public Handler interface; commit that finalises
+	// observability will remove it.
 	logger *jsonlLogger
+
+	// handler is the public event sink. When non-nil, the runtime emits
+	// structured Events at every interesting moment (tokens, tool calls,
+	// turn boundaries, prune cycles). nil means events are discarded.
+	handler Handler
 
 	// cfg is the agent personality + custom tooling, loaded once at startup.
 	// nil means "built-in default agent". Used by /reset to rebuild tools
@@ -77,15 +84,20 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.session.Append(Msg{Role: "user", Content: line})
 			a.session.Save()
 			a.logger.Emit("user", map[string]any{"turn": a.session.Turn, "text": line})
+			a.emit(ctx, Event{Kind: KindUserInput, Text: line})
 		}
 
 		if a.pruner != nil && a.pruner.ShouldFire(a.session, a.lastPruneTokens) {
 			uiInfo("pruning context...")
+			before := a.lastPruneTokens
+			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
 			next, err := a.pruner.Prune(ctx, a.session, a.lastPruneTokens)
 			if err != nil {
 				uiError(fmt.Errorf("prune skipped: %w", err))
+				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
 			} else {
 				a.lastPruneTokens = next
+				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: next}})
 			}
 		}
 
@@ -104,6 +116,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.session.Save()
 		if msg.Content != "" {
 			a.logger.Emit("assistant_text", map[string]any{"turn": a.session.Turn, "text": msg.Content})
+			a.emit(ctx, Event{Kind: KindAssistantEnd, Text: msg.Content})
 		}
 		for _, tc := range msg.ToolCalls {
 			a.logger.Emit("tool_call", map[string]any{
@@ -112,12 +125,18 @@ func (a *Agent) Run(ctx context.Context) error {
 				"name": tc.Function.Name,
 				"args": tc.Function.Arguments,
 			})
+			a.emit(ctx, Event{Kind: KindToolCall, Tool: &ToolEvent{
+				ID:   tc.ID,
+				Name: tc.Function.Name,
+				Args: json.RawMessage(tc.Function.Arguments),
+			}})
 		}
 
 		if len(msg.ToolCalls) == 0 {
 			a.turnCancel.Store(nil)
 			turnCancel()
 			a.logger.Emit("turn_end", map[string]any{"turn": a.session.Turn})
+			a.emit(ctx, Event{Kind: KindTurnEnd})
 			readInput = true
 			continue
 		}
@@ -138,10 +157,14 @@ func (a *Agent) Run(ctx context.Context) error {
 			})
 			// Stamp the assigned block ID into the content so the LLM can see
 			// its own handle (#mN) and act on it immediately with park/forget.
-			if id := a.session.Messages[len(a.session.Messages)-1].ID; id != "" {
-				a.session.Messages[len(a.session.Messages)-1].Content = "[#" + id + "]\n" + result.Content
+			blockID := a.session.Messages[len(a.session.Messages)-1].ID
+			if blockID != "" {
+				a.session.Messages[len(a.session.Messages)-1].Content = "[#" + blockID + "]\n" + result.Content
 			}
 			a.session.Save()
+			a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
+				ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
+			}})
 		}
 		a.turnCancel.Store(nil)
 		turnCancel()
@@ -197,14 +220,17 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			func(t string) {
 				stopOnFirst()
 				tokens <- t
+				a.emit(ctx, Event{Kind: KindToken, Text: t})
 			},
 			func(t string) {
 				stopOnFirst()
 				uiReasoning(t)
+				a.emit(ctx, Event{Kind: KindReasoning, Text: t})
 			},
 			func(name, delta string) {
 				stopOnFirst()
 				uiToolArgDelta(name, delta)
+				a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
 			},
 			nil,
 			func(phase string, duration time.Duration) {
@@ -247,6 +273,7 @@ func (a *Agent) runTool(ctx context.Context, tc ToolCall) Msg {
 		out, err := t.Fn(ctx, input)
 		if err != nil {
 			uiToolError(err)
+			a.emit(ctx, Event{Kind: KindToolError, Tool: &ToolEvent{ID: tc.ID, Name: tc.Function.Name}, Err: err})
 			return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: err.Error()}
 		}
 		uiToolResult(out)
