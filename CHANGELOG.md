@@ -1,3 +1,10 @@
+## [0.4.3](https://github.com/atakang7/axon/compare/v0.4.2...v0.4.3) (2026-05-19)
+
+
+### Bug Fixes
+
+* **ci:** narrow semantic-release BREAKING-CHANGE keywords ([ffe6a57](https://github.com/atakang7/axon/commit/ffe6a570c7d5e788c2909d756d1a4dcb447884f8))
+
 ## [0.4.2](https://github.com/atakang7/axon/compare/v0.4.1...v0.4.2) (2026-05-19)
 
 
