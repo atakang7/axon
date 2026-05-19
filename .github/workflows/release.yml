@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build binaries for; leave empty for normal main-driven release"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -16,6 +22,7 @@ concurrency:
 jobs:
   release:
     name: semantic-release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
@@ -47,13 +54,18 @@ jobs:
   goreleaser:
     name: goreleaser
     needs: release
-    if: needs.release.outputs.new_release_published == 'true'
+    if: |
+      always() &&
+      (
+        (github.event_name == 'push' && needs.release.outputs.new_release_published == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.release.outputs.new_release_git_tag }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.new_release_git_tag }}
 
       - uses: actions/setup-go@v5
         with:
