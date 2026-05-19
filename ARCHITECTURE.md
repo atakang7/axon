@@ -13,20 +13,23 @@ The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. E
 
 ```
 agent/
-  api.go              Config, New, Step, Run, Reset, Undo, Cd, Session, Close
+  api.go              Config, New, Step, Run, Reset, Undo, Cd, Session, SessionPath, Close
   agent.go            Agent struct, chat/retry, runTool
-  handler.go          Event, Kind, ToolEvent, PruneInfo (emitted via Config.OnEvent)
-  exports.go          DataDir, ProvidersPath, EnvString, ... (helpers CLIs need)
+  handler.go          Event, Kind, ToolEvent, PruneInfo, SessionInfo (emitted via Config.OnEvent)
+  exports.go          DataDir, ConfigDir, ProvidersPath, SessionPath, EnvString, ... (helpers CLIs need)
   session.go          Session struct, append-only log, edit history, undo
-  memory.go           park/recall/forget projections; TaskTool lives here
-  prompt.go           buildSystemPrompt (role + catalog + probes + orientation)
+  memory.go           park/recall/forget projections (Session methods, pruner-driven); TaskTool lives here
+  prompt.go           buildSystemPrompt (role + built-in catalog + probes + orientation)
   pruner.go           secondary LLM that drops/parks old blocks
   providers.go        Provider type + LoadProviders
   config.go           env/XDG path resolution
   llm.go              OpenAI-compatible streaming chat client
   tools.go            Tool type, schema helpers, tool-name constants
   tools_helpers.go    atomic writes, formatters, binary refusal
-  tool_{read,write,search,exec}.go   built-in tool implementations
+  tool_read.go        ReadTool (skeleton/slice/full)
+  tool_write.go       WriteTool (save/replace_string/replace_lines/insert_at_line)
+  tool_search.go      SearchTool (literal/regex/trace)
+  tool_exec.go        ExecTool, BashOutputTool, KillShellTool
   bg.go               background shell registry (servers, watchers)
   probes.go           language/build detection injected into the system prompt
 
@@ -90,7 +93,16 @@ func (a *Agent) Reset()
 func (a *Agent) Undo() (path string, ok bool)
 func (a *Agent) Cd(path) (string, error)
 func (a *Agent) Session() *Session
+func (a *Agent) SessionPath() string
 func (a *Agent) Close() error
+
+// Result and input types
+type StepResult struct {
+    Assistant string
+    ToolCalls []ToolCall
+    Turn      int
+}
+type InputFunc func() (string, bool)
 
 // Config — Provider and SystemPrompt are required.
 type Config struct {

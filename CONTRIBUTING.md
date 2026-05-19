@@ -13,8 +13,9 @@ Thank you for considering contributing to axon! Please follow these guidelines t
 git clone https://github.com/atakang7/axon
 cd axon
 go build ./...  # verify it compiles
-go test ./...   # verify tests pass
 ```
+
+The repo currently ships without tests — they were removed during the runtime/CLI split and will be reintroduced against the new API. New behavior changes should land with tests.
 
 ## Philosophy
 
@@ -37,11 +38,11 @@ go test ./...   # verify tests pass
 - Export only what's needed
 
 ### Testing
-- Every change that touches logic should have a test
+- Every change that touches logic should have a test (the suite is being rebuilt; new tests are welcome)
 - Tests should be fast and isolated
 - Use table‑driven tests for similar cases
 - Mock external dependencies (filesystem, HTTP) when appropriate
-- Run `go test ./...` before submitting
+- Run `go build ./...` before submitting; run `go test ./...` once tests exist in the area you touched
 
 ### Pull requests
 - **One feature/fix per PR** – keep changes focused
@@ -64,30 +65,58 @@ refactor: simplify memory archiving logic
 
 1. **Fork** the repository
 2. **Create a branch** from `main`
-3. **Make your changes** with tests
-4. **Verify** with `go build ./... && go test ./...`
-5. **Update documentation** if needed
+3. **Make your changes** (with tests where applicable)
+4. **Verify** with `go build ./...`
+5. **Update documentation** if behavior or surface changes
 6. **Push** to your fork
 7. **Open a pull request**
 
 ## Project structure
 
+axon is split into a runtime library and a reference CLI:
+
 ```
 axon/
-├── main.go          # Entry point, provider selection
-├── agent.go         # Core loop
-├── llm.go           # OpenAI‑compatible HTTP client
-├── session.go       # Persistent session (history, edits)
-├── memory.go        # Archiving/retrieval system
-├── tools.go         # Flat tool implementations
-├── ui.go            # Terminal UI
-├── agent_test.go    # Unit tests
-├── README.md        # User documentation
-├── CONTRIBUTING.md  # This file
-├── CHANGELOG.md     # Release history
-├── go.mod           # Go module definition
-└── .github/         # CI, issue templates, PR template
+├── agent/                     # the runtime library (import this)
+│   ├── api.go                 # Config, New, Step, Run, Reset, Undo, Cd, Session, SessionPath, Close
+│   ├── agent.go               # Agent struct, chat/retry, runTool
+│   ├── handler.go             # Event, Kind, ToolEvent, PruneInfo, SessionInfo
+│   ├── exports.go             # DataDir, ConfigDir, ProvidersPath, SessionPath, EnvString, ...
+│   ├── session.go             # append-only session log, edit history, undo
+│   ├── memory.go              # park/recall/forget Session methods; TaskTool
+│   ├── prompt.go              # buildSystemPrompt (role + catalog + probes + orientation)
+│   ├── pruner.go              # secondary-LLM pruner
+│   ├── providers.go           # Provider type + LoadProviders
+│   ├── config.go              # env/XDG path resolution
+│   ├── llm.go                 # OpenAI-compatible streaming chat client
+│   ├── tools.go               # Tool type, schema helpers, tool-name constants
+│   ├── tools_helpers.go       # atomic writes, formatters, binary refusal
+│   ├── tool_read.go           # ReadTool
+│   ├── tool_write.go          # WriteTool
+│   ├── tool_search.go         # SearchTool
+│   ├── tool_exec.go           # ExecTool, BashOutputTool, KillShellTool
+│   ├── bg.go                  # background shell registry
+│   └── probes.go              # language/build detection
+├── cmd/axon/                  # reference CLI (one consumer of the library)
+│   ├── main.go                # entry point: flags → Config → agent.New → REPL
+│   ├── picker.go              # interactive provider picker
+│   ├── yamlcfg.go             # YAML agent personality loader
+│   ├── customtool.go          # YAML ToolConfig → agent.Tool adapter
+│   ├── tty_handler.go         # TTY renderer consuming agent.Event
+│   ├── commands.go            # slash-command dispatch
+│   └── input.go               # paste-aware stdin reader
+├── examples/minimal/          # smallest possible embed
+├── benchmark/                 # benchmark scripts
+├── README.md
+├── ARCHITECTURE.md
+├── CONTRIBUTING.md
+├── CHANGELOG.md
+├── LICENSE
+├── go.mod
+└── go.sum
 ```
+
+The runtime knows nothing about terminals, flags, YAML, or `os.Exit` — those concerns live in `cmd/axon`. Library users build `agent.Config` directly.
 
 ## Questions?
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://www.semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-19
+
 ### Added
 
 - **Public Go library API.** The runtime is importable as `github.com/atakang7/axon/agent`. Surface: `Config`, `New`, `Step`, `Run`, `Interrupt`, `Reset`, `Undo`, `Cd`, `Session`, `Close`, `SessionPath`.
@@ -32,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://www.semver.org/spec/v2
 - `defaultRolePrompt` — the runtime no longer ships a coding-agent personality.
 - Direct `ui*` and `logger.Emit` calls from the runtime.
 - All test files. They referenced the pre-refactor types and will be reintroduced against the new API in a follow-up.
+- **`park`, `recall`, `forget`, `refresh` as model-facing tools.** Park / Recall / Forget are now `Session` methods driven by the secondary-LLM pruner, not tools the model invokes. `refresh` is gone entirely. The current built-in tool set is: `read`, `write`, `exec`, `bash_output`, `kill_shell`, `search`, `task`.
+- **REALITY CHECK / ANCHORING PASS / MOMENTUM BEAT prompt regime.** The system prompt is now a thin role + built-in tool catalog + probes + project orientation; see `agent/prompt.go`.
 
 ## [0.3.0] - 2026-05-07
 

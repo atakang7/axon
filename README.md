@@ -25,6 +25,7 @@ ag, err := agent.New(agent.Config{
         Name: "openai", Model: "gpt-4o", BaseURL: "https://api.openai.com",
         APIKey: os.Getenv("OPENAI_API_KEY"),
     },
+    SystemPrompt: "You are a coding assistant.",
 })
 if err != nil { return err }
 defer ag.Close()
@@ -76,7 +77,7 @@ cfg.OnEvent = func(ctx context.Context, e agent.Event) {
 }
 ```
 
-Event kinds: `KindUserInput`, `KindToken`, `KindReasoning`, `KindAssistantEnd`, `KindToolCall`, `KindToolResult`, `KindToolError`, `KindTurnEnd`, `KindPruneStart`/`KindPruneEnd`, `KindError`. See `agent/handler.go` for the full set.
+Event kinds: `KindSessionStart`, `KindUserInput`, `KindTurnStart`, `KindAPICall`, `KindToken`, `KindReasoning`, `KindAssistantEnd`, `KindToolArgDelta`, `KindToolCall`, `KindToolResult`, `KindToolError`, `KindTurnEnd`, `KindPruneStart`/`KindPruneEnd`, `KindInfo`, `KindError`, `KindSessionEnd`. See `agent/handler.go` for the authoritative list.
 
 Fan-out is a one-liner — just call multiple sinks inside the closure. No `MultiHandler` ceremony needed.
 
