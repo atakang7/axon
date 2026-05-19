@@ -1,3 +1,21 @@
+## [0.4.1](https://github.com/atakang7/axon/compare/v0.4.0...v0.4.1) (2026-05-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* syntax, and the automated release flow.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Bug Fixes
+
+* **ci:** verify automated release pipeline end-to-end ([0670412](https://github.com/atakang7/axon/commit/0670412ac7edcfd9e0229fa6f0de01820cd8e26b))
+
+
+### CI
+
+* automate releases on every push to main ([4572ce3](https://github.com/atakang7/axon/commit/4572ce3bd7295102d40c1e6707b8a14072db8d99))
+
 # Changelog
 
 All notable changes to axon will be documented in this file.
