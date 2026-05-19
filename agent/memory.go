@@ -239,71 +239,66 @@ func (s *Session) Forget(id, reason string) error {
 // TASK tool — register or update the current objective
 // -----------------------------------------------------------------------------
 
-const taskDescription = `Register or advance the task plan.
-  - action=register: commit objective, definition_of_done, hypothesis, and a step list (>=2 steps).
-  - action=advance: mark the current step done and move to the next.
-  - action=replan: replace the hypothesis and step list (use when a step's result contradicts the hypothesis the plan was built on).
-Plan is conditional on the hypothesis. If the hypothesis turns out wrong, replan — do not keep executing a plan whose foundation has collapsed.`
+const taskDescription = `Track a multi-step plan. Skip for one-shot work.
+  - register: set goal + steps (short imperatives, ~3-7 words each).
+  - advance: mark current step done, move to next.
+  - replan: replace steps when the current plan no longer fits.
+
+Goal must be phrased as the question the final answer will answer (e.g. "is anything in the blog weak for my career?" — not "review the blog"). Aim for 2-4 steps; more than 4 means you haven't scoped tightly enough — narrow the goal or split into a follow-up.`
 
 func TaskTool(s *Session) Tool {
 	type input struct {
-		Action           string   `json:"action"`
-		Objective        string   `json:"objective"`
-		DefinitionOfDone string   `json:"definition_of_done"`
-		Hypothesis       string   `json:"hypothesis"`
-		Steps            []string `json:"steps"`
-		Reason           string   `json:"reason"`
+		Action string   `json:"action"`
+		Goal   string   `json:"goal"`
+		Steps  []string `json:"steps"`
 	}
 	return Tool{
 		Name:        toolTask,
 		Description: taskDescription,
 		Schema: obj("object", props{
-			"action":             enumSchema("register | advance | replan. Required.", "register", "advance", "replan"),
-			"objective":          strSchema("Precise statement of what is being accomplished. One sentence. Required for register and replan."),
-			"definition_of_done": strSchema("The observable condition under which the task is complete. Required for register."),
-			"hypothesis":         strSchema("Your best current explanation of the cause / shape of the problem, in one sentence. The plan is built on this. Required for register and replan. If you don't have one, the task is exploratory — say so explicitly."),
-			"steps":              arr(strSchema("One concrete step. Each step is a single sentence: an action you will execute, not a description of an area to think about. Required for register and replan; min 2 steps.")),
-			"reason":             reasonField(),
-		}, []string{"action", "reason"}),
+			"action": enumSchema("register | advance | replan.", "register", "advance", "replan"),
+			"goal":   strSchema("The question the final answer will answer. One short line. Required for register."),
+			"steps":  arr(strSchema("Short imperative (~3-7 words). Aim for 2-4 total. Required for register and replan.")),
+		}, []string{"action"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var p input
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
-			if err := requireReason(p.Reason); err != nil {
-				return "", err
-			}
-			switch p.Action {
-			case "register":
-				if strings.TrimSpace(p.Objective) == "" || strings.TrimSpace(p.DefinitionOfDone) == "" {
-					return "", fmt.Errorf("objective and definition_of_done are required for action=register")
-				}
-				if strings.TrimSpace(p.Hypothesis) == "" {
-					return "", fmt.Errorf("hypothesis is required for action=register; state your best current explanation of the cause/shape of the problem, or say 'exploratory: no hypothesis yet' if the task is genuinely open-ended")
-				}
-				if len(p.Steps) < 2 {
-					return "", fmt.Errorf("at least 2 steps are required for action=register; if the task is one tool call, do not register a task")
-				}
-				steps := make([]TaskStep, 0, len(p.Steps))
-				for _, d := range p.Steps {
+			cleanSteps := func(in []string) []TaskStep {
+				out := make([]TaskStep, 0, len(in))
+				for _, d := range in {
 					d = strings.TrimSpace(d)
 					if d == "" {
 						continue
 					}
-					steps = append(steps, TaskStep{Description: d})
+					out = append(out, TaskStep{Description: d})
+				}
+				return out
+			}
+			switch p.Action {
+			case "register":
+				if strings.TrimSpace(p.Goal) == "" {
+					return "", fmt.Errorf("goal is required for register")
+				}
+				steps := cleanSteps(p.Steps)
+				if len(steps) == 0 {
+					return "", fmt.Errorf("at least one step is required for register")
 				}
 				s.CurrentTask = &Task{
-					Objective:        strings.TrimSpace(p.Objective),
-					DefinitionOfDone: strings.TrimSpace(p.DefinitionOfDone),
-					Hypothesis:       strings.TrimSpace(p.Hypothesis),
-					Steps:            steps,
-					CurrentStep:      0,
+					Goal:        strings.TrimSpace(p.Goal),
+					Steps:       steps,
+					CurrentStep: 0,
 				}
-				return fmt.Sprintf("task registered: %s (%d steps; current: %s)",
-					s.CurrentTask.Objective, len(steps), steps[0].Description), s.Save()
+				msg := fmt.Sprintf("task: %s (%d steps; current: %s)",
+					s.CurrentTask.Goal, len(steps), steps[0].Description)
+				if len(steps) > 4 {
+					msg += "\nwarning: >4 steps. Likely under-scoped — narrow the goal or split into a follow-up."
+				}
+				return msg, s.Save()
 			case "advance":
 				if s.CurrentTask == nil || len(s.CurrentTask.Steps) == 0 {
-					return "", fmt.Errorf("no task with steps registered")
+					return "", fmt.Errorf("no task registered")
 				}
 				if s.CurrentTask.CurrentStep >= len(s.CurrentTask.Steps) {
 					return "all steps already complete", nil
@@ -311,35 +306,28 @@ func TaskTool(s *Session) Tool {
 				s.CurrentTask.Steps[s.CurrentTask.CurrentStep].Done = true
 				s.CurrentTask.CurrentStep++
 				if s.CurrentTask.CurrentStep >= len(s.CurrentTask.Steps) {
-					return "step complete; plan finished — produce the final answer to the user", s.Save()
+					return "done — answer the user", s.Save()
 				}
-				next := s.CurrentTask.Steps[s.CurrentTask.CurrentStep].Description
-				return fmt.Sprintf("step complete; current step → %s", next), s.Save()
+				return fmt.Sprintf("next → %s",
+					s.CurrentTask.Steps[s.CurrentTask.CurrentStep].Description), s.Save()
 			case "replan":
 				if s.CurrentTask == nil {
-					return "", fmt.Errorf("no task registered to replan; use action=register")
+					return "", fmt.Errorf("no task registered; use register")
 				}
-				if strings.TrimSpace(p.Hypothesis) == "" {
-					return "", fmt.Errorf("hypothesis is required for action=replan; replan exists because the previous hypothesis failed — state the new one")
+				steps := cleanSteps(p.Steps)
+				if len(steps) == 0 {
+					return "", fmt.Errorf("at least one step is required for replan")
 				}
-				if len(p.Steps) < 2 {
-					return "", fmt.Errorf("at least 2 steps are required for action=replan")
+				if g := strings.TrimSpace(p.Goal); g != "" {
+					s.CurrentTask.Goal = g
 				}
-				steps := make([]TaskStep, 0, len(p.Steps))
-				for _, d := range p.Steps {
-					d = strings.TrimSpace(d)
-					if d == "" {
-						continue
-					}
-					steps = append(steps, TaskStep{Description: d})
-				}
-				if strings.TrimSpace(p.Objective) != "" {
-					s.CurrentTask.Objective = strings.TrimSpace(p.Objective)
-				}
-				s.CurrentTask.Hypothesis = strings.TrimSpace(p.Hypothesis)
 				s.CurrentTask.Steps = steps
 				s.CurrentTask.CurrentStep = 0
-				return fmt.Sprintf("replanned: %d steps; current: %s", len(steps), steps[0].Description), s.Save()
+				msg := fmt.Sprintf("replanned: %d steps; current: %s", len(steps), steps[0].Description)
+				if len(steps) > 4 {
+					msg += "\nwarning: >4 steps. Likely under-scoped — narrow the goal or split into a follow-up."
+				}
+				return msg, s.Save()
 			default:
 				return "", fmt.Errorf("action is required: register | advance | replan")
 			}

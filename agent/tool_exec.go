@@ -52,15 +52,14 @@ func ExecTool(s *Session) Tool {
 		Name:        toolExec,
 		Description: execDescription,
 		Schema: obj("object", props{
-			"mode":              enumSchema("run | verify. Required.", execRun, execVerify),
+			"mode":              enumSchema("run | verify. Optional; defaults to run.", execRun, execVerify),
 			"command":           strSchema("Shell command. Required for mode=run."),
 			"tail_lines":        intSchema("Last N lines to keep. Required for mode=run; defaults to 50 for mode=verify. Ignored when run_in_background=true."),
 			"expected_outcome":  strSchema("What success looks like. Optional but enables structured failure diagnosis."),
 			"dir":               strSchema("Optional working directory override."),
 			"timeout_seconds":   intSchema(fmt.Sprintf("Default %d. Ignored when run_in_background=true.", timeout)),
 			"run_in_background": boolSchema("Spawn detached and return a shell_id immediately. Use for servers, watchers, anything long-running. Default false."),
-			"reason":            reasonField(),
-		}, []string{"mode", "reason"}),
+		}, []string{}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var p struct {
 				Mode            string `json:"mode"`
@@ -70,13 +69,12 @@ func ExecTool(s *Session) Tool {
 				Dir             string `json:"dir"`
 				TimeoutSeconds  int    `json:"timeout_seconds"`
 				RunInBackground bool   `json:"run_in_background"`
-				Reason          string `json:"reason"`
 			}
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
-			if err := requireReason(p.Reason); err != nil {
-				return "", err
+			if p.Mode == "" {
+				p.Mode = execRun
 			}
 
 			resolvedDir := s.Cwd
@@ -105,7 +103,7 @@ func ExecTool(s *Session) Tool {
 					return "", fmt.Errorf("tail_lines is required and must be > 0 for mode=run")
 				}
 			default:
-				return "", fmt.Errorf("mode is required: run | verify")
+				return "", fmt.Errorf("unknown mode %q: run | verify", p.Mode)
 			}
 			// Cap tail_lines so the LLM cannot request a huge tail that
 			// blows the context regardless of execOutputLimit byte cap.
@@ -213,19 +211,14 @@ func BashOutputTool(s *Session) Tool {
 			"shell_id":   strSchema("Background shell handle, e.g. bash_1."),
 			"tail_lines": intSchema("Optional. Keep only the last N lines of the new delta."),
 			"max_bytes":  intSchema("Optional. Cap returned bytes (tail kept). Default ~32 KiB."),
-			"reason":     reasonField(),
-		}, []string{"shell_id", "reason"}),
+		}, []string{"shell_id"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var p struct {
 				ShellID   string `json:"shell_id"`
 				TailLines int    `json:"tail_lines"`
 				MaxBytes  int    `json:"max_bytes"`
-				Reason    string `json:"reason"`
 			}
 			if err := json.Unmarshal(raw, &p); err != nil {
-				return "", err
-			}
-			if err := requireReason(p.Reason); err != nil {
 				return "", err
 			}
 			sh, ok := bgReg.get(p.ShellID)
@@ -274,17 +267,12 @@ func KillShellTool(s *Session) Tool {
 		Description: killShellDescription,
 		Schema: obj("object", props{
 			"shell_id": strSchema("Background shell handle, e.g. bash_1."),
-			"reason":   reasonField(),
-		}, []string{"shell_id", "reason"}),
+		}, []string{"shell_id"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var p struct {
 				ShellID string `json:"shell_id"`
-				Reason  string `json:"reason"`
 			}
 			if err := json.Unmarshal(raw, &p); err != nil {
-				return "", err
-			}
-			if err := requireReason(p.Reason); err != nil {
 				return "", err
 			}
 			sh, ok := bgReg.get(p.ShellID)

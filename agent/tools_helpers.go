@@ -295,10 +295,3 @@ func (b *limitBuf) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-// requireReason returns an error if the LLM omitted the justification field.
-func requireReason(r string) error {
-	if strings.TrimSpace(r) == "" {
-		return fmt.Errorf("reason is required: state in one sentence why you are calling this tool")
-	}
-	return nil
-}

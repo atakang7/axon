@@ -19,11 +19,9 @@ type Edit struct {
 // turn until the work is done. One task at a time; setting a new one overwrites
 // the old. Nil means no task is registered (one-shot or not yet scoped).
 type Task struct {
-	Objective        string     `json:"objective"`
-	DefinitionOfDone string     `json:"definition_of_done"`
-	Hypothesis       string     `json:"hypothesis,omitempty"`
-	Steps            []TaskStep `json:"steps,omitempty"`
-	CurrentStep      int        `json:"current_step,omitempty"`
+	Goal        string     `json:"goal"`
+	Steps       []TaskStep `json:"steps,omitempty"`
+	CurrentStep int        `json:"current_step,omitempty"`
 }
 
 // TaskStep is one committed step in the task plan. Done flips to true when
@@ -60,17 +58,13 @@ func (s *Session) TaskBlock() string {
 	if len(t.Steps) > 0 && t.CurrentStep < len(t.Steps) {
 		current := t.Steps[t.CurrentStep].Description
 		fmt.Fprintf(&b, "\n  >>> CURRENT STEP (%d/%d): %s", t.CurrentStep+1, len(t.Steps), current)
-		b.WriteString("\n  >>> Execute the entire step this turn — batch its tool calls in parallel.")
-		b.WriteString("\n  >>> After execution this turn you MUST call task action=advance, OR call task action=replan if reality contradicts the plan.")
+		fmt.Fprintf(&b, "\n  >>> Do this step now; call task advance after. Keep findings scoped to: %s", t.Goal)
+		b.WriteString("\n  >>> If the plan no longer fits, replan.")
 	} else if len(t.Steps) > 0 {
-		b.WriteString("\n  >>> ALL STEPS COMPLETE — produce the final answer to the user this turn. Do not call more tools.")
+		fmt.Fprintf(&b, "\n  >>> ALL STEPS COMPLETE — answer ONLY the goal: %s", t.Goal)
+		b.WriteString("\n  >>> Omit findings not in scope. No more tools.")
 	}
-	fmt.Fprintf(&b, "\n  objective:          %s\n  definition of done: %s",
-		t.Objective, t.DefinitionOfDone)
-	if t.Hypothesis != "" {
-		fmt.Fprintf(&b, "\n  hypothesis:         %s", t.Hypothesis)
-		b.WriteString("\n  >>> If a step's result contradicts the hypothesis, call task action=replan with a new hypothesis BEFORE advancing.")
-	}
+	fmt.Fprintf(&b, "\n  goal: %s", t.Goal)
 	if len(t.Steps) > 0 {
 		b.WriteString("\n  plan:")
 		for i, step := range t.Steps {

@@ -15,10 +15,11 @@ import (
 // READ — single-file content. Three modes, conscious pick.
 // ---------------------------------------------------------------------------
 
-const readDescription = `Read one file.
+const readDescription = `Read one file, or list a directory.
   - skeleton: signatures only. ~10x cheaper than full.
   - slice: lines [offset, offset+limit).
-  - full: entire file.`
+  - full: entire file.
+If path is a directory, returns its entries (subdirs marked with trailing '/'); mode is ignored.`
 
 func ReadTool(s *Session) Tool {
 	limit := readLimit()
@@ -27,29 +28,30 @@ func ReadTool(s *Session) Tool {
 		Description: readDescription,
 		Schema: obj("object", props{
 			"path":   strSchema("Relative or absolute file path."),
-			"mode":   enumSchema("skeleton | slice | full. Required.", readSkeleton, readSlice, readFull),
-			"offset": intSchema("1-based start line. Required when mode=slice."),
-			"limit":  intSchema(fmt.Sprintf("Lines to return. Required when mode=slice. Default %d if omitted.", limit)),
-			"reason": reasonField(),
-		}, []string{"path", "mode", "reason"}),
+			"mode":   enumSchema("skeleton | slice | full. Optional; defaults to slice.", readSkeleton, readSlice, readFull),
+			"offset": intSchema("1-based start line. Used when mode=slice."),
+			"limit":  intSchema(fmt.Sprintf("Lines to return. Used when mode=slice. Default %d if omitted.", limit)),
+		}, []string{"path"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var p struct {
 				Path   string `json:"path"`
 				Mode   string `json:"mode"`
 				Offset int    `json:"offset"`
 				Limit  int    `json:"limit"`
-				Reason string `json:"reason"`
 			}
 			if err := json.Unmarshal(raw, &p); err != nil {
-				return "", err
-			}
-			if err := requireReason(p.Reason); err != nil {
 				return "", err
 			}
 			if strings.TrimSpace(p.Path) == "" {
 				return "", fmt.Errorf("path is required")
 			}
+			if p.Mode == "" {
+				p.Mode = readSlice
+			}
 			abs := s.ResolvePath(p.Path)
+			if info, err := os.Stat(abs); err == nil && info.IsDir() {
+				return readDirListing(abs)
+			}
 			if msg, binary := binaryFileRefusal(abs); binary {
 				return msg, nil
 			}
@@ -67,7 +69,7 @@ func ReadTool(s *Session) Tool {
 			case readFull:
 				return readFullMode(abs)
 			default:
-				return "", fmt.Errorf("mode is required: skeleton | slice | full")
+				return "", fmt.Errorf("unknown mode %q: skeleton | slice | full", p.Mode)
 			}
 		},
 	}
@@ -148,6 +150,36 @@ var skeletonPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^\s*(func|function|def|class|type|struct|interface|trait|enum|impl|module)\b`),
 	regexp.MustCompile(`^\s*(public|private|protected|static|export|async|const|let|var)\s+(function|class|def|fn|struct|type|interface|enum)\b`),
 	regexp.MustCompile(`^\s*(export\s+)?(default\s+)?(function|class|const|let|var|async)\b.*[({]`),
+}
+
+// readDirListing returns a one-shot listing when read is called on a directory.
+// Trailing '/' marks subdirectories so the next call knows which entries are
+// files (readable) vs dirs (need to descend).
+func readDirListing(abs string) (string, error) {
+	fis, err := os.ReadDir(abs)
+	if err != nil {
+		return "", err
+	}
+	if len(fis) == 0 {
+		return "[directory: " + abs + " — empty]", nil
+	}
+	var dirs, files []string
+	for _, fi := range fis {
+		if fi.IsDir() {
+			dirs = append(dirs, fi.Name()+"/")
+		} else {
+			files = append(files, fi.Name())
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[directory: %s — %d entries. trailing '/' = subdir. Read a specific entry next.]\n", abs, len(fis))
+	for _, d := range dirs {
+		b.WriteString(d + "\n")
+	}
+	for _, f := range files {
+		b.WriteString(f + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 func readSkeletonMode(abs string) (string, error) {

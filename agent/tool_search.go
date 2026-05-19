@@ -25,13 +25,12 @@ func SearchTool(s *Session) Tool {
 		Description: searchDescription,
 		Schema: obj("object", props{
 			"query":          strSchema("Text, regex pattern, or symbol name (depending on mode)."),
-			"mode":           enumSchema("literal | regex | trace. Required.", searchLiteral, searchRegex, searchTrace),
+			"mode":           enumSchema("literal | regex | trace. Optional; defaults to literal.", searchLiteral, searchRegex, searchTrace),
 			"path":           strSchema("Optional search root. Default '.'."),
 			"globs":          arr(strSchema("Optional rg glob filters, e.g. '*.go'.")),
 			"case_sensitive": boolSchema("Match case. Default false (rg --ignore-case)."),
 			"max_matches":    intSchema("Cap total matches. Defaults to AXON_SEARCH_LIMIT."),
-			"reason":         reasonField(),
-		}, []string{"query", "mode", "reason"}),
+		}, []string{"query"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var p struct {
 				Query         string   `json:"query"`
@@ -40,12 +39,8 @@ func SearchTool(s *Session) Tool {
 				Globs         []string `json:"globs"`
 				CaseSensitive bool     `json:"case_sensitive"`
 				MaxMatches    int      `json:"max_matches"`
-				Reason        string   `json:"reason"`
 			}
 			if err := json.Unmarshal(raw, &p); err != nil {
-				return "", err
-			}
-			if err := requireReason(p.Reason); err != nil {
 				return "", err
 			}
 			if strings.TrimSpace(p.Query) == "" {
@@ -57,6 +52,9 @@ func SearchTool(s *Session) Tool {
 			if p.MaxMatches <= 0 {
 				p.MaxMatches = searchLimit()
 			}
+			if p.Mode == "" {
+				p.Mode = searchLiteral
+			}
 			switch p.Mode {
 			case searchLiteral:
 				return runRipgrep(ctx, s, p.Query, p.Path, p.Globs, true, p.CaseSensitive, p.MaxMatches)
@@ -65,7 +63,7 @@ func SearchTool(s *Session) Tool {
 			case searchTrace:
 				return runTrace(ctx, s, p.Query, p.Path, p.Globs, p.MaxMatches)
 			default:
-				return "", fmt.Errorf("mode is required: literal | regex | trace")
+				return "", fmt.Errorf("unknown mode %q: literal | regex | trace", p.Mode)
 			}
 		},
 	}

@@ -7,12 +7,14 @@ package agent
 //   1. Single LLM, no subagents. Tools are plain functions.
 //   2. Tools: read, write, exec, search, bash_output, kill_shell, task.
 //      task lives in memory.go (it owns session task state).
-//   3. Every tool takes a required `reason` field — the LLM must articulate
-//      intent before paying the cost. The reason is recorded for self-observation,
-//      not enforced by length or content.
-//   4. Every tool's `mode` is required with no default. The LLM picks consciously.
-//      "One door" steering, never amputation: every mode stays available at
-//      every hygiene level. Friction and metadata scale, capability does not.
+//   3. Tools take no `reason` field. Earlier builds required a justification
+//      string on every call; it was dropped to cut per-call latency and token
+//      cost. The model's own reasoning trace is the audit log.
+//   4. `mode` is required on write and task (modes take different params and
+//      have no safe default). On read/exec/search, `mode` is optional with a
+//      sensible default (slice, run, literal) so the cheap common case is one
+//      argument away. Every mode stays reachable; defaults only set the
+//      default door.
 //   5. Tool descriptions teach the cost model in plain terms ("full read is ~10x
 //      skeleton", "tool-call loops resend full context"). Reality, not nagging.
 //   6. Output is structured and traceable. Search/trace returns a unified "bingo"
@@ -122,7 +124,3 @@ func enumSchema(desc string, values ...string) map[string]any {
 	return map[string]any{"type": "string", "description": desc, "enum": vs}
 }
 
-// reasonField — required justification block on every tool call.
-func reasonField() map[string]any {
-	return strSchema("Why this call SERVES THE CURRENT TASK STEP and HYPOTHESIS, what you expect the result to confirm or falsify, and what you will do next based on each possible outcome. Not a description of the call ('read file X to see contents') — a justification tied to the plan ('read X to verify the unconditional ID stamp at line 283 is the cause; if confirmed, advance to fix; if not, replan'). One or two sentences. The reason exists to force you to know why this call earns its cost.")
-}

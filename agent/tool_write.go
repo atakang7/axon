@@ -32,8 +32,7 @@ func WriteTool(s *Session) Tool {
 			"old_str":    strSchema("Exact text to replace. Required when mode=replace_string."),
 			"start_line": intSchema("1-based start line. Required when mode=replace_lines or insert_at_line."),
 			"end_line":   intSchema("1-based end line, inclusive. Required when mode=replace_lines."),
-			"reason":     reasonField(),
-		}, []string{"path", "mode", "content", "reason"}),
+		}, []string{"path", "mode", "content"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var p struct {
 				Path      string `json:"path"`
@@ -42,12 +41,8 @@ func WriteTool(s *Session) Tool {
 				OldStr    string `json:"old_str"`
 				StartLine int    `json:"start_line"`
 				EndLine   int    `json:"end_line"`
-				Reason    string `json:"reason"`
 			}
 			if err := json.Unmarshal(raw, &p); err != nil {
-				return "", err
-			}
-			if err := requireReason(p.Reason); err != nil {
 				return "", err
 			}
 			if strings.TrimSpace(p.Path) == "" {
