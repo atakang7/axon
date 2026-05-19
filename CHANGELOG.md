@@ -1,3 +1,10 @@
+## [0.4.2](https://github.com/atakang7/axon/compare/v0.4.1...v0.4.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* **ci:** drop Windows from goreleaser matrix ([fd401bf](https://github.com/atakang7/axon/commit/fd401bf14bfa861f99cd32a19f1b5022786ca326))
+
 ## [0.4.1](https://github.com/atakang7/axon/compare/v0.4.0...v0.4.1) (2026-05-19)
 
 
