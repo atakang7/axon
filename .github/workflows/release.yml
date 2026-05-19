@@ -3,12 +3,6 @@ name: Release
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing tag to (re)build binaries for; leave empty for normal main-driven release"
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -22,12 +16,7 @@ concurrency:
 jobs:
   release:
     name: semantic-release
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    outputs:
-      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
-      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
-      new_release_git_tag: ${{ steps.semantic.outputs.new_release_git_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,33 +37,5 @@ jobs:
             @semantic-release/exec@6
             @semantic-release/git@10
             conventional-changelog-conventionalcommits@7
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  goreleaser:
-    name: goreleaser
-    needs: release
-    if: |
-      always() &&
-      (
-        (github.event_name == 'push' && needs.release.outputs.new_release_published == 'true') ||
-        (github.event_name == 'workflow_dispatch' && inputs.tag != '')
-      )
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.new_release_git_tag }}
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

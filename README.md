@@ -4,11 +4,11 @@
 
 Axon is a small library that runs the agent loop — streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under pressure, and emitting structured events at every step. Embedders supply a provider, optional tools, and a handler; the runtime drives the loop.
 
-The repo also ships a reference CLI (`cmd/axon`) that wires the runtime to a terminal: an interactive provider picker, a YAML loader for agent personalities, a colored TTY renderer, and slash commands. The CLI is one consumer of the library, not the product.
+This repo is library-only. The terminal coding agent that previously lived at `cmd/axon` has moved to its own project: **[bouton](https://github.com/atakang7/bouton)**.
 
 ```
-github.com/atakang7/axon/agent     ← the runtime (import this)
-github.com/atakang7/axon/cmd/axon  ← the reference CLI
+github.com/atakang7/axon/agent  ← the runtime (import this)
+github.com/atakang7/bouton      ← terminal coding agent built on axon
 ```
 
 ---
@@ -117,65 +117,16 @@ ag.Close() error            // release background shells
 
 ## The reference CLI
 
-```sh
-go build -o axon ./cmd/axon
-./axon                                  # interactive
-./axon --prompt "summarize TODOs"       # single-shot
-./axon --agent reviewer                 # load ~/.config/axon/agents/reviewer.yaml
-```
-
-### Provider config
-
-The CLI reads `${XDG_CONFIG_HOME:-~/.config}/agent/providers.json` (override with `AXON_PROVIDERS_PATH`):
-
-```json
-{
-  "providers": [
-    { "name": "ollama",   "base_url": "http://localhost:11434", "model": "llama3" },
-    { "name": "openai",   "base_url": "https://api.openai.com", "model": "gpt-4o",   "api_key": "sk-..." },
-    { "name": "claude",   "base_url": "https://api.anthropic.com", "model": "claude-3-opus", "api_key": "sk-ant-..." }
-  ]
-}
-```
-
-Or pure env:
+The reference terminal coding agent is now [bouton](https://github.com/atakang7/bouton). Install with:
 
 ```sh
-LLM_MODEL=gpt-4o LLM_BASE_URL=https://api.openai.com LLM_API_KEY=sk-... ./axon
+go install github.com/atakang7/bouton/cmd/bouton@latest
+bouton                                  # interactive
+bouton --prompt "summarize TODOs"       # single-shot
+bouton --agent reviewer                 # YAML personality
 ```
 
-`LLM_PROVIDER` selects one when multiple are configured. The CLI offers an interactive picker otherwise.
-
-### YAML agents (CLI-only)
-
-Place YAML configs under `${AXON_AGENTS_DIR:-~/.config/axon/agents}/`:
-
-```yaml
-name: reviewer
-system_prompt: ./reviewer.md
-tools:
-  - name: submit_review
-    type: shell
-    description: "Submit a GitHub PR review."
-    schema:
-      type: object
-      properties:
-        verdict: { type: string, enum: [approve, request_changes] }
-        body:    { type: string }
-      required: [verdict, body]
-    command: gh pr review --{{.verdict}} --body {{.body | shellQuote}}
-    timeout_seconds: 10
-```
-
-YAML is **a CLI concern**. The runtime knows nothing about it. Library users build `agent.Config` directly.
-
-### Slash commands
-
-- `/new` — wipe session, restart
-- `/undo` — revert the last file edit
-- `/cd <path>` — change cwd
-- `/pwd` — show cwd
-- `/session` — show session info
+Provider config, YAML agent personalities, slash commands, and the interactive picker all live in bouton — see its [README](https://github.com/atakang7/bouton#readme).
 
 ---
 

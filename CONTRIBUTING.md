@@ -116,11 +116,11 @@ Subjects are lowercase, imperative ("add", not "added" or "adds"), and ≤ 100 c
 
 ## Project structure
 
-axon is split into a runtime library and a reference CLI:
+axon is a library-only repository. The terminal coding agent lives in [bouton](https://github.com/atakang7/bouton).
 
 ```
 axon/
-├── agent/                     # the runtime library (import this)
+├── agent/                     # the runtime library (the product of this repo)
 │   ├── api.go                 # Config, New, Step, Run, Reset, Undo, Cd, Session, SessionPath, Close
 │   ├── agent.go               # Agent struct, chat/retry, runTool
 │   ├── handler.go             # Event, Kind, ToolEvent, PruneInfo, SessionInfo
@@ -140,15 +140,7 @@ axon/
 │   ├── tool_exec.go           # ExecTool, BashOutputTool, KillShellTool
 │   ├── bg.go                  # background shell registry
 │   └── probes.go              # language/build detection
-├── cmd/axon/                  # reference CLI (one consumer of the library)
-│   ├── main.go                # entry point: flags → Config → agent.New → REPL
-│   ├── picker.go              # interactive provider picker
-│   ├── yamlcfg.go             # YAML agent personality loader
-│   ├── customtool.go          # YAML ToolConfig → agent.Tool adapter
-│   ├── tty_handler.go         # TTY renderer consuming agent.Event
-│   ├── commands.go            # slash-command dispatch
-│   └── input.go               # paste-aware stdin reader
-├── examples/minimal/          # smallest possible embed
+├── examples/minimal/          # smallest possible embed of agent.New + Step
 ├── benchmark/                 # benchmark scripts
 ├── README.md
 ├── ARCHITECTURE.md
@@ -159,7 +151,7 @@ axon/
 └── go.sum
 ```
 
-The runtime knows nothing about terminals, flags, YAML, or `os.Exit` — those concerns live in `cmd/axon`. Library users build `agent.Config` directly.
+The runtime knows nothing about terminals, flags, YAML, or `os.Exit`. Library users build `agent.Config` directly.
 
 ## Releases
 
@@ -169,7 +161,7 @@ Releases are fully automated. Every push to `main` runs [semantic-release](https
 2. Computes the next semver (major / minor / patch / none) per the table above.
 3. Updates `CHANGELOG.md` and commits it back as `chore(release): X.Y.Z [skip ci]`.
 4. Creates and pushes the `vX.Y.Z` tag.
-5. Triggers [goreleaser](https://goreleaser.com/) which cross-compiles `cmd/axon` for linux/darwin/windows × amd64/arm64 and publishes a GitHub Release with binaries and checksums.
+5. Publishes a GitHub Release pointing at the tag. axon is a library-only repo; no binaries are shipped here. (Binaries for the terminal CLI live on [bouton's releases](https://github.com/atakang7/bouton/releases).)
 
 There is no manual `git tag` step. To ship a feature, merge a `feat:` commit to `main`; to ship a fix, merge a `fix:` commit. To skip a release entirely (e.g. internal CI tweaks), use `chore:`, `ci:`, `test:`, or `style:`.
 

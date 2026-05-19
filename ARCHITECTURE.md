@@ -3,11 +3,11 @@
 A Go runtime for building LLM agents. One library, one loop, pluggable everything that can vary.
 
 ```
-github.com/atakang7/axon/agent     ← the runtime (library)
-github.com/atakang7/axon/cmd/axon  ← reference CLI built on the runtime
+github.com/atakang7/axon/agent  ← the runtime (library, this repo)
+github.com/atakang7/bouton      ← reference coding agent built on the runtime (separate repo)
 ```
 
-The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. Everything terminal-shaped lives in `cmd/axon`.
+The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. All terminal-shaped concerns live in [bouton](https://github.com/atakang7/bouton).
 
 ## Layout
 
@@ -33,15 +33,11 @@ agent/
   bg.go               background shell registry (servers, watchers)
   probes.go           language/build detection injected into the system prompt
 
-cmd/axon/
-  main.go             entry point: flags → Config → agent.New → REPL
-  picker.go           interactive provider picker, lastChoice persistence
-  yamlcfg.go          YAML agent personality loader (AgentConfig, ToolConfig)
-  customtool.go       YAML ToolConfig → agent.Tool adapter (shell only today)
-  tty_handler.go      terminal renderer + ttyHandler that consumes agent.Event
-  commands.go         slash-command dispatch (/new, /undo, /cd, /pwd, /session)
-  input.go            paste-aware stdin reader, single-shot input
+examples/minimal/
+  main.go             smallest possible embed of agent.New + agent.Step
 ```
+
+The terminal CLI (provider picker, YAML loader, TTY renderer, slash commands) lives in [bouton](https://github.com/atakang7/bouton).
 
 ## The turn loop
 
@@ -141,42 +137,29 @@ var (
 - **Custom tool names cannot collide with built-ins.** Enforced at `New` time.
 - **Writes are atomic.** Every file mutation goes through `writeBytesRaw` (tmp + rename). Formatters run after, never during, so `Undo` is byte-exact.
 - **Reason field required on every tool call.** The model must articulate intent before paying the call's token cost.
-- **The runtime never writes to stdout.** All observability goes through `Config.OnEvent`. The CLI's `ttyHandler` is the only thing that prints.
+- **The runtime never writes to stdout.** All observability goes through `Config.OnEvent`. Renderers and TUIs (like bouton's) consume that stream.
 
-## How `cmd/axon` consumes the runtime
+## How an embedder consumes the runtime
 
 ```
-flag.Parse
-   │
-   ▼
-LoadAgentConfig(--agent name)   ← reads YAML
-   │
-   ▼
-agent.LoadProviders()           ← reads ~/.config/agent/providers.json
-   │
-   ▼
-pickProvider (interactive)
-   │
-   ▼
-tty := newTTYHandler()
+agent.LoadProviders()           ← reads ~/.config/agent/providers.json (optional)
    │
    ▼
 ag, _ := agent.New(agent.Config{
-    Provider, SystemPrompt, Tools (from YAML),
-    Pruner, OnEvent: tty.Handle,
+    Provider, SystemPrompt, Tools, Pruner, OnEvent,
 })
    │
    ▼
-for line := range stdin:
-   if slash:  handleSlash(ag, line)
-   else:      ag.Step(ctx, line)
+for each user turn:
+   ag.Step(ctx, input)
 ```
+
+For a worked example see `examples/minimal`. For a full terminal CLI see [bouton](https://github.com/atakang7/bouton).
 
 ## Extending
 
 - **New built-in tool** → add `tool_<name>.go` with a `<Name>Tool(s *Session) Tool` constructor; register in `builtinTools` in `api.go`.
-- **New custom tool kind** (e.g. MCP) → add the arm in `buildCustomTool` (`cmd/axon/customtool.go`). The runtime needs no changes — MCP would be `Tool` values whose `Fn` happens to do an RPC.
-- **New slash command** → add a case in `cmd/axon/commands.go`. Add the underlying operation as a method on `*Agent` if needed.
+- **New custom tool kind (e.g. MCP)** → custom tools are `agent.Tool` values whose `Fn` does whatever; embedders pass them via `Config.Tools`. The runtime needs no change.
 - **New observability sink** → write a function and pass it as `Config.OnEvent`. Fan-out is a one-line closure.
 - **New session store** → embedders pass their own `*Session` to `Config.Session`. The runtime works with whatever it gets.
 - **New provider** → extend `LoadProviders` in `providers.go`; the streaming layer is OpenAI-compatible and already handles most.
