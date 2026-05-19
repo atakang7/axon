@@ -14,4 +14,17 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
+      - run: go vet ./...
       - run: go test ./...
+
+  commitlint:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: .commitlintrc.json

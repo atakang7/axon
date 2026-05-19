@@ -52,14 +52,57 @@ The repo currently ships without tests — they were removed during the runtime/
 - **Update documentation** – if behavior changes, update README or comments
 
 ### Commit messages
-Use conventional commit style:
+
+axon uses [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/). Every commit on `main` must follow the format — a CI job (`commitlint`) enforces this on pull requests, and the release pipeline derives the next semver from these prefixes. **There is no manual versioning step**; commits drive releases.
+
+**Format**
+
 ```
-feat: add /stats command
-fix: handle empty providers.json gracefully
-docs: expand tool documentation
-test: cover edge case in write
-refactor: simplify memory archiving logic
+<type>(<optional scope>): <short imperative subject>
+
+<optional body explaining why, wrapped at ~72 cols>
+
+<optional footer(s), including BREAKING CHANGE>
 ```
+
+**Allowed types and what they release**
+
+| Type       | Purpose                                              | Release bump |
+| ---------- | ---------------------------------------------------- | ------------ |
+| `feat`     | New user-facing feature or public-API addition       | **minor**    |
+| `fix`      | Bug fix                                              | **patch**    |
+| `perf`     | Performance improvement with no behavior change      | **patch**    |
+| `refactor` | Internal restructure, no behavior change             | **patch**    |
+| `docs`     | Documentation only                                   | **patch**    |
+| `build`    | Build system, `go.mod`, release tooling              | **patch**    |
+| `test`     | Adding or fixing tests                               | none         |
+| `ci`       | CI configuration                                     | none         |
+| `chore`    | Maintenance not covered above                        | none         |
+| `style`    | Formatting, whitespace, no code change               | none         |
+| `revert`   | Reverts a previous commit                            | varies       |
+
+**Breaking changes** force a **major** bump regardless of type. Mark them either with `!` after the type (`feat!: drop NewBare constructor`) or with a `BREAKING CHANGE:` footer:
+
+```
+feat: collapse Handler interface into Config.OnEvent
+
+BREAKING CHANGE: agent.Handler, HandlerFunc, MultiHandler are removed.
+Set Config.OnEvent to a closure instead.
+```
+
+**Examples**
+
+```
+feat(agent): add SessionPath helper on *Agent
+fix(exec): cancel background shell on Interrupt
+perf(pruner): skip token count when last fire still fresh
+docs: align README minimum embed with required SystemPrompt
+refactor(memory): move Park/Forget out of tool surface
+ci: enforce conventional commits on PRs
+chore: bump goreleaser action to v6
+```
+
+Subjects are lowercase, imperative ("add", not "added" or "adds"), and ≤ 100 chars.
 
 ## Development workflow
 
@@ -117,6 +160,25 @@ axon/
 ```
 
 The runtime knows nothing about terminals, flags, YAML, or `os.Exit` — those concerns live in `cmd/axon`. Library users build `agent.Config` directly.
+
+## Releases
+
+Releases are fully automated. Every push to `main` runs [semantic-release](https://semantic-release.gitbook.io/) which:
+
+1. Reads the conventional-commit messages since the last tag.
+2. Computes the next semver (major / minor / patch / none) per the table above.
+3. Updates `CHANGELOG.md` and commits it back as `chore(release): X.Y.Z [skip ci]`.
+4. Creates and pushes the `vX.Y.Z` tag.
+5. Triggers [goreleaser](https://goreleaser.com/) which cross-compiles `cmd/axon` for linux/darwin/windows × amd64/arm64 and publishes a GitHub Release with binaries and checksums.
+
+There is no manual `git tag` step. To ship a feature, merge a `feat:` commit to `main`; to ship a fix, merge a `fix:` commit. To skip a release entirely (e.g. internal CI tweaks), use `chore:`, `ci:`, `test:`, or `style:`.
+
+Configuration lives in:
+
+- `.releaserc.json` — semantic-release plugins and rules
+- `.goreleaser.yaml` — binary build matrix
+- `.commitlintrc.json` — accepted commit types
+- `.github/workflows/release.yml` — the release job
 
 ## Questions?
 
