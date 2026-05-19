@@ -1,3 +1,19 @@
+## [1.0.0](https://github.com/atakang7/axon/compare/v0.4.3...v1.0.0) (2026-05-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* github.com/atakang7/axon/cmd/axon is gone. Replace
+"go install github.com/atakang7/axon/cmd/axon@latest" with
+"go install github.com/atakang7/bouton/cmd/bouton@latest". The runtime
+import path github.com/atakang7/axon/agent is unchanged.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Features
+
+* drop bundled CLI; axon is now library-only ([69e2026](https://github.com/atakang7/axon/commit/69e20268278087c6a71ba41c8dca4a3c4d145de0))
+
 ## [0.4.3](https://github.com/atakang7/axon/compare/v0.4.2...v0.4.3) (2026-05-19)
 
 
