@@ -54,6 +54,15 @@ type Client struct {
 	// otherwise emit thousands of tokens of "reasoning" before producing the
 	// structured output.
 	MaxTokens int
+
+	// ReasoningEffort, when set, is forwarded as OpenRouter/OpenAI-style
+	// reasoning.effort (for example "none", "minimal", "low"). This lets
+	// embedders run reasoning-capable models in fast tool-use mode.
+	ReasoningEffort string
+
+	// ExcludeReasoning requests that providers omit reasoning tokens from the
+	// response stream when they support it.
+	ExcludeReasoning bool
 }
 
 func NewClient(p Provider) (*Client, error) {
@@ -113,6 +122,17 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Msg, tools []Tool, onTok
 	body := map[string]any{
 		"model": c.p.Model, "messages": msgs, "tools": td,
 		"stream": true, "parallel_tool_calls": true, "max_tokens": maxTokens,
+	}
+	if c.ReasoningEffort != "" || c.ExcludeReasoning {
+		reasoning := map[string]any{}
+		if c.ReasoningEffort != "" {
+			reasoning["effort"] = c.ReasoningEffort
+		}
+		if c.ExcludeReasoning {
+			reasoning["exclude"] = true
+			body["include_reasoning"] = false // legacy OpenRouter compatibility
+		}
+		body["reasoning"] = reasoning
 	}
 	if len(c.p.Extra) > 0 {
 		body["provider"] = c.p.Extra

@@ -61,6 +61,14 @@ type Config struct {
 	// budget-sensitive providers that reject very large caps.
 	MaxTokens int
 
+	// ReasoningEffort forwards an OpenRouter/OpenAI-style reasoning effort to
+	// providers that support it. Use "none" for fast tool-use runs on models
+	// that otherwise spend too long thinking before tool calls.
+	ReasoningEffort string
+
+	// ExcludeReasoning asks providers to omit reasoning tokens from responses.
+	ExcludeReasoning bool
+
 	// Cwd is the working directory the agent operates against. Empty
 	// means the current process cwd at New() time.
 	Cwd string
@@ -107,6 +115,8 @@ func New(cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: build client: %w", err)
 	}
 	client.MaxTokens = cfg.MaxTokens
+	client.ReasoningEffort = cfg.ReasoningEffort
+	client.ExcludeReasoning = cfg.ExcludeReasoning
 
 	session := cfg.Session
 	if session == nil {
