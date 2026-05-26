@@ -56,6 +56,11 @@ type Config struct {
 	// when context grows. nil disables pruning.
 	Pruner *Pruner
 
+	// MaxTokens, when > 0, overrides the default per-request max_tokens cap.
+	// Leave zero to use the runtime default. Embedders can lower this for
+	// budget-sensitive providers that reject very large caps.
+	MaxTokens int
+
 	// Cwd is the working directory the agent operates against. Empty
 	// means the current process cwd at New() time.
 	Cwd string
@@ -101,6 +106,7 @@ func New(cfg Config) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: build client: %w", err)
 	}
+	client.MaxTokens = cfg.MaxTokens
 
 	session := cfg.Session
 	if session == nil {
