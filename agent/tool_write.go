@@ -21,6 +21,46 @@ const writeDescription = `Write to a file.
 
 Writes are atomic (tmp + rename) and reversible via /undo. A formatter runs after every write. For brace languages emit content flat (no indentation). For whitespace-significant languages (Python, YAML) emit indentation correctly.`
 
+type writeInput struct {
+	Path      string `json:"path"`
+	Mode      string `json:"mode"`
+	Content   string `json:"content"`
+	OldStr    string `json:"old_str"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+}
+
+func parseAndValidateWriteInput(raw json.RawMessage, s *Session) (*writeInput, string, error) {
+	var p writeInput
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return nil, "", fmt.Errorf("path is required")
+	}
+	abs := s.ResolvePath(p.Path)
+	
+	switch p.Mode {
+	case writeSave:
+		// no extra validation needed
+	case writeReplaceStr:
+		if p.OldStr == "" {
+			return nil, "", fmt.Errorf("old_str is required for mode=replace_string (use overwrite if you mean to replace the whole file)")
+		}
+	case writeReplaceLn:
+		if p.StartLine < 1 || p.EndLine < p.StartLine {
+			return nil, "", fmt.Errorf("start_line >= 1 and end_line >= start_line are required for mode=replace_lines")
+		}
+	case writeInsertAt:
+		if p.StartLine < 1 {
+			return nil, "", fmt.Errorf("start_line >= 1 is required for mode=insert_at_line")
+		}
+	default:
+		return nil, "", fmt.Errorf("mode is required: save | replace_string | replace_lines | insert_at_line")
+	}
+	return &p, abs, nil
+}
+
 func WriteTool(s *Session) Tool {
 	return Tool{
 		Name:        toolWrite,
@@ -34,41 +74,22 @@ func WriteTool(s *Session) Tool {
 			"end_line":   intSchema("1-based end line, inclusive. Required when mode=replace_lines."),
 		}, []string{"path", "mode", "content"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var p struct {
-				Path      string `json:"path"`
-				Mode      string `json:"mode"`
-				Content   string `json:"content"`
-				OldStr    string `json:"old_str"`
-				StartLine int    `json:"start_line"`
-				EndLine   int    `json:"end_line"`
-			}
-			if err := json.Unmarshal(raw, &p); err != nil {
+			p, abs, err := parseAndValidateWriteInput(raw, s)
+			if err != nil {
 				return "", err
 			}
-			if strings.TrimSpace(p.Path) == "" {
-				return "", fmt.Errorf("path is required")
-			}
-			abs := s.ResolvePath(p.Path)
+			
 			switch p.Mode {
 			case writeSave:
 				return writeSaveMode(s, abs, p.Content)
 			case writeReplaceStr:
-				if p.OldStr == "" {
-					return "", fmt.Errorf("old_str is required for mode=replace_string (use overwrite if you mean to replace the whole file)")
-				}
 				return writeReplaceStringMode(s, abs, p.OldStr, p.Content)
 			case writeReplaceLn:
-				if p.StartLine < 1 || p.EndLine < p.StartLine {
-					return "", fmt.Errorf("start_line >= 1 and end_line >= start_line are required for mode=replace_lines")
-				}
 				return writeReplaceLinesMode(s, abs, p.StartLine, p.EndLine, p.Content)
 			case writeInsertAt:
-				if p.StartLine < 1 {
-					return "", fmt.Errorf("start_line >= 1 is required for mode=insert_at_line")
-				}
 				return writeInsertAtMode(s, abs, p.StartLine, p.Content)
 			default:
-				return "", fmt.Errorf("mode is required: save | replace_string | replace_lines | insert_at_line")
+				return "", fmt.Errorf("unhandled mode")
 			}
 		},
 	}
