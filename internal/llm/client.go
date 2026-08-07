@@ -147,13 +147,16 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 	}
 
 	body := map[string]any{
-		"model":               c.cfg.Provider.Model,
-		"messages":            req.Messages,
-		"tools":               tools,
-		"stream":              true,
-		"parallel_tool_calls": true,
-		"max_tokens":          maxTokens,
+		"model":      c.cfg.Provider.Model,
+		"messages":   req.Messages,
+		"stream":     true,
+		"max_tokens": maxTokens,
 	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["parallel_tool_calls"] = true
+	}
+
 	if c.cfg.ReasoningEffort != "" || c.cfg.ExcludeReasoning {
 		reasoning := map[string]any{}
 		if c.cfg.ReasoningEffort != "" {
