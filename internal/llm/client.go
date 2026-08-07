@@ -157,6 +157,8 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 		body["parallel_tool_calls"] = true
 	}
 
+	body["include_reasoning"] = true
+
 	if c.cfg.ReasoningEffort != "" || c.cfg.ExcludeReasoning {
 		reasoning := map[string]any{}
 		if c.cfg.ReasoningEffort != "" {
