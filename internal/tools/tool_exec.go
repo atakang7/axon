@@ -1,4 +1,4 @@
-package agent
+package tools
 
 import (
 	"context"
@@ -34,7 +34,7 @@ type execInput struct {
 	RunInBackground bool   `json:"run_in_background"`
 }
 
-func parseAndValidateExecInput(raw json.RawMessage, s *Session, defaultTimeout int) (*execInput, string, error) {
+func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, defaultTimeout int) (*execInput, string, error) {
 	var p execInput
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
@@ -42,9 +42,9 @@ func parseAndValidateExecInput(raw json.RawMessage, s *Session, defaultTimeout i
 	if p.Mode == "" {
 		p.Mode = execRun
 	}
-	resolvedDir := s.Cwd
+	resolvedDir := ws.Dir()
 	if strings.TrimSpace(p.Dir) != "" {
-		resolvedDir = s.ResolvePath(p.Dir)
+		resolvedDir = ws.ResolvePath(p.Dir)
 	}
 	switch p.Mode {
 	case execVerify:
@@ -104,7 +104,7 @@ func detectVerifyCommand(dir string) (string, error) {
 	return "", fmt.Errorf("could not detect build/check command: no go.mod, Cargo.toml, tsconfig.json, package.json, or Makefile found in %s", dir)
 }
 
-func ExecTool(s *Session) Tool {
+func ExecTool(ws Workspace, shells *BackgroundShells) Tool {
 	timeout := config.ExecTimeoutSeconds()
 	return Tool{
 		Name:        toolExec,
@@ -119,13 +119,13 @@ func ExecTool(s *Session) Tool {
 			"run_in_background": boolSchema("Spawn detached and return a shell_id immediately. Use for servers, watchers, anything long-running. Default false."),
 		}, []string{}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			p, resolvedDir, err := parseAndValidateExecInput(raw, s, timeout)
+			p, resolvedDir, err := parseAndValidateExecInput(raw, ws, timeout)
 			if err != nil {
 				return "", err
 			}
 
 			if p.RunInBackground {
-				sh, err := bgReg.start(p.Command, resolvedDir)
+				sh, err := shells.start(p.Command, resolvedDir)
 				if err != nil {
 					return "", err
 				}
@@ -200,7 +200,7 @@ const bashOutputDescription = `Read new output from a background shell since the
   - tail_lines: optional. Keep only the last N lines of the delta. Useful for chatty servers.
   - max_bytes: optional. Cap returned bytes (tail kept). Default ~32 KiB; offset still advances past dropped bytes so the next call continues from "now."`
 
-func BashOutputTool(s *Session) Tool {
+func BashOutputTool(shells *BackgroundShells) Tool {
 	return Tool{
 		Name:        toolBashOutput,
 		Description: bashOutputDescription,
@@ -218,7 +218,7 @@ func BashOutputTool(s *Session) Tool {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
-			sh, ok := bgReg.get(p.ShellID)
+			sh, ok := shells.get(p.ShellID)
 			if !ok {
 				return "", fmt.Errorf("unknown shell_id: %s", p.ShellID)
 			}
@@ -258,7 +258,7 @@ func BashOutputTool(s *Session) Tool {
 
 const killShellDescription = `Stop a background shell (SIGTERM, then SIGKILL after grace). Always kill servers you started — sessions do not leak processes, but cleaning up early frees ports.`
 
-func KillShellTool(s *Session) Tool {
+func KillShellTool(shells *BackgroundShells) Tool {
 	return Tool{
 		Name:        toolKillShell,
 		Description: killShellDescription,
@@ -272,7 +272,7 @@ func KillShellTool(s *Session) Tool {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
-			sh, ok := bgReg.get(p.ShellID)
+			sh, ok := shells.get(p.ShellID)
 			if !ok {
 				return "", fmt.Errorf("unknown shell_id: %s", p.ShellID)
 			}

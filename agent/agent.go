@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/atakang7/axon/internal/tools"
 )
 
 // agent.go — Agent struct, chat/tool dispatch, retry policy.
@@ -45,6 +47,11 @@ type Agent struct {
 	// customTools holds the caller-supplied tools (Config.Tools). Reset
 	// preserves these across session wipes; built-ins are rebound.
 	customTools []Tool
+
+	// shells is this agent's background-process registry. Owned here rather
+	// than package-global so two agents in one process cannot terminate each
+	// other's servers on Close or Reset.
+	shells *tools.BackgroundShells
 }
 
 // Interrupt cancels the in-flight chat if there is one, returning true.

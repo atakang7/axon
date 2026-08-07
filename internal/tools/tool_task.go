@@ -1,10 +1,12 @@
-package agent
+package tools
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/atakang7/axon/internal/session"
 )
 
 const taskDescription = `Track a multi-step plan. Skip for one-shot work.
@@ -14,7 +16,7 @@ const taskDescription = `Track a multi-step plan. Skip for one-shot work.
 
 Goal must be phrased as the question the final answer will answer (e.g. "is anything in the blog weak for my career?" — not "review the blog"). Aim for 2-4 steps; more than 4 means you haven't scoped tightly enough — narrow the goal or split into a follow-up.`
 
-func TaskTool(s *Session) Tool {
+func TaskTool(plan Plan) Tool {
 	type input struct {
 		Action string   `json:"action"`
 		Goal   string   `json:"goal"`
@@ -33,14 +35,14 @@ func TaskTool(s *Session) Tool {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
-			cleanSteps := func(in []string) []TaskStep {
-				out := make([]TaskStep, 0, len(in))
+			cleanSteps := func(in []string) []session.TaskStep {
+				out := make([]session.TaskStep, 0, len(in))
 				for _, d := range in {
 					d = strings.TrimSpace(d)
 					if d == "" {
 						continue
 					}
-					out = append(out, TaskStep{Description: d})
+					out = append(out, session.TaskStep{Description: d})
 				}
 				return out
 			}
@@ -53,17 +55,20 @@ func TaskTool(s *Session) Tool {
 				if len(steps) == 0 {
 					return "", fmt.Errorf("at least one step is required for register")
 				}
-				if err := s.RegisterTask(p.Goal, steps); err != nil {
+				if err := plan.RegisterTask(p.Goal, steps); err != nil {
 					return "", err
 				}
+				// Echo the trimmed input rather than reading the plan back:
+				// RegisterTask stores exactly this, and not reading keeps Plan
+				// write-only, so the prompt stays the single renderer of task state.
 				msg := fmt.Sprintf("task: %s (%d steps; current: %s)",
-					s.CurrentTask.Goal, len(steps), steps[0].Description)
+					strings.TrimSpace(p.Goal), len(steps), steps[0].Description)
 				if len(steps) > 4 {
 					msg += "\nwarning: >4 steps. Likely under-scoped — narrow the goal or split into a follow-up."
 				}
 				return msg, nil
 			case "advance":
-				nextStep, err := s.AdvanceTask()
+				nextStep, err := plan.AdvanceTask()
 				if err != nil {
 					return "", err
 				}
@@ -79,7 +84,7 @@ func TaskTool(s *Session) Tool {
 				if len(steps) == 0 {
 					return "", fmt.Errorf("at least one step is required for replan")
 				}
-				if err := s.ReplanTask(p.Goal, steps); err != nil {
+				if err := plan.ReplanTask(p.Goal, steps); err != nil {
 					return "", err
 				}
 				msg := fmt.Sprintf("replanned: %d steps; current: %s", len(steps), steps[0].Description)

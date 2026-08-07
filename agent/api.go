@@ -6,6 +6,7 @@ import (
 
 	"github.com/atakang7/axon/internal/llm"
 	"github.com/atakang7/axon/internal/session"
+	"github.com/atakang7/axon/internal/tools"
 )
 
 // api.go — public library API.
@@ -48,6 +49,10 @@ type (
 	// no implementation. Client methods take these; use toolSpecs to project
 	// a []Tool down to them.
 	ToolSpec = llm.ToolSpec
+	// Tool is a named function the model can call: schema plus the Go
+	// implementation. This is the extension surface — supply your own
+	// through Config.Tools.
+	Tool = tools.Tool
 )
 
 // ---------------------------------------------------------------------------

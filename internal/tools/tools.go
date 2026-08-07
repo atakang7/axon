@@ -1,12 +1,22 @@
-package agent
+// Package tools implements the agent's hands and legs: reading and writing
+// files, running commands, searching a tree, and tracking a task plan.
+//
+// BOUNDARY RULE: tools may import session, llm and config. It must never
+// import agent — the runtime depends on the tools, never the reverse.
+//
+// Tools do not receive a *session.Session. Each one takes the narrowest
+// interface it actually needs (Workspace, Plan), declared here on the
+// consumer side, which Session satisfies implicitly. That is what makes a
+// tool independently testable: a fake Workspace is four lines, and a tool
+// physically cannot reach conversation state that is none of its business.
+package tools
 
-// tools.go — agent tool surface.
+// tools.go — tool surface, capability interfaces, schema helpers.
 //
 // Design contract (see memory: project_axon_tools_design.md, project_axon_tools_spec.md):
 //
 //   1. Single LLM, no subagents. Tools are plain functions.
 //   2. Tools: read, write, exec, search, bash_output, kill_shell, task.
-//      task lives in memory.go (it owns session task state).
 //   3. Tools take no `reason` field. Earlier builds required a justification
 //      string on every call; it was dropped to cut per-call latency and token
 //      cost. The model's own reasoning trace is the audit log.
@@ -27,14 +37,48 @@ package agent
 //      execution is bound to the turn context so Ctrl-C kills the running
 //      command's process group. A user-facing approval/sandbox layer is a
 //      future addition, not present in this build — do not assume it exists.
-//   8. Atomicity: all writes go through writeBytesRaw (tmp + rename, mode
+//   8. Atomicity: all writes go through WriteFileAtomic (tmp + rename, mode
 //      preserved). The wrapper writeBytes runs the optional formatter; /undo
-//      uses writeBytesRaw directly so it is byte-exact and never reformats.
+//      uses WriteFileAtomic directly so it is byte-exact and never reformats.
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/atakang7/axon/internal/session"
 )
+
+// ---------------------------------------------------------------------------
+// Capabilities
+//
+// The narrow interfaces tools depend on, declared here because this is the
+// consuming side. *session.Session satisfies both; so does a four-line fake.
+// ---------------------------------------------------------------------------
+
+// Workspace is the directory a tool operates in, plus the ledger it records
+// mutations to so they can be undone. Read, write, search and exec take this
+// and nothing else — none of them can see the conversation.
+type Workspace interface {
+	// Dir is the absolute working directory commands run in.
+	Dir() string
+	// ResolvePath turns a possibly-relative path into an absolute one,
+	// interpreted against Dir.
+	ResolvePath(path string) string
+	// RecordEdit stores a before/after pair so the write can be reverted.
+	RecordEdit(path, before, after string)
+}
+
+// Plan is the task-tracking surface the task tool drives. It is deliberately
+// write-only: the tool registers, advances and replans, but never reads task
+// state back — the runtime injects the current plan into the prompt instead,
+// so there is exactly one place that renders it.
+type Plan interface {
+	RegisterTask(goal string, steps []session.TaskStep) error
+	AdvanceTask() (string, error)
+	ReplanTask(goal string, steps []session.TaskStep) error
+}
 
 // ---------------------------------------------------------------------------
 // Tool surface — public types and constants
@@ -78,6 +122,31 @@ const (
 	searchRegex   = "regex"
 	searchTrace   = "trace"
 )
+
+// Catalog lists the built-in tools for the system prompt. Terse on purpose:
+// the full per-mode documentation lives in each tool's Description, which the
+// provider already sees through the tool schema, so repeating it here would
+// pay for the same tokens twice on every single call.
+//
+// It lives in this package, rather than in the prompt builder, so that the
+// names and the blurbs cannot drift apart from the tools they describe.
+func Catalog() string {
+	rows := []struct{ name, blurb string }{
+		{toolRead, "Read files (skeleton / slice / full)."},
+		{toolWrite, "Write files (create / overwrite / replace / insert)."},
+		{toolExec, "Execute commands (run / verify; set run_in_background=true for servers and watchers)."},
+		{toolBashOutput, "Read new output from a background shell (delta only)."},
+		{toolKillShell, "Stop a background shell. Always clean up servers you started."},
+		{toolSearch, "Search (literal / regex / trace)."},
+		{toolTask, "Register a task objective."},
+	}
+	var b strings.Builder
+	b.WriteString("# BUILT-IN TOOLS\n")
+	for _, r := range rows {
+		fmt.Fprintf(&b, "\n%q — %s", r.name, r.blurb)
+	}
+	return b.String()
+}
 
 // ---------------------------------------------------------------------------
 // Schema helpers

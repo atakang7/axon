@@ -1,4 +1,4 @@
-package agent
+package tools
 
 import (
 	"context"
@@ -21,7 +21,7 @@ const searchDescription = `Search across files.
   - regex: regex pattern.
   - trace: symbol — returns definition + callers + callees.`
 
-func SearchTool(s *Session) Tool {
+func SearchTool(ws Workspace) Tool {
 	return Tool{
 		Name:        toolSearch,
 		Description: searchDescription,
@@ -59,11 +59,11 @@ func SearchTool(s *Session) Tool {
 			}
 			switch p.Mode {
 			case searchLiteral:
-				return runRipgrep(ctx, s, p.Query, p.Path, p.Globs, true, p.CaseSensitive, p.MaxMatches)
+				return runRipgrep(ctx, ws, p.Query, p.Path, p.Globs, true, p.CaseSensitive, p.MaxMatches)
 			case searchRegex:
-				return runRipgrep(ctx, s, p.Query, p.Path, p.Globs, false, p.CaseSensitive, p.MaxMatches)
+				return runRipgrep(ctx, ws, p.Query, p.Path, p.Globs, false, p.CaseSensitive, p.MaxMatches)
 			case searchTrace:
-				return runTrace(ctx, s, p.Query, p.Path, p.Globs, p.MaxMatches)
+				return runTrace(ctx, ws, p.Query, p.Path, p.Globs, p.MaxMatches)
 			default:
 				return "", fmt.Errorf("unknown mode %q: literal | regex | trace", p.Mode)
 			}
@@ -71,7 +71,7 @@ func SearchTool(s *Session) Tool {
 	}
 }
 
-func runRipgrep(parent context.Context, s *Session, query, path string, globs []string, literal, caseSensitive bool, maxMatches int) (string, error) {
+func runRipgrep(parent context.Context, ws Workspace, query, path string, globs []string, literal, caseSensitive bool, maxMatches int) (string, error) {
 	args := []string{"-n", "--no-heading", "--color", "never", "-g", "!.git", "--hidden"}
 	if !caseSensitive {
 		args = append(args, "--ignore-case")
@@ -95,8 +95,8 @@ func runRipgrep(parent context.Context, s *Session, query, path string, globs []
 	ctx, cancel := context.WithTimeout(parent, time.Duration(config.SearchTimeoutSeconds())*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rg", args...)
-	if s.Cwd != "" {
-		cmd.Dir = s.Cwd
+	if ws.Dir() != "" {
+		cmd.Dir = ws.Dir()
 	}
 	buf := &limitBuf{limit: config.SearchOutputBytes()}
 	cmd.Stdout = buf
@@ -134,7 +134,7 @@ func runRipgrep(parent context.Context, s *Session, query, path string, globs []
 
 // runTrace: regex-based symbol trace. Finds definitions, callers, and callees.
 // Heuristic. Good enough for ~80% of cases. Tree-sitter upgrade is future work.
-func runTrace(parent context.Context, s *Session, symbol, path string, globs []string, maxMatches int) (string, error) {
+func runTrace(parent context.Context, ws Workspace, symbol, path string, globs []string, maxMatches int) (string, error) {
 	// Two def patterns OR'd together:
 	//   1. plain decl:   func Foo, function Foo, def Foo, class Foo, ...
 	//   2. Go method:    func (recv T) Foo
@@ -144,11 +144,11 @@ func runTrace(parent context.Context, s *Session, symbol, path string, globs []s
 	defPattern := fmt.Sprintf(`(func|function|def|class|type|struct|interface)\s+%s\b|func\s+\([^)]*\)\s+%s\b`, q, q)
 	callPattern := fmt.Sprintf(`\b%s\s*\(`, q)
 
-	defs, err := rgCollect(parent, s, defPattern, path, globs, maxMatches)
+	defs, err := rgCollect(parent, ws, defPattern, path, globs, maxMatches)
 	if err != nil {
 		return "", err
 	}
-	calls, err := rgCollect(parent, s, callPattern, path, globs, maxMatches)
+	calls, err := rgCollect(parent, ws, callPattern, path, globs, maxMatches)
 	if err != nil {
 		return "", err
 	}
@@ -194,7 +194,7 @@ type rgHit struct {
 	text string
 }
 
-func rgCollect(parent context.Context, s *Session, pattern, path string, globs []string, maxMatches int) ([]rgHit, error) {
+func rgCollect(parent context.Context, ws Workspace, pattern, path string, globs []string, maxMatches int) ([]rgHit, error) {
 	// Use --field-context-separator and a NUL byte separator pair? Simpler:
 	// emit JSON with --json and parse, but that's a bigger change. Instead
 	// use a fixed-width separator that real paths can't contain. rg already
@@ -217,8 +217,8 @@ func rgCollect(parent context.Context, s *Session, pattern, path string, globs [
 	ctx, cancel := context.WithTimeout(parent, time.Duration(config.SearchTimeoutSeconds())*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rg", args...)
-	if s.Cwd != "" {
-		cmd.Dir = s.Cwd
+	if ws.Dir() != "" {
+		cmd.Dir = ws.Dir()
 	}
 	buf := &limitBuf{limit: config.SearchOutputBytes()}
 	cmd.Stdout = buf

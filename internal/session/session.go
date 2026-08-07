@@ -186,6 +186,11 @@ func (s *Session) Append(m llm.Msg) {
 	s.Messages = append(s.Messages, m)
 }
 
+// Dir returns the absolute working directory. It exists as a method, and not
+// only as the Cwd field, so consumers can depend on a narrow interface
+// (tools.Workspace) rather than on this struct.
+func (s *Session) Dir() string { return s.Cwd }
+
 func (s *Session) ResolvePath(p string) string {
 	if filepath.IsAbs(p) {
 		return p

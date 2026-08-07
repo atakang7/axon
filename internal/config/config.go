@@ -111,10 +111,16 @@ func SessionPath() string {
 	return filepath.Join(DataDir(), "sessions", sessionKeyForCwd()+".json")
 }
 
-// BackgroundLogDir returns the per-process directory holding background-shell
-// logs. Keyed by PID because shells never survive the process that spawned
-// them — a fresh run must not adopt a previous run's log files.
-func BackgroundLogDir(pid int) string {
+// BackgroundLogRoot returns the per-process directory under which each shell
+// registry gets its own subdirectory. Keyed by PID because shells never
+// survive the process that spawned them — a fresh run must not adopt a
+// previous run's log files.
+//
+// A registry must not write directly here. Shell IDs (bash_1, bash_2, ...)
+// restart from one in every registry, so two registries sharing this directory
+// would overwrite each other's logs; each allocates a unique subdirectory
+// beneath it instead.
+func BackgroundLogRoot(pid int) string {
 	return filepath.Join(DataDir(), "bg", strconv.Itoa(pid))
 }
 

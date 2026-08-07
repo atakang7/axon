@@ -1,4 +1,4 @@
-package agent
+package tools
 
 import (
 	"context"
@@ -30,7 +30,7 @@ type writeInput struct {
 	EndLine   int    `json:"end_line"`
 }
 
-func parseAndValidateWriteInput(raw json.RawMessage, s *Session) (*writeInput, string, error) {
+func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput, string, error) {
 	var p writeInput
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
@@ -38,7 +38,7 @@ func parseAndValidateWriteInput(raw json.RawMessage, s *Session) (*writeInput, s
 	if strings.TrimSpace(p.Path) == "" {
 		return nil, "", fmt.Errorf("path is required")
 	}
-	abs := s.ResolvePath(p.Path)
+	abs := ws.ResolvePath(p.Path)
 
 	switch p.Mode {
 	case writeSave:
@@ -61,7 +61,7 @@ func parseAndValidateWriteInput(raw json.RawMessage, s *Session) (*writeInput, s
 	return &p, abs, nil
 }
 
-func WriteTool(s *Session) Tool {
+func WriteTool(ws Workspace) Tool {
 	return Tool{
 		Name:        toolWrite,
 		Description: writeDescription,
@@ -74,20 +74,20 @@ func WriteTool(s *Session) Tool {
 			"end_line":   intSchema("1-based end line, inclusive. Required when mode=replace_lines."),
 		}, []string{"path", "mode", "content"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			p, abs, err := parseAndValidateWriteInput(raw, s)
+			p, abs, err := parseAndValidateWriteInput(raw, ws)
 			if err != nil {
 				return "", err
 			}
 
 			switch p.Mode {
 			case writeSave:
-				return writeSaveMode(s, abs, p.Content)
+				return writeSaveMode(ws, abs, p.Content)
 			case writeReplaceStr:
-				return writeReplaceStringMode(s, abs, p.OldStr, p.Content)
+				return writeReplaceStringMode(ws, abs, p.OldStr, p.Content)
 			case writeReplaceLn:
-				return writeReplaceLinesMode(s, abs, p.StartLine, p.EndLine, p.Content)
+				return writeReplaceLinesMode(ws, abs, p.StartLine, p.EndLine, p.Content)
 			case writeInsertAt:
-				return writeInsertAtMode(s, abs, p.StartLine, p.Content)
+				return writeInsertAtMode(ws, abs, p.StartLine, p.Content)
 			default:
 				return "", fmt.Errorf("unhandled mode")
 			}
@@ -99,7 +99,7 @@ func WriteTool(s *Session) Tool {
 // missing parent dirs) if absent, replaces it if present. Reports which
 // happened in the result string for the agent's benefit, but never errors on
 // existence — the agent is declaring intent, not checking state.
-func writeSaveMode(s *Session, abs, content string) (string, error) {
+func writeSaveMode(ws Workspace, abs, content string) (string, error) {
 	before, statErr := os.ReadFile(abs)
 	existed := statErr == nil
 	if dir := filepath.Dir(abs); dir != "." {
@@ -111,7 +111,7 @@ func writeSaveMode(s *Session, abs, content string) (string, error) {
 	if existed {
 		priorContent = string(before)
 	}
-	s.RecordEdit(abs, priorContent, content)
+	ws.RecordEdit(abs, priorContent, content)
 	if err := writeBytes(abs, []byte(content)); err != nil {
 		return "", err
 	}
@@ -121,7 +121,7 @@ func writeSaveMode(s *Session, abs, content string) (string, error) {
 	return "saved " + abs + " (created)", nil
 }
 
-func writeReplaceStringMode(s *Session, abs, oldStr, newStr string) (string, error) {
+func writeReplaceStringMode(ws Workspace, abs, oldStr, newStr string) (string, error) {
 	before, err := os.ReadFile(abs)
 	if err != nil {
 		return "", err
@@ -135,11 +135,11 @@ func writeReplaceStringMode(s *Session, abs, oldStr, newStr string) (string, err
 		return "", fmt.Errorf("old_str matches %d times — provide more surrounding context to make it unique, or use mode=replace_lines", count)
 	}
 	after := strings.Replace(old, oldStr, newStr, 1)
-	s.RecordEdit(abs, old, after)
+	ws.RecordEdit(abs, old, after)
 	return "replaced 1 occurrence in " + abs, writeBytes(abs, []byte(after))
 }
 
-func writeReplaceLinesMode(s *Session, abs string, startLine, endLine int, content string) (string, error) {
+func writeReplaceLinesMode(ws Workspace, abs string, startLine, endLine int, content string) (string, error) {
 	before, err := os.ReadFile(abs)
 	if err != nil {
 		return "", err
@@ -157,11 +157,11 @@ func writeReplaceLinesMode(s *Session, abs string, startLine, endLine int, conte
 	replacement := strings.Split(strings.TrimRight(content, "\n"), "\n")
 	newLines := append(append(append([]string{}, head...), replacement...), tail...)
 	after := strings.Join(newLines, "\n")
-	s.RecordEdit(abs, old, after)
+	ws.RecordEdit(abs, old, after)
 	return fmt.Sprintf("replaced lines %d-%d in %s", startLine, endLine, abs), writeBytes(abs, []byte(after))
 }
 
-func writeInsertAtMode(s *Session, abs string, startLine int, content string) (string, error) {
+func writeInsertAtMode(ws Workspace, abs string, startLine int, content string) (string, error) {
 	before, err := os.ReadFile(abs)
 	if err != nil {
 		return "", err
@@ -176,6 +176,6 @@ func writeInsertAtMode(s *Session, abs string, startLine int, content string) (s
 	insert := strings.Split(strings.TrimRight(content, "\n"), "\n")
 	newLines := append(append(append([]string{}, head...), insert...), tail...)
 	after := strings.Join(newLines, "\n")
-	s.RecordEdit(abs, old, after)
+	ws.RecordEdit(abs, old, after)
 	return fmt.Sprintf("inserted at line %d in %s", startLine, abs), writeBytes(abs, []byte(after))
 }

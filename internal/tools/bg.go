@@ -1,4 +1,4 @@
-package agent
+package tools
 
 import (
 	"fmt"
@@ -23,9 +23,14 @@ import (
 // does not keep redownloading growing logs at full token cost.
 //
 // State lives in-process (the registry map) and on disk (log files under
-// dataDir/bg/<sessionkey>/). The registry is rebuilt fresh per axon run —
-// shells do not survive across `axon` restarts. On clean exit and on /new,
-// every live shell is killed; we do not leak dev servers across sessions.
+// dataDir/bg/<pid>/). Shells do not survive a restart. On clean exit and on
+// reset, every live shell is killed; we do not leak dev servers.
+//
+// OWNERSHIP: a BackgroundShells registry belongs to one Agent, which creates
+// it at construction and kills it on Close. It used to be a package-level
+// global, which meant two Agents in the same process shared one registry and
+// either one's Close or Reset terminated the other's servers. Nothing here is
+// ambient any more: if you can reach a shell, someone handed you the registry.
 
 type bgShell struct {
 	ID         string
@@ -44,22 +49,39 @@ type bgShell struct {
 	readOffset int64 // bytes already returned by bash_output
 }
 
-type bgRegistry struct {
+type BackgroundShells struct {
 	mu     sync.Mutex
 	shells map[string]*bgShell
 	next   int
-	dir    string // log dir for this process
+	dir    string // log directory owned exclusively by this registry
 }
 
-var bgReg = newBgRegistry()
-
-func newBgRegistry() *bgRegistry {
-	dir := config.BackgroundLogDir(os.Getpid())
-	_ = os.MkdirAll(dir, 0755)
-	return &bgRegistry{shells: map[string]*bgShell{}, dir: dir}
+// NewBackgroundShells creates an empty registry with its own log directory.
+//
+// The directory is allocated uniquely rather than derived from the PID: shell
+// IDs restart at bash_1 in every registry, so two registries in one process
+// sharing a directory would write both their bash_1 logs to the same file and
+// each would serve the other's output to its agent.
+func NewBackgroundShells() *BackgroundShells {
+	root := config.BackgroundLogRoot(os.Getpid())
+	if err := os.MkdirAll(root, 0755); err != nil {
+		// Fall back to the system temp dir rather than failing construction:
+		// losing background-shell logging is survivable, refusing to build an
+		// agent is not.
+		root = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(root, "shells-")
+	if err != nil {
+		dir = root
+	}
+	return &BackgroundShells{shells: map[string]*bgShell{}, dir: dir}
 }
 
-func (r *bgRegistry) start(command, workdir string) (*bgShell, error) {
+// LogDir is the directory this registry writes shell logs to. Exposed for
+// tests asserting that two registries never share storage.
+func (r *BackgroundShells) LogDir() string { return r.dir }
+
+func (r *BackgroundShells) start(command, workdir string) (*bgShell, error) {
 	r.mu.Lock()
 	r.next++
 	id := fmt.Sprintf("bash_%d", r.next)
@@ -215,14 +237,14 @@ func (s *bgShell) kill(grace time.Duration) error {
 	}
 }
 
-func (r *bgRegistry) get(id string) (*bgShell, bool) {
+func (r *BackgroundShells) get(id string) (*bgShell, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	sh, ok := r.shells[id]
 	return sh, ok
 }
 
-func (r *bgRegistry) list() []*bgShell {
+func (r *BackgroundShells) list() []*bgShell {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]*bgShell, 0, len(r.shells))
@@ -235,7 +257,7 @@ func (r *bgRegistry) list() []*bgShell {
 
 // killAll terminates every live shell. Called on /new and on process exit so
 // background servers do not outlive the session that started them.
-func (r *bgRegistry) killAll() {
+func (r *BackgroundShells) KillAll() {
 	var wg sync.WaitGroup
 	for _, sh := range r.list() {
 		wg.Add(1)

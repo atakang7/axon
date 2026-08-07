@@ -1,4 +1,4 @@
-package agent
+package tools
 
 import (
 	"bufio"
@@ -30,7 +30,7 @@ type readInput struct {
 	Limit  int    `json:"limit"`
 }
 
-func parseAndValidateReadInput(raw json.RawMessage, s *Session) (*readInput, string, error) {
+func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, string, error) {
 	var p readInput
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
@@ -41,11 +41,11 @@ func parseAndValidateReadInput(raw json.RawMessage, s *Session) (*readInput, str
 	if p.Mode == "" {
 		p.Mode = readSlice
 	}
-	abs := s.ResolvePath(p.Path)
+	abs := ws.ResolvePath(p.Path)
 	return &p, abs, nil
 }
 
-func ReadTool(s *Session) Tool {
+func ReadTool(ws Workspace) Tool {
 	limit := config.ReadLines()
 	return Tool{
 		Name:        toolRead,
@@ -57,7 +57,7 @@ func ReadTool(s *Session) Tool {
 			"limit":  intSchema(fmt.Sprintf("Lines to return. Used when mode=slice. Default %d if omitted.", limit)),
 		}, []string{"path"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			p, abs, err := parseAndValidateReadInput(raw, s)
+			p, abs, err := parseAndValidateReadInput(raw, ws)
 			if err != nil {
 				return "", err
 			}

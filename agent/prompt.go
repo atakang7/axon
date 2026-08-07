@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/atakang7/axon/internal/tools"
 )
 
 // prompt.go — system prompt construction and project orientation.
@@ -30,33 +32,12 @@ import (
 // opinion of its own about what an agent is.
 func buildSystemPrompt(s *Session, rolePromptText string) string {
 	parts := []string{strings.TrimRight(rolePromptText, "\n")}
-	parts = append(parts, builtinToolCatalog())
+	parts = append(parts, tools.Catalog())
 	if probes := runProbes(s.Cwd); probes != "" {
 		parts = append(parts, probes)
 	}
 	parts = append(parts, projectOrientation(s))
 	return strings.Join(parts, "\n\n")
-}
-
-// builtinToolCatalog lists the built-in tools the runtime adds to every
-// agent. Terse on purpose — full mode docs live in each tool's
-// Description field, which the provider sees via the tool schema.
-func builtinToolCatalog() string {
-	rows := []struct{ name, blurb string }{
-		{toolRead, "Read files (skeleton / slice / full)."},
-		{toolWrite, "Write files (create / overwrite / replace / insert)."},
-		{toolExec, "Execute commands (run / verify; set run_in_background=true for servers and watchers)."},
-		{toolBashOutput, "Read new output from a background shell (delta only)."},
-		{toolKillShell, "Stop a background shell. Always clean up servers you started."},
-		{toolSearch, "Search (literal / regex / trace)."},
-		{toolTask, "Register a task objective."},
-	}
-	var b strings.Builder
-	b.WriteString("# BUILT-IN TOOLS\n")
-	for _, r := range rows {
-		fmt.Fprintf(&b, "\n%q — %s", r.name, r.blurb)
-	}
-	return b.String()
 }
 
 // projectOrientation produces a one-shot snapshot of the working directory,

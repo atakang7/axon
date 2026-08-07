@@ -1,4 +1,4 @@
-package agent
+package tools
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 // Shared utilities
 // ---------------------------------------------------------------------------
 
-// writeBytesRaw writes atomically: tmp file in the same dir, then rename. The
+// WriteFileAtomic writes atomically: tmp file in the same dir, then rename. The
 // rename is atomic on POSIX, so a crash mid-write never leaves a half-written
 // file at `path` — readers see either the old contents or the new, never a
 // truncated mix. Same-dir tmp matters: cross-filesystem renames degrade to
@@ -28,7 +28,7 @@ import (
 // File mode handling: if the destination already exists, its mode is preserved
 // (executable bits, group-readable scripts, etc.). New files default to 0644.
 // No formatter runs here — callers that want formatting use writeBytes.
-func writeBytesRaw(path string, data []byte) error {
+func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if dir == "" {
 		dir = "."
@@ -65,10 +65,10 @@ func writeBytesRaw(path string, data []byte) error {
 }
 
 // writeBytes writes atomically and then runs the language-appropriate
-// formatter best-effort. Use this from edit tools. Use writeBytesRaw from
+// formatter best-effort. Use this from edit tools. Use WriteFileAtomic from
 // /undo and any other path that must be byte-exact.
 func writeBytes(path string, data []byte) error {
-	if err := writeBytesRaw(path, data); err != nil {
+	if err := WriteFileAtomic(path, data); err != nil {
 		return err
 	}
 	formatPath(path)
