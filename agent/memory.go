@@ -21,8 +21,6 @@ package agent
 // projection function that builds what the model sees.
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -233,104 +231,4 @@ func (s *Session) Forget(id, reason string) error {
 		return nil
 	}
 	return fmt.Errorf("block %s not found", id)
-}
-
-// -----------------------------------------------------------------------------
-// TASK tool — register or update the current objective
-// -----------------------------------------------------------------------------
-
-const taskDescription = `Track a multi-step plan. Skip for one-shot work.
-  - register: set goal + steps (short imperatives, ~3-7 words each).
-  - advance: mark current step done, move to next.
-  - replan: replace steps when the current plan no longer fits.
-
-Goal must be phrased as the question the final answer will answer (e.g. "is anything in the blog weak for my career?" — not "review the blog"). Aim for 2-4 steps; more than 4 means you haven't scoped tightly enough — narrow the goal or split into a follow-up.`
-
-func TaskTool(s *Session) Tool {
-	type input struct {
-		Action string   `json:"action"`
-		Goal   string   `json:"goal"`
-		Steps  []string `json:"steps"`
-	}
-	return Tool{
-		Name:        toolTask,
-		Description: taskDescription,
-		Schema: obj("object", props{
-			"action": enumSchema("register | advance | replan.", "register", "advance", "replan"),
-			"goal":   strSchema("The question the final answer will answer. One short line. Required for register."),
-			"steps":  arr(strSchema("Short imperative (~3-7 words). Aim for 2-4 total. Required for register and replan.")),
-		}, []string{"action"}),
-		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var p input
-			if err := json.Unmarshal(raw, &p); err != nil {
-				return "", err
-			}
-			cleanSteps := func(in []string) []TaskStep {
-				out := make([]TaskStep, 0, len(in))
-				for _, d := range in {
-					d = strings.TrimSpace(d)
-					if d == "" {
-						continue
-					}
-					out = append(out, TaskStep{Description: d})
-				}
-				return out
-			}
-			switch p.Action {
-			case "register":
-				if strings.TrimSpace(p.Goal) == "" {
-					return "", fmt.Errorf("goal is required for register")
-				}
-				steps := cleanSteps(p.Steps)
-				if len(steps) == 0 {
-					return "", fmt.Errorf("at least one step is required for register")
-				}
-				s.CurrentTask = &Task{
-					Goal:        strings.TrimSpace(p.Goal),
-					Steps:       steps,
-					CurrentStep: 0,
-				}
-				msg := fmt.Sprintf("task: %s (%d steps; current: %s)",
-					s.CurrentTask.Goal, len(steps), steps[0].Description)
-				if len(steps) > 4 {
-					msg += "\nwarning: >4 steps. Likely under-scoped — narrow the goal or split into a follow-up."
-				}
-				return msg, s.Save()
-			case "advance":
-				if s.CurrentTask == nil || len(s.CurrentTask.Steps) == 0 {
-					return "", fmt.Errorf("no task registered")
-				}
-				if s.CurrentTask.CurrentStep >= len(s.CurrentTask.Steps) {
-					return "all steps already complete", nil
-				}
-				s.CurrentTask.Steps[s.CurrentTask.CurrentStep].Done = true
-				s.CurrentTask.CurrentStep++
-				if s.CurrentTask.CurrentStep >= len(s.CurrentTask.Steps) {
-					return "done — answer the user", s.Save()
-				}
-				return fmt.Sprintf("next → %s",
-					s.CurrentTask.Steps[s.CurrentTask.CurrentStep].Description), s.Save()
-			case "replan":
-				if s.CurrentTask == nil {
-					return "", fmt.Errorf("no task registered; use register")
-				}
-				steps := cleanSteps(p.Steps)
-				if len(steps) == 0 {
-					return "", fmt.Errorf("at least one step is required for replan")
-				}
-				if g := strings.TrimSpace(p.Goal); g != "" {
-					s.CurrentTask.Goal = g
-				}
-				s.CurrentTask.Steps = steps
-				s.CurrentTask.CurrentStep = 0
-				msg := fmt.Sprintf("replanned: %d steps; current: %s", len(steps), steps[0].Description)
-				if len(steps) > 4 {
-					msg += "\nwarning: >4 steps. Likely under-scoped — narrow the goal or split into a follow-up."
-				}
-				return msg, s.Save()
-			default:
-				return "", fmt.Errorf("action is required: register | advance | replan")
-			}
-		},
-	}
 }

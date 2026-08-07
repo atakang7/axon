@@ -196,3 +196,43 @@ func (s *Session) Undo() (Edit, bool) {
 	s.Edits = s.Edits[:len(s.Edits)-1]
 	return e, true
 }
+
+// -----------------------------------------------------------------------------
+// Task Management
+// -----------------------------------------------------------------------------
+
+func (s *Session) RegisterTask(goal string, steps []TaskStep) error {
+	s.CurrentTask = &Task{
+		Goal:        strings.TrimSpace(goal),
+		Steps:       steps,
+		CurrentStep: 0,
+	}
+	return s.Save()
+}
+
+func (s *Session) AdvanceTask() (string, error) {
+	if s.CurrentTask == nil || len(s.CurrentTask.Steps) == 0 {
+		return "", fmt.Errorf("no task registered")
+	}
+	if s.CurrentTask.CurrentStep >= len(s.CurrentTask.Steps) {
+		return "", nil // all steps already complete
+	}
+	s.CurrentTask.Steps[s.CurrentTask.CurrentStep].Done = true
+	s.CurrentTask.CurrentStep++
+	if s.CurrentTask.CurrentStep >= len(s.CurrentTask.Steps) {
+		return "done", s.Save()
+	}
+	return s.CurrentTask.Steps[s.CurrentTask.CurrentStep].Description, s.Save()
+}
+
+func (s *Session) ReplanTask(goal string, steps []TaskStep) error {
+	if s.CurrentTask == nil {
+		return fmt.Errorf("no task registered; use register")
+	}
+	if goal := strings.TrimSpace(goal); goal != "" {
+		s.CurrentTask.Goal = goal
+	}
+	s.CurrentTask.Steps = steps
+	s.CurrentTask.CurrentStep = 0
+	return s.Save()
+}

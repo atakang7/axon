@@ -167,33 +167,14 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Msg, tools []Tool, onTok
 		s.Scan()
 		return nil, fmt.Errorf("API error %s: %s", resp.Status, s.Text())
 	}
-	var content strings.Builder
-	toolArgs := map[int]*strings.Builder{}
-	toolMeta := map[int]ToolCall{}
-	var chunk struct {
-		Choices []struct {
-			Delta struct {
-				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"` // DeepSeek-style thinking tokens — ignored, not content
-				ToolCalls        []struct {
-					Index    int    `json:"index"`
-					ID       string `json:"id"`
-					Type     string `json:"type"`
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"delta"`
-		} `json:"choices"`
+	st := &streamState{
+		content:  &strings.Builder{},
+		toolArgs: map[int]*strings.Builder{},
+		toolMeta: map[int]ToolCall{},
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	tStream := time.Now()
-	var (
-		gotFirstByte, gotFirstReasoning, gotFirstContent, gotFirstTool bool
-		reasoningBytes, contentBytes, toolArgBytes                     int
-	)
 
 	// Pump SSE lines into a channel so the consumer can apply an idle-read
 	// timeout. Without this, a silent upstream (no [DONE], no close) would
@@ -229,7 +210,7 @@ streamLoop:
 		var ok bool
 		select {
 		case <-heartbeat.C:
-			if onHeartbeat != nil && gotFirstByte {
+			if onHeartbeat != nil && st.gotFirstByte {
 				onHeartbeat(time.Since(tStream))
 			}
 			continue
@@ -253,54 +234,11 @@ streamLoop:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		if !gotFirstByte {
-			gotFirstByte = true
+		if !st.gotFirstByte {
+			st.gotFirstByte = true
 			emit("first-byte", tStream)
 		}
-		line := strings.TrimPrefix(lm.text, "data: ")
-		chunk.Choices = nil
-		if line == "" || line == "[DONE]" || json.Unmarshal([]byte(line), &chunk) != nil || len(chunk.Choices) == 0 {
-			continue
-		}
-		d := chunk.Choices[0].Delta
-		if d.ReasoningContent != "" {
-			if !gotFirstReasoning {
-				gotFirstReasoning = true
-				emit("first-reasoning", tStream)
-			}
-			reasoningBytes += len(d.ReasoningContent)
-			if onReasoning != nil {
-				onReasoning(d.ReasoningContent)
-			}
-		}
-		if d.Content != "" {
-			if !gotFirstContent {
-				gotFirstContent = true
-				emit("first-content", tStream)
-			}
-			contentBytes += len(d.Content)
-			content.WriteString(d.Content)
-			if onToken != nil {
-				onToken(d.Content)
-			}
-		}
-		for _, tc := range d.ToolCalls {
-			if !gotFirstTool {
-				gotFirstTool = true
-				emit("first-toolcall", tStream)
-			}
-			toolArgBytes += len(tc.Function.Arguments)
-			if _, ok := toolMeta[tc.Index]; !ok {
-				m := ToolCall{ID: tc.ID, Type: tc.Type}
-				m.Function.Name = tc.Function.Name
-				toolMeta[tc.Index] = m
-				toolArgs[tc.Index] = &strings.Builder{}
-			}
-			toolArgs[tc.Index].WriteString(tc.Function.Arguments)
-			if onToolArg != nil && tc.Function.Arguments != "" {
-				onToolArg(toolMeta[tc.Index].Function.Name, tc.Function.Arguments)
-			}
-		}
+		processSSEChunk(lm.text, st, tStream, emit, onReasoning, onToken, onToolArg)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -308,24 +246,103 @@ streamLoop:
 	emit("stream-end", tStream)
 	emit("total", t0)
 	if onPhase != nil {
-		onPhase(fmt.Sprintf("bytes reasoning=%d content=%d toolargs=%d", reasoningBytes, contentBytes, toolArgBytes), 0)
+		onPhase(fmt.Sprintf("bytes reasoning=%d content=%d toolargs=%d", st.reasoningBytes, st.contentBytes, st.toolArgBytes), 0)
 	}
-	if len(toolMeta) > 0 {
-		indices := make([]int, 0, len(toolMeta))
-		for i := range toolMeta {
+	if len(st.toolMeta) > 0 {
+		indices := make([]int, 0, len(st.toolMeta))
+		for i := range st.toolMeta {
 			indices = append(indices, i)
 		}
 		sort.Ints(indices)
-		calls := make([]ToolCall, 0, len(toolMeta))
+		calls := make([]ToolCall, 0, len(st.toolMeta))
 		for _, i := range indices {
-			tc := toolMeta[i]
-			tc.Function.Arguments = toolArgs[i].String()
+			tc := st.toolMeta[i]
+			tc.Function.Arguments = st.toolArgs[i].String()
 			if tc.Function.Arguments == "" {
 				tc.Function.Arguments = "{}"
 			}
 			calls = append(calls, tc)
 		}
-		return &Msg{Role: "assistant", Content: content.String(), ToolCalls: calls}, nil
+		return &Msg{Role: "assistant", Content: st.content.String(), ToolCalls: calls}, nil
 	}
-	return &Msg{Role: "assistant", Content: content.String()}, nil
+	return &Msg{Role: "assistant", Content: st.content.String()}, nil
+}
+
+type streamState struct {
+	gotFirstByte      bool
+	gotFirstReasoning bool
+	gotFirstContent   bool
+	gotFirstTool      bool
+	reasoningBytes    int
+	contentBytes      int
+	toolArgBytes      int
+	content           *strings.Builder
+	toolArgs          map[int]*strings.Builder
+	toolMeta          map[int]ToolCall
+}
+
+func processSSEChunk(text string, st *streamState, tStream time.Time, emit func(string, time.Time), onReasoning, onToken func(string), onToolArg func(string, string)) {
+	line := strings.TrimPrefix(text, "data: ")
+	if line == "" || line == "[DONE]" {
+		return
+	}
+	var chunk struct {
+		Choices []struct {
+			Delta struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
+					Index    int    `json:"index"`
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal([]byte(line), &chunk) != nil || len(chunk.Choices) == 0 {
+		return
+	}
+	d := chunk.Choices[0].Delta
+	if d.ReasoningContent != "" {
+		if !st.gotFirstReasoning {
+			st.gotFirstReasoning = true
+			emit("first-reasoning", tStream)
+		}
+		st.reasoningBytes += len(d.ReasoningContent)
+		if onReasoning != nil {
+			onReasoning(d.ReasoningContent)
+		}
+	}
+	if d.Content != "" {
+		if !st.gotFirstContent {
+			st.gotFirstContent = true
+			emit("first-content", tStream)
+		}
+		st.contentBytes += len(d.Content)
+		st.content.WriteString(d.Content)
+		if onToken != nil {
+			onToken(d.Content)
+		}
+	}
+	for _, tc := range d.ToolCalls {
+		if !st.gotFirstTool {
+			st.gotFirstTool = true
+			emit("first-toolcall", tStream)
+		}
+		st.toolArgBytes += len(tc.Function.Arguments)
+		if _, ok := st.toolMeta[tc.Index]; !ok {
+			m := ToolCall{ID: tc.ID, Type: tc.Type}
+			m.Function.Name = tc.Function.Name
+			st.toolMeta[tc.Index] = m
+			st.toolArgs[tc.Index] = &strings.Builder{}
+		}
+		st.toolArgs[tc.Index].WriteString(tc.Function.Arguments)
+		if onToolArg != nil && tc.Function.Arguments != "" {
+			onToolArg(st.toolMeta[tc.Index].Function.Name, tc.Function.Arguments)
+		}
+	}
 }
