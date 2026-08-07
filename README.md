@@ -9,9 +9,12 @@ It has no configuration of its own: no config file, nothing shelled out at start
 This repo is library-only. The terminal coding agent that previously lived at `cmd/axon` has moved to its own project: **[bouton](https://github.com/atakang7/bouton)**.
 
 ```
-github.com/atakang7/axon/agent  ← the runtime (import this)
+github.com/atakang7/axon        ← the vocabulary you build with (Tool, Model, Provider…)
+github.com/atakang7/axon/agent  ← the runtime (New, Step, Run)
 github.com/atakang7/bouton      ← terminal coding agent built on axon
 ```
+
+`go doc github.com/atakang7/axon` documents every type you construct or implement.
 
 ---
 
@@ -45,7 +48,7 @@ That's the whole minimum. `New` constructs an agent with the runtime's built-in 
 ### Adding your own tools
 
 ```go
-deployTool := agent.Tool{
+deployTool := axon.Tool{
     Name:        "deploy",
     Description: "Deploy a service to staging.",
     Schema: map[string]any{

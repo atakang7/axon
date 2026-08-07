@@ -45,11 +45,10 @@ package tools
 //      gofmt through exec like anyone else.
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	axon "github.com/atakang7/axon"
 	"github.com/atakang7/axon/internal/session"
 )
 
@@ -90,15 +89,7 @@ type Plan interface {
 // Tool surface — public types and constants
 // ---------------------------------------------------------------------------
 
-type Tool struct {
-	Name        string
-	Description string
-	Schema      map[string]any
-	// Fn receives the turn-scoped context so long-running tools (foreground
-	// exec, search) cancel cleanly when the user hits Ctrl-C or the parent
-	// context fires. Tools that don't need cancellation may ignore ctx.
-	Fn func(ctx context.Context, args json.RawMessage) (string, error)
-}
+type Tool = axon.Tool
 
 const (
 	toolRead       = "read"

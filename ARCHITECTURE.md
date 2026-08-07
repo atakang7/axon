@@ -14,11 +14,11 @@ The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. A
 This is the single most important rule in the repository.
 
 ```
-config  ←  llm  ←  session  ←  tools  ←  agent
+axon  ←  config  ←  llm  ←  session  ←  tools  ←  agent
 ```
 
 **A package may import anything to its left, and nothing to its right.** The
-arrows are dependencies, so `agent` sees everything and `config` sees nothing.
+arrows are dependencies, so `agent` sees everything and `axon` sees nothing.
 
 The rule is enforced by the Go compiler, not by review: each layer is its own
 package, and an import in the wrong direction is a build error. Every layer
@@ -26,13 +26,20 @@ states its own boundary rule in its package comment.
 
 | Layer | Package | Owns | May import |
 |---|---|---|---|
-| 0 | `internal/config` | XDG/`AXON_*` paths, `Limits` | nothing |
-| 1 | `internal/llm` | `Model` port, `Provider`, `Msg`, `ToolCall`, `ToolSpec`, OpenAI `Client` | config |
-| 2 | `internal/session` | append-only log, cwd, edit history, task plan | config, llm |
-| 3 | `internal/tools` | the seven built-in tools, background shells | config, llm, session |
-| 4 | `agent` | `Agent`, the turn loop, events, prompt, pruner | all of the above |
+| 0 | `axon` (root) | the public vocabulary: `Model`, `Request`, `Stream`, `Provider`, `Msg`, `ToolCall`, `Tool`, `ToolSpec` | nothing |
+| 1 | `internal/config` | XDG/`AXON_*` paths, `Limits` | nothing |
+| 2 | `internal/llm` | `Model` port, `Provider`, `Msg`, `ToolCall`, `ToolSpec`, OpenAI `Client` | config |
+| 3 | `internal/session` | append-only log, cwd, edit history, task plan | config, llm |
+| 4 | `internal/tools` | the seven built-in tools, background shells | config, llm, session |
+| 5 | `agent` | `Agent`, the turn loop, events, prompt, pruner | all of the above |
 
-Everything below `agent` lives under `internal/`, so it is unreachable from
+Everything below `agent` lives under `internal/` — except the root package
+`axon`, which is public on purpose. The types an embedder constructs must be
+documentable, and `go doc` on an alias into an internal package prints the
+alias and stops: a caller could not discover that a `Tool` has a `Name`, a
+`Schema` or an `Fn`. Behaviour stays internal; vocabulary is public.
+
+The rest is unreachable from
 outside this module. That is deliberate: those packages are free to change
 because nothing external can depend on them. The stable surface is `agent`.
 
@@ -55,6 +62,8 @@ DAG rather than a ball of mutual references:
 ## Layout
 
 ```
+axon.go               Model, Request, Stream, Provider, Msg, ToolCall, Tool, ToolSpec
+
 agent/
   api.go              Config, New, Step, Run, Reset, Undo, Cd, Close; re-exported types
   agent.go            Agent struct, chat/retry, runTool

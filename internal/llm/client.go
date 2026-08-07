@@ -11,101 +11,21 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	axon "github.com/atakang7/axon"
 )
 
-// Model is an LLM the runtime can talk to.
-//
-// This interface is the whole contract. Implement it to reach a provider that
-// is not OpenAI-compatible, to route through your own gateway, or to supply a
-// deterministic fake so the turn loop can be tested without a network. Client,
-// below, is simply the implementation that ships.
-type Model interface {
-	Complete(ctx context.Context, req Request) (*Msg, error)
-}
-
-// Request is one completion.
-type Request struct {
-	// Messages is the conversation as the model should see it.
-	Messages []Msg
-	// Tools the model may call. Empty means none.
-	Tools []ToolSpec
-	// MaxTokens caps this one reply. Zero means the model's own default.
-	// It is per-request because callers want different budgets: an agent turn
-	// may need thousands of tokens, while the pruner needs one line of JSON.
-	MaxTokens int
-	// Stream receives output as it arrives. The zero value discards it.
-	Stream Stream
-}
-
-// Stream receives incremental output during a completion. Every field is
-// optional; a nil func is simply not called.
-//
-// Callbacks run synchronously on the goroutine reading the response, in
-// arrival order, and must not block. Anything slow — a network write to a
-// browser, a disk flush — has to be handed to a buffered channel and done
-// elsewhere: blocking here stops the read, and a stall long enough to trip the
-// idle timeout fails the whole completion.
-//
-// Reasoning is separate from Token because reasoning models emit a long
-// thinking block before any content, and a caller usually wants to render the
-// two differently. ToolArgs exists because some providers buffer tool-call
-// arguments to end-of-message rather than streaming them, so a UI that only
-// watches Token can look frozen during a perfectly healthy stream.
-type Stream struct {
-	Token     func(text string)
-	Reasoning func(text string)
-	ToolArgs  func(name, delta string)
-}
-
-// Provider is one endpoint: base URL, model name, credentials, and any
-// provider-specific routing options forwarded verbatim as the request's
-// "provider" field.
-//
-// How an embedder decides which provider to use — a config file, flags, an
-// environment cascade — is the embedder's business. This package only needs
-// the resolved answer.
-type Provider struct {
-	Name, BaseURL, Model, APIKey string
-	Extra                        json.RawMessage
-}
-
-// ToolSpec is a tool as the model sees it: a name, a description, and a JSON
-// schema. It deliberately has no implementation field.
-//
-// This type is the contract that keeps the model layer independent of the
-// execution layer. The agent package holds the richer Tool (schema plus the Go
-// function that runs it) and projects it down to ToolSpec at the call
-// boundary, so nothing here can reach a tool's behaviour — only its shape.
-type ToolSpec struct {
-	Name        string
-	Description string
-	Schema      map[string]any
-}
-
-// Msg is one entry in the conversation. Session.Messages is the immutable log.
-//
-// Parked == true means ContextMessages emits a one-line breadcrumb for this
-// block instead of its content. The content itself is never modified.
-type Msg struct {
-	Role        string     `json:"role"`
-	Content     string     `json:"content,omitempty"`
-	ToolCalls   []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID  string     `json:"tool_call_id,omitempty"`
-	ToolName    string     `json:"tool_name,omitempty"`
-	ID          string     `json:"id,omitempty"`
-	Parked      bool       `json:"parked,omitempty"`
-	ParkSummary string     `json:"park_summary,omitempty"`
-	ParkReason  string     `json:"park_reason,omitempty"`
-}
-
-type ToolCall struct {
-	ID       string `json:"id,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
+// The vocabulary lives in the public root package so embedders can read its
+// documentation; these aliases keep this file readable.
+type (
+	Model    = axon.Model
+	Request  = axon.Request
+	Stream   = axon.Stream
+	Provider = axon.Provider
+	Msg      = axon.Msg
+	ToolCall = axon.ToolCall
+	ToolSpec = axon.ToolSpec
+)
 
 // ---------------------------------------------------------------------------
 // The OpenAI-compatible implementation

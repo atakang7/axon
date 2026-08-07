@@ -13,7 +13,7 @@ import (
 // The layering rule documented in ARCHITECTURE.md, enforced as a test so the
 // documentation cannot quietly drift from the code.
 //
-//	config  <-  llm  <-  session  <-  tools  <-  agent
+//	axon  <-  config  <-  llm  <-  session  <-  tools  <-  agent
 //
 // A package may import anything at a strictly lower depth and nothing at the
 // same or higher depth.
@@ -31,11 +31,12 @@ import (
 // Both are the failure mode where documentation drifts from reality, which is
 // exactly what this file exists to prevent.
 var depth = map[string]int{
-	"config":  0,
-	"llm":     1,
-	"session": 2,
-	"tools":   3,
-	"agent":   4,
+	"axon":    0, // the public vocabulary; a leaf, imports nothing
+	"config":  1,
+	"llm":     2,
+	"session": 3,
+	"tools":   4,
+	"agent":   5,
 }
 
 const modulePath = "github.com/atakang7/axon"
@@ -45,8 +46,11 @@ func TestLayeringIsAcyclicAndOneDirectional(t *testing.T) {
 
 	for pkg := range depth {
 		dir := filepath.Join(root, "internal", pkg)
-		if pkg == "agent" {
+		switch pkg {
+		case "agent":
 			dir = filepath.Join(root, "agent")
+		case "axon":
+			dir = root // the root package lives at the repository root
 		}
 		for _, imported := range intraModuleImports(t, dir) {
 			from, to := depth[pkg], depth[imported]
@@ -62,12 +66,14 @@ func TestLayeringIsAcyclicAndOneDirectional(t *testing.T) {
 	}
 }
 
-// config is the bottom of the stack and must stay free of intra-module
-// dependencies entirely. If a value there ever needs a type from a higher
-// layer, the value belongs in that layer instead.
-func TestConfigIsALeaf(t *testing.T) {
-	if got := intraModuleImports(t, filepath.Join("..", "internal", "config")); len(got) > 0 {
-		t.Fatalf("config must import nothing from this module, got %v", got)
+// The two bottom layers must stay free of intra-module dependencies. If a
+// value there ever needs a type from a higher layer, the value belongs in that
+// layer instead.
+func TestLeavesImportNothing(t *testing.T) {
+	for _, dir := range []string{"..", filepath.Join("..", "internal", "config")} {
+		if got := intraModuleImports(t, dir); len(got) > 0 {
+			t.Fatalf("%s must import nothing from this module, got %v", dir, got)
+		}
 	}
 }
 

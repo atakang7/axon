@@ -16,11 +16,12 @@ import (
 	"log"
 	"os"
 
+	axon "github.com/atakang7/axon"
 	"github.com/atakang7/axon/agent"
 )
 
 func main() {
-	deploy := agent.Tool{
+	deploy := axon.Tool{
 		Name:        "deploy",
 		Description: "Deploy a named service to staging.",
 		Schema: map[string]any{
@@ -40,7 +41,7 @@ func main() {
 	}
 
 	model, err := agent.OpenAI(agent.OpenAIConfig{
-		Provider: agent.Provider{
+		Provider: axon.Provider{
 			Name:    "openai",
 			Model:   "gpt-4o",
 			BaseURL: "https://api.openai.com",
@@ -54,7 +55,7 @@ func main() {
 	ag, err := agent.New(agent.Config{
 		Model:        model,
 		SystemPrompt: "You are a deployment assistant. Use the deploy tool to ship services on request.",
-		Tools:        []agent.Tool{deploy},
+		Tools:        []axon.Tool{deploy},
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -47,13 +47,13 @@ import (
 // supplied via Config.Tools are appended.
 
 // ---------------------------------------------------------------------------
-// Model layer, re-exported
+// Vocabulary, re-exported
 //
-// Provider, Msg, ToolCall and Client are owned by internal/llm. These are
-// aliases, not wrappers: agent.Msg and llm.Msg are the same type, so a Session
-// marshals identically and an embedder can pass values across either name.
-// Re-exporting here keeps internal/llm unreachable from outside the module
-// while leaving the public API exactly as it was.
+// The types an embedder constructs, implements or inspects are defined in the
+// public root package github.com/atakang7/axon, so their fields are
+// documented and readable. These aliases mean you can spell them either way —
+// axon.Tool and agent.Tool are the same type — and `go doc axon` is where the
+// full documentation lives.
 // ---------------------------------------------------------------------------
 
 type (
