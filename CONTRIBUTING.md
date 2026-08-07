@@ -120,38 +120,50 @@ axon is a library-only repository. The terminal coding agent lives in [bouton](h
 
 ```
 axon/
-├── agent/                     # the runtime library (the product of this repo)
-│   ├── api.go                 # Config, New, Step, Run, Reset, Undo, Cd, Session, SessionPath, Close
+├── agent/                     # the public runtime (the product of this repo)
+│   ├── api.go                 # Config, New, Step, Run, ...; re-exported types
 │   ├── agent.go               # Agent struct, chat/retry, runTool
+│   ├── setup.go               # New, Reset, Undo, Cd, Close — lifecycle
+│   ├── loop.go                # Step and Run — the turn loop
 │   ├── handler.go             # Event, Kind, ToolEvent, PruneInfo, SessionInfo
-│   ├── exports.go             # DataDir, ConfigDir, ProvidersPath, SessionPath, EnvString, ...
-│   ├── session.go             # append-only session log, edit history, undo
-│   ├── memory.go              # park/recall/forget Session methods; TaskTool
 │   ├── prompt.go              # buildSystemPrompt (role + catalog + probes + orientation)
+│   ├── probes.go              # startup shell probes
 │   ├── pruner.go              # secondary-LLM pruner
-│   ├── providers.go           # Provider type + LoadProviders
-│   ├── config.go              # env/XDG path resolution
-│   ├── llm.go                 # OpenAI-compatible streaming chat client
-│   ├── tools.go               # Tool type, schema helpers, tool-name constants
-│   ├── tools_helpers.go       # atomic writes, formatters, binary refusal
-│   ├── tool_read.go           # ReadTool
-│   ├── tool_write.go          # WriteTool
-│   ├── tool_search.go         # SearchTool
-│   ├── tool_exec.go           # ExecTool, BashOutputTool, KillShellTool
-│   ├── bg.go                  # background shell registry
-│   └── probes.go              # language/build detection
+│   └── exports.go             # DataDir, ConfigDir, ProvidersPath, ... (path helpers)
+├── internal/                  # unreachable from outside the module
+│   ├── config/config.go       # XDG/AXON_* paths, Limits
+│   ├── llm/                   # Provider, Msg, ToolCall, ToolSpec, streaming Client
+│   ├── session/               # append-only log, cwd, undo, task plan, projection
+│   └── tools/                 # the seven built-in tools, background shells
 ├── examples/minimal/          # smallest possible embed of agent.New + Step
 ├── benchmark/                 # benchmark scripts
-├── README.md
-├── ARCHITECTURE.md
-├── CONTRIBUTING.md
-├── CHANGELOG.md
-├── LICENSE
-├── go.mod
-└── go.sum
+└── ...                        # README, ARCHITECTURE, CHANGELOG, LICENSE, go.mod
 ```
 
 The runtime knows nothing about terminals, flags, YAML, or `os.Exit`. Library users build `agent.Config` directly.
+
+### The layering rule
+
+```
+config  ←  llm  ←  session  ←  tools  ←  agent
+```
+
+**A package may import anything to its left, and nothing to its right.** This
+is not a convention — each layer is its own package, so a wrong-direction
+import fails the build. Before adding an import, check which way it points; if
+it points right, the code is in the wrong layer.
+
+Two consequences worth knowing before you change anything:
+
+- `llm` must never learn what a `Tool` is. It takes `ToolSpec` (name,
+  description, schema) and never sees `Fn`. `agent.toolSpecs` is the only
+  crossing point.
+- `tools` must never take a `*Session`. A tool declares the narrowest
+  interface it needs (`Workspace`, `Plan`) in `internal/tools/tools.go`, and
+  `Session` satisfies it implicitly. If a new tool seems to need more than
+  that, say so in the PR rather than widening the interface quietly.
+
+`ARCHITECTURE.md` has the full table and the rationale.
 
 ## Releases
 

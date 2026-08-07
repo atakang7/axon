@@ -135,8 +135,9 @@ Provider config, YAML agent personalities, slash commands, and the interactive p
 - **One LLM, no subagents.** The cost lever is aggressive forgetting via the secondary pruner LLM, not parallel agents.
 - **Append-only session log.** Park/recall/forget are projections (`ContextMessages`), never mutations. `/undo` is byte-exact because edits are atomic (tmp + rename).
 - **Turn-scoped cancellation.** One `context.Context` per turn covers the HTTP stream *and* every tool subprocess. `Interrupt()` fires that cancel.
-- **Every tool call requires a `reason`.** The model must articulate intent before paying the call's token cost.
-- **No global state.** Two agents in one process is supported by construction.
+- **Strict one-directional layering.** `config ← llm ← session ← tools ← agent`; a package imports leftward only, and the Go compiler enforces it. Everything below `agent` is under `internal/`, so it is free to change.
+- **Tools take capabilities, not state.** A tool receives the narrowest interface it needs (`Workspace`, `Plan`), never the `Session`. It cannot read the conversation, and a fake for tests is six lines.
+- **No global state.** Every piece of mutable state is created in `New` and released in `Close`. Two agents in one process share no shells, no limits and no session.
 - **No sandbox or permission prompt today.** Ctrl-C and `/undo` are the guardrails. A permission layer can be added on top via a tool wrapper.
 
 See `ARCHITECTURE.md` for the loop, the pruner contract, and the extension points.
