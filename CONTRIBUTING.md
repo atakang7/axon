@@ -135,7 +135,6 @@ axon/
 │   ├── session/               # append-only log, cwd, undo, task plan, projection
 │   └── tools/                 # the seven built-in tools, background shells
 ├── examples/minimal/          # smallest possible embed of agent.New + Step
-├── benchmark/                 # benchmark scripts
 └── ...                        # README, ARCHITECTURE, CHANGELOG, LICENSE, go.mod
 ```
 
