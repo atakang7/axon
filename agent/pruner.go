@@ -225,9 +225,9 @@ func prunerRequest(s *Session) string {
 			b.WriteString(m.Content + "\n")
 		}
 	}
-	
+
 	b.WriteString("\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park.")
-	
+
 	return b.String()
 }
 

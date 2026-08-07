@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"regexp"
 
 	axon "github.com/atakang7/axon"
 )
@@ -291,6 +292,9 @@ func (r *reply) consume(text string, stream Stream) {
 
 // message assembles the finished assistant message, ordering tool calls by the
 // index the provider gave them so the sequence is stable.
+var invokeRe = regexp.MustCompile(`(?s)<invoke name="([^"]+)">\s*(.*?)\s*</invoke>`)
+var paramRe = regexp.MustCompile(`(?s)<parameter name="([^"]+)">\s*(.*?)\s*</parameter>`)
+
 func (r *reply) message() *Msg {
 	finalContent := r.content.String()
 	if r.reasoningContent.Len() > 0 {
@@ -298,6 +302,35 @@ func (r *reply) message() *Msg {
 	}
 
 	if len(r.toolMeta) == 0 {
+		// Fallback: If OpenRouter leaked raw XML tool calls, parse them manually.
+		if strings.Contains(finalContent, "<invoke name=") {
+			var calls []ToolCall
+			matches := invokeRe.FindAllStringSubmatch(finalContent, -1)
+			for i, match := range matches {
+				funcName := match[1]
+				args := make(map[string]any)
+				pMatches := paramRe.FindAllStringSubmatch(match[2], -1)
+				for _, pMatch := range pMatches {
+					args[pMatch[1]] = pMatch[2]
+				}
+				argsJSON, _ := json.Marshal(args)
+				calls = append(calls, ToolCall{
+					ID:   fmt.Sprintf("call_fallback_%d_%d", time.Now().UnixNano(), i),
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{
+						Name:      funcName,
+						Arguments: string(argsJSON),
+					},
+				})
+				finalContent = strings.Replace(finalContent, match[0], "", 1)
+			}
+			if len(calls) > 0 {
+				return &Msg{Role: "assistant", Content: finalContent, ToolCalls: calls}
+			}
+		}
 		return &Msg{Role: "assistant", Content: finalContent}
 	}
 	indices := make([]int, 0, len(r.toolMeta))
