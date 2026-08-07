@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/atakang7/axon/internal/llm"
+	"github.com/atakang7/axon/internal/session"
 )
 
 // api.go — public library API.
@@ -48,6 +49,31 @@ type (
 	// a []Tool down to them.
 	ToolSpec = llm.ToolSpec
 )
+
+// ---------------------------------------------------------------------------
+// Session layer, re-exported
+//
+// Owned by internal/session. Aliases again, so a *Session obtained from
+// LoadOrCreateSession can be handed straight back through Config.Session.
+// ---------------------------------------------------------------------------
+
+type (
+	// Session is the conversation log plus working directory, edit history
+	// and task plan. Treat it as read-mostly.
+	Session = session.Session
+	// Task is the agent's registered objective and step plan.
+	Task = session.Task
+	// TaskStep is one committed step of a Task.
+	TaskStep = session.TaskStep
+	// Edit is one recorded file mutation, the unit Undo reverts.
+	Edit = session.Edit
+	// ParkedBlock is the stored original of a message the pruner parked.
+	ParkedBlock = session.ParkedBlock
+)
+
+// LoadOrCreateSession loads the session for the current working directory,
+// or creates a fresh one. A corrupt file is backed up, never silently lost.
+func LoadOrCreateSession() *Session { return session.LoadOrCreateSession() }
 
 // ErrAmbiguousProvider signals that several (provider, model) pairs are
 // configured and no LLM_PROVIDER selector was given — prompt the user.
@@ -162,5 +188,5 @@ func (a *Agent) SessionPath() string {
 	if a.session == nil {
 		return ""
 	}
-	return a.session.path
+	return a.session.Path()
 }

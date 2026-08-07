@@ -1,4 +1,18 @@
-package agent
+// Package session holds everything that persists across a turn: the
+// append-only message log, the working directory, the edit history behind
+// undo, and the current task plan.
+//
+// BOUNDARY RULE: session may import llm and config. It must never import
+// tools or agent, and it deliberately declares no interfaces describing its
+// consumers — a tool that needs only a working directory declares that narrow
+// interface on its own side, and Session satisfies it implicitly. Dependencies
+// point one way: session does not know who reads it.
+//
+// The central invariant is that Messages is an append-only log. Park and
+// forget never mutate stored entries; they set projection metadata, and
+// ContextMessages (in memory.go) derives what the model sees at emission
+// time. That is what keeps the audit history intact after pruning.
+package session
 
 import (
 	"encoding/json"
@@ -10,6 +24,7 @@ import (
 	"time"
 
 	"github.com/atakang7/axon/internal/config"
+	"github.com/atakang7/axon/internal/llm"
 )
 
 type Edit struct {
@@ -37,7 +52,7 @@ type Session struct {
 	ID           string                 `json:"id"`
 	StartedAt    time.Time              `json:"started_at"`
 	Cwd          string                 `json:"cwd,omitempty"`
-	Messages     []Msg                  `json:"messages"`
+	Messages     []llm.Msg              `json:"messages"`
 	Edits        []Edit                 `json:"edits"`
 	ParkedBlocks map[string]ParkedBlock `json:"parked_blocks,omitempty"`
 	CurrentTask  *Task                  `json:"current_task,omitempty"`
@@ -103,6 +118,11 @@ func LoadOrCreateSession() *Session {
 	return s
 }
 
+// Path returns the file this session persists to. The field stays unexported
+// so nothing outside this package can retarget a live session's storage by
+// assignment; changing where a session lives means constructing a new one.
+func (s *Session) Path() string { return s.path }
+
 func (s *Session) Reset() {
 	*s = Session{ID: fmt.Sprintf("%d", time.Now().UnixNano()), StartedAt: time.Now(), path: config.SessionPath()}
 	s.ensure()
@@ -146,7 +166,7 @@ func (s *Session) ensure() {
 	s.NextBlockID = max
 }
 
-func (s *Session) Append(m Msg) {
+func (s *Session) Append(m llm.Msg) {
 	s.ensure()
 	if m.Role != "system" && m.Content != "" && m.ID == "" {
 		s.NextBlockID++

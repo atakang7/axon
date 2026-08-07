@@ -1,4 +1,4 @@
-package agent
+package session
 
 // memory.go — context-cost management.
 //
@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/atakang7/axon/internal/llm"
 )
 
 // ParkedBlock is the side-table record for a parked Msg. Self-describing:
@@ -56,7 +58,7 @@ type ParkedBlock struct {
 //
 // Internal bookkeeping (ID, park metadata) is stripped — the provider sees
 // only role + content + tool-call fields.
-func (s *Session) ContextMessages() []Msg {
+func (s *Session) ContextMessages() []llm.Msg {
 	s.ensure()
 
 	// First pass: any parked or forgotten assistant message that originally
@@ -77,7 +79,7 @@ func (s *Session) ContextMessages() []Msg {
 		}
 	}
 
-	out := make([]Msg, 0, len(s.Messages))
+	out := make([]llm.Msg, 0, len(s.Messages))
 	for _, m := range s.Messages {
 		if m.Forgotten {
 			continue
@@ -95,7 +97,7 @@ func (s *Session) ContextMessages() []Msg {
 			}
 			toolCalls = nil
 		}
-		out = append(out, Msg{
+		out = append(out, llm.Msg{
 			Role:       m.Role,
 			Content:    content,
 			ToolCalls:  toolCalls,
@@ -106,7 +108,7 @@ func (s *Session) ContextMessages() []Msg {
 	// Task block is transient: derived at emission time, never stored. Append
 	// at the TAIL so the prefix stays cache-stable across turns.
 	if tb := s.TaskBlock(); tb != "" {
-		out = append(out, Msg{Role: "system", Content: tb})
+		out = append(out, llm.Msg{Role: "system", Content: tb})
 	}
 	return out
 }
