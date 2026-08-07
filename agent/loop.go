@@ -1,0 +1,112 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
+// Step submits one user message and drives the loop until the
+// assistant emits text with no further tool calls.
+func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) {
+	if userInput == "" {
+		return StepResult{}, fmt.Errorf("agent: empty input")
+	}
+	a.session.Turn++
+	a.session.Append(Msg{Role: "user", Content: userInput})
+	if err := a.session.Save(); err != nil {
+		return StepResult{}, fmt.Errorf("agent: save session: %w", err)
+	}
+	a.emit(ctx, Event{Kind: KindUserInput, Text: userInput})
+
+	var calls []ToolCall
+	var assistantText string
+
+	for {
+		if a.pruner != nil && a.pruner.ShouldFire(a.session, a.lastPruneTokens) {
+			before := a.lastPruneTokens
+			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
+			next, err := a.pruner.Prune(ctx, a.session, a.lastPruneTokens)
+			if err == nil {
+				a.lastPruneTokens = next
+				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: next}})
+			} else {
+				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
+			}
+		}
+
+		turnCtx, cancel := context.WithCancel(ctx)
+		cf := context.CancelFunc(cancel)
+		a.turnCancel.Store(&cf)
+
+		msg, err := a.chat(turnCtx, a.tools)
+		if err != nil {
+			a.turnCancel.Store(nil)
+			cancel()
+			if errors.Is(err, context.Canceled) {
+				return StepResult{Turn: a.session.Turn, ToolCalls: calls}, ErrInterrupted
+			}
+			return StepResult{Turn: a.session.Turn, ToolCalls: calls}, err
+		}
+		a.session.Append(*msg)
+		a.session.Save()
+
+		if msg.Content != "" {
+			assistantText = msg.Content
+			a.emit(ctx, Event{Kind: KindAssistantEnd, Text: msg.Content})
+		}
+
+		if len(msg.ToolCalls) == 0 {
+			a.turnCancel.Store(nil)
+			cancel()
+			a.emit(ctx, Event{Kind: KindTurnEnd})
+			return StepResult{
+				Assistant: assistantText,
+				ToolCalls: calls,
+				Turn:      a.session.Turn,
+			}, nil
+		}
+
+		for _, tc := range msg.ToolCalls {
+			calls = append(calls, tc)
+			a.emit(ctx, Event{Kind: KindToolCall, Tool: &ToolEvent{
+				ID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments),
+			}})
+			result := a.runTool(turnCtx, tc)
+			a.session.Append(result)
+			blockID := a.session.Messages[len(a.session.Messages)-1].ID
+			if blockID != "" {
+				a.session.Messages[len(a.session.Messages)-1].Content = "[#" + blockID + "]\n" + result.Content
+			}
+			a.session.Save()
+			a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
+				ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
+			}})
+		}
+		a.turnCancel.Store(nil)
+		cancel()
+	}
+}
+
+// Run drives the loop using input until it returns false or ctx is
+// cancelled. Each line becomes one Step.
+func (a *Agent) Run(ctx context.Context, input InputFunc) error {
+	for {
+		line, ok := input()
+		if !ok {
+			return nil
+		}
+		if _, err := a.Step(ctx, line); err != nil {
+			if errors.Is(err, ErrInterrupted) {
+				continue
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+}

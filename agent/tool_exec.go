@@ -22,6 +22,66 @@ const execDescription = `Run a shell command.
 Set run_in_background=true for any command that *might* wait — servers, watchers, HTTP clients (curl/wget against any service, including ones you just started), database clients, anything reading stdin or a socket, anything connecting to a host you don't fully control. The rule is the chance of hanging, not the certainty: if you'd be surprised by either outcome, go background. Foreground is for commands you know terminate on their own (build, vet, test, format, file I/O, deterministic CPU work). Background returns a shell_id immediately; use bash_output to read logs and kill_shell to stop.
 Stdin is always /dev/null — interactive commands (prompts, REPLs, password reads) WILL hang. Use non-interactive flags (-y, --yes, --non-interactive) instead.`
 
+type execInput struct {
+	Mode            string `json:"mode"`
+	Command         string `json:"command"`
+	TailLines       int    `json:"tail_lines"`
+	ExpectedOutcome string `json:"expected_outcome"`
+	Dir             string `json:"dir"`
+	TimeoutSeconds  int    `json:"timeout_seconds"`
+	RunInBackground bool   `json:"run_in_background"`
+}
+
+func parseAndValidateExecInput(raw json.RawMessage, s *Session, defaultTimeout int) (*execInput, string, error) {
+	var p execInput
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, "", err
+	}
+	if p.Mode == "" {
+		p.Mode = execRun
+	}
+	resolvedDir := s.Cwd
+	if strings.TrimSpace(p.Dir) != "" {
+		resolvedDir = s.ResolvePath(p.Dir)
+	}
+	switch p.Mode {
+	case execVerify:
+		cmd, err := detectVerifyCommand(resolvedDir)
+		if err != nil {
+			return nil, "", err
+		}
+		p.Command = cmd
+		if p.TailLines <= 0 {
+			p.TailLines = execDefaultTailLines()
+		}
+		if p.ExpectedOutcome == "" {
+			p.ExpectedOutcome = "no errors"
+		}
+	case execRun:
+		if strings.TrimSpace(p.Command) == "" {
+			return nil, "", fmt.Errorf("command is required for mode=run")
+		}
+		if !p.RunInBackground && p.TailLines <= 0 {
+			return nil, "", fmt.Errorf("tail_lines is required and must be > 0 for mode=run")
+		}
+	default:
+		return nil, "", fmt.Errorf("unknown mode %q: run | verify", p.Mode)
+	}
+	if max := execMaxTailLines(); p.TailLines > max {
+		p.TailLines = max
+	}
+	if p.TimeoutSeconds <= 0 {
+		p.TimeoutSeconds = defaultTimeout
+	}
+	if max := execMaxTimeoutSeconds(); p.TimeoutSeconds > max {
+		p.TimeoutSeconds = max
+	}
+	if p.RunInBackground && p.Mode == execVerify {
+		return nil, "", fmt.Errorf("run_in_background is not valid with mode=verify")
+	}
+	return &p, resolvedDir, nil
+}
+
 func detectVerifyCommand(dir string) (string, error) {
 	for _, marker := range []struct {
 		file string
@@ -32,10 +92,6 @@ func detectVerifyCommand(dir string) (string, error) {
 		{"tsconfig.json", "tsc --noEmit"},
 		{"package.json", "npm run build --if-present"},
 		{"Makefile", "make"},
-		// find -exec ... + handles paths with spaces; -print0/xargs -0 isn't
-		// portable to BSD find without -print0 support, so use -exec which
-		// works the same on GNU and BSD. python -m compileall walks the tree
-		// itself, exiting 0 when every file compiles.
 		{"pyproject.toml", "python -m compileall -q ."},
 		{"setup.py", "python -m compileall -q ."},
 	} {
@@ -61,60 +117,12 @@ func ExecTool(s *Session) Tool {
 			"run_in_background": boolSchema("Spawn detached and return a shell_id immediately. Use for servers, watchers, anything long-running. Default false."),
 		}, []string{}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var p struct {
-				Mode            string `json:"mode"`
-				Command         string `json:"command"`
-				TailLines       int    `json:"tail_lines"`
-				ExpectedOutcome string `json:"expected_outcome"`
-				Dir             string `json:"dir"`
-				TimeoutSeconds  int    `json:"timeout_seconds"`
-				RunInBackground bool   `json:"run_in_background"`
-			}
-			if err := json.Unmarshal(raw, &p); err != nil {
+			p, resolvedDir, err := parseAndValidateExecInput(raw, s, timeout)
+			if err != nil {
 				return "", err
-			}
-			if p.Mode == "" {
-				p.Mode = execRun
-			}
-
-			resolvedDir := s.Cwd
-			if strings.TrimSpace(p.Dir) != "" {
-				resolvedDir = s.ResolvePath(p.Dir)
-			}
-
-			switch p.Mode {
-			case execVerify:
-				cmd, err := detectVerifyCommand(resolvedDir)
-				if err != nil {
-					return "", err
-				}
-				p.Command = cmd
-				if p.TailLines <= 0 {
-					p.TailLines = execDefaultTailLines()
-				}
-				if p.ExpectedOutcome == "" {
-					p.ExpectedOutcome = "no errors"
-				}
-			case execRun:
-				if strings.TrimSpace(p.Command) == "" {
-					return "", fmt.Errorf("command is required for mode=run")
-				}
-				if !p.RunInBackground && p.TailLines <= 0 {
-					return "", fmt.Errorf("tail_lines is required and must be > 0 for mode=run")
-				}
-			default:
-				return "", fmt.Errorf("unknown mode %q: run | verify", p.Mode)
-			}
-			// Cap tail_lines so the LLM cannot request a huge tail that
-			// blows the context regardless of execOutputLimit byte cap.
-			if max := execMaxTailLines(); p.TailLines > max {
-				p.TailLines = max
 			}
 
 			if p.RunInBackground {
-				if p.Mode == execVerify {
-					return "", fmt.Errorf("run_in_background is not valid with mode=verify")
-				}
 				sh, err := bgReg.start(p.Command, resolvedDir)
 				if err != nil {
 					return "", err
@@ -122,81 +130,68 @@ func ExecTool(s *Session) Tool {
 				return formatBgStart(sh), nil
 			}
 
-			if p.TimeoutSeconds <= 0 {
-				p.TimeoutSeconds = timeout
-			}
-			// Cap user-supplied timeout so a runaway tool call cannot hold
-			// the turn forever.
-			if max := execMaxTimeoutSeconds(); p.TimeoutSeconds > max {
-				p.TimeoutSeconds = max
-			}
-
-			// Derive from the turn ctx so Ctrl-C cancels the running command.
-			parent := ctx
-			if parent == nil {
-				parent = context.Background()
-			}
-			runCtx, cancel := context.WithTimeout(parent, time.Duration(p.TimeoutSeconds)*time.Second)
-			defer cancel()
-
-			cmd := exec.Command("sh", "-lc", p.Command)
-			// Put the shell and all its descendants in their own process group
-			// so we can kill the whole tree on timeout. Without this, the shell
-			// dies but grandchildren (curl, server connections) survive holding
-			// the stdout/stderr pipes open — cmd.Wait() then blocks forever even
-			// after the context fires. Same trick bg.go uses for backgrounded
-			// shells, applied here so foreground exec actually honors timeouts.
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			if resolvedDir != "" {
-				cmd.Dir = resolvedDir
-			}
-			if dn, err := os.Open(os.DevNull); err == nil {
-				cmd.Stdin = dn
-				defer dn.Close()
-			}
-
-			buf := &limitBuf{limit: execOutputLimit()}
-			cmd.Stdout = buf
-			cmd.Stderr = buf
-
-			if err := cmd.Start(); err != nil {
-				return "", err
-			}
-			done := make(chan error, 1)
-			go func() { done <- cmd.Wait() }()
-			var runErr error
-			select {
-			case runErr = <-done:
-			case <-runCtx.Done():
-				// Kill the whole process group, not just the shell. The negative
-				// PID is the syscall convention for "this process group."
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-				runErr = <-done
-			}
-			code := 0
-			note := ""
-			if runErr != nil {
-				switch {
-				case runCtx.Err() == context.DeadlineExceeded:
-					code = -1
-					note = "timed out"
-				case parent.Err() != nil:
-					// Parent (turn) ctx cancelled — Ctrl-C or shutdown.
-					code = -1
-					note = "cancelled"
-				default:
-					if exitErr, ok := runErr.(*exec.ExitError); ok {
-						code = exitErr.ExitCode()
-					} else {
-						return "", runErr
-					}
-				}
-			}
-
-			tailed, hidden := tailN(buf.buf.String(), p.TailLines)
-			return formatExec(p.Command, cmd.Dir, code, p.ExpectedOutcome, tailed, hidden, buf.truncated, note), nil
+			return runForegroundProcess(ctx, p, resolvedDir)
 		},
 	}
+}
+
+func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string) (string, error) {
+	parent := ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	runCtx, cancel := context.WithTimeout(parent, time.Duration(p.TimeoutSeconds)*time.Second)
+	defer cancel()
+
+	cmd := exec.Command("sh", "-lc", p.Command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if resolvedDir != "" {
+		cmd.Dir = resolvedDir
+	}
+	if dn, err := os.Open(os.DevNull); err == nil {
+		cmd.Stdin = dn
+		defer dn.Close()
+	}
+
+	buf := &limitBuf{limit: execOutputLimit()}
+	cmd.Stdout = buf
+	cmd.Stderr = buf
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	
+	var runErr error
+	select {
+	case runErr = <-done:
+	case <-runCtx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		runErr = <-done
+	}
+	
+	code := 0
+	note := ""
+	if runErr != nil {
+		switch {
+		case runCtx.Err() == context.DeadlineExceeded:
+			code = -1
+			note = "timed out"
+		case parent.Err() != nil:
+			code = -1
+			note = "cancelled"
+		default:
+			if exitErr, ok := runErr.(*exec.ExitError); ok {
+				code = exitErr.ExitCode()
+			} else {
+				return "", runErr
+			}
+		}
+	}
+
+	tailed, hidden := tailN(buf.buf.String(), p.TailLines)
+	return formatExec(p.Command, cmd.Dir, code, p.ExpectedOutcome, tailed, hidden, buf.truncated, note), nil
 }
 
 const bashOutputDescription = `Read new output from a background shell since the last read. Status is "running" or the exit summary. Returns only the delta — calling this in a poll loop is cheap; rereading the same bytes is not.
