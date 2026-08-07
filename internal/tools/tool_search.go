@@ -90,12 +90,10 @@ func globArgs(args []string, globs []string) []string {
 // ripgrep's "no matches", which is a result rather than a failure, so it comes
 // back as empty output and a nil error.
 //
-// Every search mode goes through here: the timeout, the output cap and the
-// exit-status interpretation are decided once.
+// It is kept separate from query construction so that the timeout, the output
+// cap and the exit-status interpretation are decided in one place regardless
+// of what is being searched for.
 func runRg(parent context.Context, ws Workspace, lim config.Limits, args []string) (out string, truncated bool, err error) {
-	if parent == nil {
-		parent = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(parent, lim.SearchTimeout)
 	defer cancel()
 

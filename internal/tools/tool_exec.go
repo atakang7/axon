@@ -93,11 +93,7 @@ func ExecTool(ws Workspace, shells *BackgroundShells, lim config.Limits) Tool {
 const killGrace = 2 * time.Second
 
 func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string, outputBytes int) (string, error) {
-	parent := ctx
-	if parent == nil {
-		parent = context.Background()
-	}
-	runCtx, cancel := context.WithTimeout(parent, time.Duration(p.TimeoutSeconds)*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
 	defer cancel()
 
 	cmd := exec.Command("sh", "-lc", p.Command)
@@ -151,7 +147,7 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 		case abandoned:
 			code = -1
 			note = "timed out; killed, but an escaped child still holds the output pipe — output may be incomplete"
-		case parent.Err() != nil:
+		case ctx.Err() != nil:
 			code = -1
 			note = "cancelled"
 		default:
