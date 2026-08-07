@@ -123,8 +123,19 @@ func LoadOrCreateSession() *Session {
 // assignment; changing where a session lives means constructing a new one.
 func (s *Session) Path() string { return s.path }
 
+// Reset wipes the conversation and starts a fresh one in the same file.
+//
+// The path is carried over rather than re-resolved: an embedder that supplied
+// its own session (Config.Session, or AXON_SESSION_PATH set after start) would
+// otherwise find its storage silently relocated to the default per-cwd path on
+// the first reset, and every later Save would write somewhere it never asked
+// for. Where a session lives is decided once, at construction.
 func (s *Session) Reset() {
-	*s = Session{ID: fmt.Sprintf("%d", time.Now().UnixNano()), StartedAt: time.Now(), path: config.SessionPath()}
+	path := s.path
+	if path == "" {
+		path = config.SessionPath()
+	}
+	*s = Session{ID: fmt.Sprintf("%d", time.Now().UnixNano()), StartedAt: time.Now(), path: path}
 	s.ensure()
 }
 
