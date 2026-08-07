@@ -24,15 +24,13 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	var assistantText string
 
 	for {
-		if a.pruner != nil && a.pruner.ShouldFire(a.session, a.lastPruneTokens) {
-			before := a.lastPruneTokens
-			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
-			next, err := a.pruner.Prune(ctx, a.session, a.lastPruneTokens)
-			if err == nil {
-				a.lastPruneTokens = next
-				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: next}})
-			} else {
+		if a.pruner.ShouldFire(a.session) {
+			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: a.pruner.ContextTokens(a.session)}})
+			before, after, err := a.pruner.Prune(ctx, a.session)
+			if err != nil {
 				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
+			} else {
+				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
 			}
 		}
 

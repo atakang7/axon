@@ -49,17 +49,16 @@ type TaskStep struct {
 }
 
 type Session struct {
-	ID           string                 `json:"id"`
-	StartedAt    time.Time              `json:"started_at"`
-	Cwd          string                 `json:"cwd,omitempty"`
-	Messages     []llm.Msg              `json:"messages"`
-	Edits        []Edit                 `json:"edits"`
-	ParkedBlocks map[string]ParkedBlock `json:"parked_blocks,omitempty"`
-	CurrentTask  *Task                  `json:"current_task,omitempty"`
-	NextBlockID  int                    `json:"next_block_id,omitempty"`
-	Turn         int                    `json:"turn,omitempty"`
-	path         string
-	editsMu      sync.Mutex
+	ID          string    `json:"id"`
+	StartedAt   time.Time `json:"started_at"`
+	Cwd         string    `json:"cwd,omitempty"`
+	Messages    []llm.Msg `json:"messages"`
+	Edits       []Edit    `json:"edits"`
+	CurrentTask *Task     `json:"current_task,omitempty"`
+	NextBlockID int       `json:"next_block_id,omitempty"`
+	Turn        int       `json:"turn,omitempty"`
+	path        string
+	editsMu     sync.Mutex
 }
 
 // TaskBlock returns the formatted task string injected transiently into
@@ -150,9 +149,6 @@ func (s *Session) Save() error {
 }
 
 func (s *Session) ensure() {
-	if s.ParkedBlocks == nil {
-		s.ParkedBlocks = map[string]ParkedBlock{}
-	}
 	if s.Cwd == "" {
 		if wd, err := os.Getwd(); err == nil {
 			s.Cwd = wd

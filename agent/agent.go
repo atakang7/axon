@@ -28,11 +28,6 @@ type Agent struct {
 	session *Session
 	pruner  *Pruner
 
-	// lastPruneTokens is the projected context size at the previous successful
-	// pruner fire. Pruner.ShouldFire compares the current size against this to
-	// avoid re-firing on small growth.
-	lastPruneTokens int
-
 	// turnCancel, when non-nil, cancels the currently in-flight chat call.
 	// Set at the start of each chat(), cleared after. Embedders call
 	// Interrupt() to fire it (e.g. from a SIGINT handler).

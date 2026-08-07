@@ -76,8 +76,9 @@ func TestContextMessagesDropsOrphanedToolResults(t *testing.T) {
 	}
 }
 
-// Parking substitutes a breadcrumb; forgetting removes the block outright.
-func TestParkBreadcrumbAndForget(t *testing.T) {
+// Parking replaces a block with a breadcrumb rather than removing it, and
+// never touches the append-only log.
+func TestParkSubstitutesBreadcrumb(t *testing.T) {
 	s := newAt(t, "s.json")
 	s.Append(llm.Msg{Role: "user", Content: "keep me"})
 	s.Append(llm.Msg{Role: "assistant", Content: "a very long answer"})
@@ -94,19 +95,24 @@ func TestParkBreadcrumbAndForget(t *testing.T) {
 		t.Fatalf("breadcrumb missing summary or marker: %q", out[1].Content)
 	}
 
-	if err := s.Forget(id, "pruner: irrelevant"); err != nil {
-		t.Fatalf("Forget: %v", err)
+	// Parking twice is idempotent and re-parking refreshes the breadcrumb
+	// rather than stacking state.
+	if err := s.Park(id, "revised gist", "pruner: still stale"); err != nil {
+		t.Fatalf("re-Park: %v", err)
 	}
-	if out := s.ContextMessages(); len(out) != 1 {
-		t.Fatalf("forgotten block should leave no trace in context: got %d", len(out))
+	if out := s.ContextMessages(); !strings.Contains(out[1].Content, "revised gist") {
+		t.Fatalf("re-park did not refresh the breadcrumb: %q", out[1].Content)
 	}
 	if len(s.Messages) != 2 {
-		t.Fatalf("forget deleted from the audit log: %d messages, want 2", len(s.Messages))
+		t.Fatalf("park mutated the audit log: %d messages, want 2", len(s.Messages))
+	}
+	if s.Messages[1].Content != "a very long answer" {
+		t.Fatalf("park overwrote stored content: %q", s.Messages[1].Content)
 	}
 }
 
-// Park requires a reason, and the system prompt is never removable — losing
-// either would let the curator quietly destroy context it cannot restore.
+// Park requires a reason, and the system prompt can never be parked — losing
+// either would let the curator quietly destroy context nothing can restore.
 func TestParkRefusesReasonlessAndSystem(t *testing.T) {
 	s := newAt(t, "s.json")
 	s.Messages = []llm.Msg{{Role: "system", Content: "you are an agent"}}
@@ -117,11 +123,14 @@ func TestParkRefusesReasonlessAndSystem(t *testing.T) {
 		t.Fatal("Park accepted a blank reason")
 	}
 	// The system message is skipped by ensure() and never gets an ID, so it is
-	// unreachable by ID; assert it survives a forget attempt on every ID.
+	// unreachable by ID; assert it survives a park attempt on every ID.
 	for _, m := range s.Messages {
-		_ = s.Forget(m.ID, "test")
+		_ = s.Park(m.ID, "gist", "test")
 	}
 	if s.ContextMessages()[0].Role != "system" {
 		t.Fatal("system prompt was removed from context")
+	}
+	if s.ContextMessages()[0].Content != "you are an agent" {
+		t.Fatal("system prompt was replaced by a breadcrumb")
 	}
 }

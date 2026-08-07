@@ -2,45 +2,30 @@ package session
 
 // memory.go — context-cost management.
 //
-// The main agent has no memory tools and no awareness of memory state. A
-// separate pruner (see pruner.go) is the only operator of Park / Forget;
-// the agent's prompt does not even mention them.
+// The main agent has no memory tools and no awareness of memory state. The
+// pruner is the only caller of Park, and the agent's prompt does not mention
+// that any of this exists.
 //
-// State model (still three-state, but driven by the pruner now):
+// Two states, and only two:
 //
-//   active    — full content lives in the message stream sent to the model.
-//   parked    — replaced in stream by a one-line breadcrumb. The original
-//               lives in Session.ParkedBlocks for human audit.
-//   forgotten — dropped from the model's view entirely (no breadcrumb). The
-//               original Msg stays in Session.Messages for human audit only.
+//	active — full content goes into the stream sent to the model.
+//	parked — replaced in the stream by a one-line breadcrumb. The original
+//	         stays untouched in Session.Messages for human audit.
 //
-// Park / Forget / Refresh / Recall remain as Session methods because the
-// pruner runtime calls them. They are no longer tools.
+// There was a third state, "forgotten", which dropped a block with no
+// breadcrumb, and a Recall path for reading parked content back. Neither was
+// ever called; both are gone. A state nothing can enter is not a state, it is
+// a comment that compiles.
 //
-// Session.Messages is still the immutable log; ContextMessages is still the
-// projection function that builds what the model sees.
+// Session.Messages is the immutable log; ContextMessages is the projection
+// that builds what the model sees, derived fresh at emission time.
 
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/atakang7/axon/internal/llm"
 )
-
-// ParkedBlock is the side-table record for a parked Msg. Self-describing:
-// holds the metadata (summary, reason) AND the exact breadcrumb string that
-// will be substituted into the active context for this block.
-type ParkedBlock struct {
-	ID              string    `json:"id"`
-	Role            string    `json:"role"`
-	OriginalContent string    `json:"original_content"`
-	Summary         string    `json:"summary"`
-	Reason          string    `json:"reason"`
-	Breadcrumb      string    `json:"breadcrumb"`
-	ParkedAt        time.Time `json:"parked_at"`
-	ParkedAtTurn    int       `json:"parked_at_turn"`
-}
 
 // -----------------------------------------------------------------------------
 // Active message stream
@@ -52,17 +37,16 @@ type ParkedBlock struct {
 // mutate stored Msgs to reflect park/forget state. Instead, we DERIVE the
 // LLM-visible context here at emission time:
 //
-//   - active block      → emit Content as-is.
-//   - parked block      → emit the stored breadcrumb from ParkedBlocks[ID].
-//   - forgotten block   → drop entirely, no breadcrumb.
+//   - active block  → emit Content as-is.
+//   - parked block  → emit a breadcrumb derived from the Msg's park fields.
 //
 // Internal bookkeeping (ID, park metadata) is stripped — the provider sees
 // only role + content + tool-call fields.
 func (s *Session) ContextMessages() []llm.Msg {
 	s.ensure()
 
-	// First pass: any parked or forgotten assistant message that originally
-	// carried tool_calls becomes content-only. The tool_calls field can hold
+	// First pass: a parked assistant message that originally carried
+	// tool_calls becomes content-only. The tool_calls field can hold
 	// massive arguments (e.g. a 200-line file written via `write`), and
 	// dropping content alone leaves those bytes in the prompt. We also note
 	// which tool_call_ids vanish so their matching `tool` result messages
@@ -70,7 +54,7 @@ func (s *Session) ContextMessages() []llm.Msg {
 	// break the API contract.
 	droppedToolCallIDs := map[string]bool{}
 	for _, m := range s.Messages {
-		if (m.Parked || m.Forgotten) && m.Role == "assistant" && len(m.ToolCalls) > 0 {
+		if m.Parked && m.Role == "assistant" && len(m.ToolCalls) > 0 {
 			for _, tc := range m.ToolCalls {
 				if tc.ID != "" {
 					droppedToolCallIDs[tc.ID] = true
@@ -81,20 +65,13 @@ func (s *Session) ContextMessages() []llm.Msg {
 
 	out := make([]llm.Msg, 0, len(s.Messages))
 	for _, m := range s.Messages {
-		if m.Forgotten {
-			continue
-		}
 		if m.Role == "tool" && droppedToolCallIDs[m.ToolCallID] {
 			continue
 		}
 		content := m.Content
 		toolCalls := m.ToolCalls
 		if m.Parked {
-			if rec, ok := s.ParkedBlocks[m.ID]; ok && rec.Breadcrumb != "" {
-				content = rec.Breadcrumb
-			} else {
-				content = breadcrumb(m.ID, m.ParkReason, m.ParkSummary)
-			}
+			content = breadcrumb(m.ID, m.ParkReason, m.ParkSummary)
 			toolCalls = nil
 		}
 		out = append(out, llm.Msg{
@@ -137,99 +114,12 @@ func (s *Session) Park(id, summary, reason string) error {
 		if m.Role == "system" {
 			return fmt.Errorf("cannot park system message %s", id)
 		}
-		if m.Parked {
-			rec := s.ParkedBlocks[id]
-			rec.Summary = summary
-			rec.Reason = reason
-			rec.Breadcrumb = breadcrumb(id, reason, summary)
-			s.ParkedBlocks[id] = rec
-		} else {
-			if m.Content == "" {
-				return fmt.Errorf("block %s has no content to park", id)
-			}
-			s.ParkedBlocks[id] = ParkedBlock{
-				ID:              id,
-				Role:            m.Role,
-				OriginalContent: m.Content,
-				Summary:         summary,
-				Reason:          reason,
-				Breadcrumb:      breadcrumb(id, reason, summary),
-				ParkedAt:        time.Now(),
-				ParkedAtTurn:    s.Turn,
-			}
+		if !m.Parked && m.Content == "" {
+			return fmt.Errorf("block %s has no content to park", id)
 		}
 		m.Parked = true
 		m.ParkSummary = summary
 		m.ParkReason = reason
-		m.Forgotten = false
-		m.ForgetReason = ""
-		return nil
-	}
-	return fmt.Errorf("block %s not found", id)
-}
-
-// -----------------------------------------------------------------------------
-// Recall — read parked content (utility for human / future use)
-// -----------------------------------------------------------------------------
-
-func (s *Session) Recall(ids []string, query string) []ParkedBlock {
-	s.ensure()
-	seen := map[string]bool{}
-	var out []ParkedBlock
-
-	for _, id := range ids {
-		r, ok := s.ParkedBlocks[id]
-		if !ok || seen[id] {
-			continue
-		}
-		out = append(out, r)
-		seen[id] = true
-	}
-
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		return out
-	}
-	for _, r := range s.ParkedBlocks {
-		if seen[r.ID] {
-			continue
-		}
-		hay := strings.ToLower(r.ID + "\n" + r.Summary + "\n" + r.Reason + "\n" + r.OriginalContent)
-		if strings.Contains(hay, q) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// -----------------------------------------------------------------------------
-// Forget — irreversible removal (pruner-driven)
-// -----------------------------------------------------------------------------
-
-func (s *Session) Forget(id, reason string) error {
-	s.ensure()
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return fmt.Errorf("reason is required to forget a block")
-	}
-	for i := range s.Messages {
-		m := &s.Messages[i]
-		if m.ID != id {
-			continue
-		}
-		if m.Role == "system" {
-			return fmt.Errorf("cannot forget system message %s", id)
-		}
-		delete(s.ParkedBlocks, id)
-		m.Parked = false
-		m.ParkSummary = ""
-		m.ParkReason = ""
-		m.Forgotten = true
-		m.ForgetReason = reason
-		return nil
-	}
-	if _, ok := s.ParkedBlocks[id]; ok {
-		delete(s.ParkedBlocks, id)
 		return nil
 	}
 	return fmt.Errorf("block %s not found", id)

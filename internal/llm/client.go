@@ -18,21 +18,16 @@ import (
 //   - Parked == true means ContextMessages emits a breadcrumb for this block,
 //     not the original content. The original lives in Session.ParkedBlocks
 //     under this Msg.ID.
-//   - Forgotten == true means ContextMessages drops this block from the
-//     model's view entirely. The original Msg stays in Session.Messages for
-//     human audit only.
 type Msg struct {
-	Role         string     `json:"role"`
-	Content      string     `json:"content,omitempty"`
-	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID   string     `json:"tool_call_id,omitempty"`
-	ToolName     string     `json:"tool_name,omitempty"`
-	ID           string     `json:"id,omitempty"`
-	Parked       bool       `json:"parked,omitempty"`
-	ParkSummary  string     `json:"park_summary,omitempty"`
-	ParkReason   string     `json:"park_reason,omitempty"`
-	Forgotten    bool       `json:"forgotten,omitempty"`
-	ForgetReason string     `json:"forget_reason,omitempty"`
+	Role        string     `json:"role"`
+	Content     string     `json:"content,omitempty"`
+	ToolCalls   []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID  string     `json:"tool_call_id,omitempty"`
+	ToolName    string     `json:"tool_name,omitempty"`
+	ID          string     `json:"id,omitempty"`
+	Parked      bool       `json:"parked,omitempty"`
+	ParkSummary string     `json:"park_summary,omitempty"`
+	ParkReason  string     `json:"park_reason,omitempty"`
 }
 
 type ToolCall struct {

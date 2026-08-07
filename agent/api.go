@@ -80,8 +80,6 @@ type (
 	TaskStep = session.TaskStep
 	// Edit is one recorded file mutation, the unit Undo reverts.
 	Edit = session.Edit
-	// ParkedBlock is the stored original of a message the pruner parked.
-	ParkedBlock = session.ParkedBlock
 )
 
 // LoadOrCreateSession loads the session for the current working directory,

@@ -75,7 +75,7 @@ internal/llm/
 
 internal/session/
   session.go          Session, append-only log, edit history, undo, task plan
-  memory.go           ContextMessages projection; Park / Recall / Forget
+  memory.go           ContextMessages projection; Park
 
 internal/tools/
   tools.go            Tool, Workspace, Plan, Catalog, schema helpers
@@ -163,9 +163,9 @@ type Tool struct {
     Fn          func(ctx, args) (string, error)
 }
 
-// Provider, Msg, ToolCall, Client, ToolSpec, Session, Task, TaskStep, Edit and
-// ParkedBlock are type aliases for the internal packages that own them, so the
-// types are identical across both names.
+// Provider, Msg, ToolCall, Client, ToolSpec, Session, Task, TaskStep and Edit
+// are type aliases for the internal packages that own them, so the types are
+// identical across both names.
 
 // Errors
 var (
@@ -176,8 +176,12 @@ var (
 
 ## Invariants
 
-- **`Session.Messages` is append-only.** Park and forget are projections built
-  in `ContextMessages`, never mutations. Audit history survives pruning.
+- **`Session.Messages` is append-only.** Parking sets projection metadata;
+  `ContextMessages` derives the breadcrumb at emission time and the original
+  content is never touched. Audit history survives pruning.
+- **The pruner has exactly one verb: park.** A block is active or parked,
+  nothing else. There is one source of truth for a parked block — the `Msg`
+  itself — so no side-table can disagree with the log.
 - **Built-ins are unconditional.** Every agent has the hands-and-legs tools
   (read, write, exec, search, task, bash_output, kill_shell). No knob removes
   them. Custom tool names cannot collide with them; enforced at `New`.
@@ -225,7 +229,7 @@ go test ./...
 
 ## Things intentionally NOT here
 
-- **No subagents.** One LLM, full context every turn, aggressive forgetting is
+- **No subagents.** One LLM, full context every turn, aggressive parking is
   the cost lever.
 - **No HTTP/API layer.** Build one on top with `Step`.
 - **No agent registry / discovery / lifecycle.** That belongs to a higher layer.
