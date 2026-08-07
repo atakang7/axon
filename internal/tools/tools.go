@@ -38,8 +38,11 @@ package tools
 //      command's process group. A user-facing approval/sandbox layer is a
 //      future addition, not present in this build — do not assume it exists.
 //   8. Atomicity: all writes go through WriteFileAtomic (tmp + rename, mode
-//      preserved). The wrapper writeBytes runs the optional formatter; /undo
-//      uses WriteFileAtomic directly so it is byte-exact and never reformats.
+//      preserved), so a write is byte-exact and /undo restores exactly what
+//      was there. The runtime does not format what it writes: bundling a
+//      dispatch table of twenty third-party formatter binaries was unbounded
+//      maintenance debt for a capability the agent already has — it can run
+//      gofmt through exec like anyone else.
 
 import (
 	"context"

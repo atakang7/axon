@@ -2,14 +2,10 @@ package tools
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 )
 
@@ -28,7 +24,8 @@ import (
 //
 // File mode handling: if the destination already exists, its mode is preserved
 // (executable bits, group-readable scripts, etc.). New files default to 0644.
-// No formatter runs here — callers that want formatting use writeBytes.
+// Callers that want the file formatted afterwards run a formatter themselves;
+// the agent can simply call gofmt through exec.
 func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if dir == "" {
@@ -64,162 +61,6 @@ func WriteFileAtomic(path string, data []byte) error {
 	}
 	return nil
 }
-
-// writeBytes writes atomically and then runs the language-appropriate
-// formatter best-effort. Use this from edit tools. Use WriteFileAtomic from
-// /undo and any other path that must be byte-exact.
-func writeBytes(path string, data []byte) error {
-	if err := WriteFileAtomic(path, data); err != nil {
-		return err
-	}
-	formatPath(path)
-	return nil
-}
-
-// formatPath runs the appropriate formatter for the file's extension.
-// Best-effort: any error (missing tool, parse failure, timeout) is swallowed —
-// formatting must never break a successful write. The model is allowed to emit
-// non-indented code for whitespace-insensitive languages and rely on this hook.
-func formatPath(path string) {
-	ext := strings.ToLower(filepath.Ext(path))
-	cmd, args, ok := formatterFor(ext, path)
-	if !ok {
-		return
-	}
-	resolved, err := resolveFormatter(cmd)
-	if err != nil {
-		return
-	}
-	cmd = resolved
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	c := exec.CommandContext(ctx, cmd, args...)
-	// dprint resolves file paths against cwd, so run it from the file's
-	// directory and pass the basename. gofmt etc. don't care.
-	if strings.HasSuffix(cmd, "dprint") {
-		c.Dir = filepath.Dir(path)
-		// Replace the final arg (the absolute path) with just the basename.
-		if n := len(args); n > 0 {
-			args[n-1] = filepath.Base(path)
-			c.Args = append([]string{cmd}, args...)
-		}
-	}
-	_ = c.Run()
-}
-
-// resolveFormatter looks up a formatter binary on PATH, falling back to known
-// install locations (e.g. dprint's default ~/.dprint/bin) so agents work even
-// when the user hasn't shell-rc'd the install path.
-func resolveFormatter(name string) (string, error) {
-	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	for _, p := range []string{
-		filepath.Join(home, ".dprint", "bin", name),
-		filepath.Join(home, ".cargo", "bin", name),
-		filepath.Join(home, ".local", "bin", name),
-	} {
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("formatter %q not found", name)
-}
-
-// formatterFor maps a file extension to (binary, args). Returns ok=false when
-// no formatter is configured for the extension.
-//
-// dprint covers: TS/JS/JSX/TSX, JSON, MD, TOML, YAML, Python (via ruff plugin),
-// CSS, HTML, Dockerfile. Native binaries handle the rest. Order matters:
-// native formatters take priority where they're idiomatic (gofmt for Go,
-// rustfmt for Rust) so the result matches what the project's CI expects.
-func formatterFor(ext, path string) (string, []string, bool) {
-	switch ext {
-	case ".go":
-		return "gofmt", []string{"-w", path}, true
-	case ".rs":
-		return "rustfmt", []string{path}, true
-	case ".sh", ".bash":
-		return "shfmt", []string{"-w", path}, true
-	case ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx":
-		return "clang-format", []string{"-i", path}, true
-	case ".java":
-		return "google-java-format", []string{"-i", path}, true
-	case ".zig":
-		return "zig", []string{"fmt", path}, true
-	case ".kt", ".kts":
-		return "ktlint", []string{"-F", path}, true
-	case ".swift":
-		return "swift-format", []string{"-i", path}, true
-	case ".rb":
-		return "rubocop", []string{"-a", "--no-color", path}, true
-	case ".php":
-		return "php-cs-fixer", []string{"fix", path}, true
-	case ".scala", ".sbt":
-		return "scalafmt", []string{path}, true
-	case ".lua":
-		return "stylua", []string{path}, true
-	case ".dart":
-		return "dart", []string{"format", path}, true
-	case ".ex", ".exs":
-		return "mix", []string{"format", path}, true
-	case ".nix":
-		return "nixpkgs-fmt", []string{path}, true
-	case ".proto":
-		return "buf", []string{"format", "-w", path}, true
-	case ".sql":
-		return "sqlfluff", []string{"fix", "--disable-progress-bar", path}, true
-	case ".tf", ".tfvars":
-		return "terraform", []string{"fmt", path}, true
-	case ".xml":
-		return "xmllint", []string{"--format", "--output", path, path}, true
-	case ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-		".json", ".jsonc", ".md", ".markdown", ".toml",
-		".yaml", ".yml", ".css", ".scss", ".html", ".htm":
-		return "dprint", []string{"fmt", "--config", dprintConfigPath(), path}, true
-	}
-	return "", nil, false
-}
-
-// dprintConfigPath returns the path to the agent's dprint config, creating it
-// on first use. We keep one config under the user's config dir so dprint has
-// a stable place to find plugins regardless of cwd.
-func dprintConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "dprint.json"
-	}
-	dir := filepath.Join(home, ".config", "dprint")
-	path := filepath.Join(dir, "dprint.json")
-	if _, err := os.Stat(path); err == nil {
-		return path
-	}
-	_ = os.MkdirAll(dir, 0755)
-	_ = os.WriteFile(path, []byte(defaultDprintConfig), 0644)
-	return path
-}
-
-const defaultDprintConfig = `{
-  "typescript": {},
-  "json": {},
-  "markdown": {},
-  "toml": {},
-  "yaml": {},
-  "ruff": {},
-  "plugins": [
-    "https://plugins.dprint.dev/typescript-0.95.15.wasm",
-    "https://plugins.dprint.dev/json-0.21.3.wasm",
-    "https://plugins.dprint.dev/markdown-0.21.1.wasm",
-    "https://plugins.dprint.dev/toml-0.7.0.wasm",
-    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
-    "https://plugins.dprint.dev/ruff-0.7.11.wasm"
-  ]
-}
-`
 
 // binaryFileRefusal sniffs the first 8KB of path for binary indicators. NUL
 // bytes are the strong signal (compiled executables, archives, images). We

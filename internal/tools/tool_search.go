@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -33,14 +34,7 @@ func SearchTool(ws Workspace, lim config.Limits) Tool {
 			"max_matches":    intSchema("Cap total matches. Defaults to AXON_SEARCH_LIMIT."),
 		}, []string{"query"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var p struct {
-				Query         string   `json:"query"`
-				Mode          string   `json:"mode"`
-				Path          string   `json:"path"`
-				Globs         []string `json:"globs"`
-				CaseSensitive bool     `json:"case_sensitive"`
-				MaxMatches    int      `json:"max_matches"`
-			}
+			var p searchInput
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
@@ -58,11 +52,11 @@ func SearchTool(ws Workspace, lim config.Limits) Tool {
 			}
 			switch p.Mode {
 			case searchLiteral:
-				return runRipgrep(ctx, ws, lim, p.Query, p.Path, p.Globs, true, p.CaseSensitive, p.MaxMatches)
+				return runRipgrep(ctx, ws, lim, p, true)
 			case searchRegex:
-				return runRipgrep(ctx, ws, lim, p.Query, p.Path, p.Globs, false, p.CaseSensitive, p.MaxMatches)
+				return runRipgrep(ctx, ws, lim, p, false)
 			case searchTrace:
-				return runTrace(ctx, ws, lim, p.Query, p.Path, p.Globs, p.MaxMatches)
+				return runTrace(ctx, ws, lim, p)
 			default:
 				return "", fmt.Errorf("unknown mode %q: literal | regex | trace", p.Mode)
 			}
@@ -70,57 +64,91 @@ func SearchTool(ws Workspace, lim config.Limits) Tool {
 	}
 }
 
-func runRipgrep(parent context.Context, ws Workspace, lim config.Limits, query, path string, globs []string, literal, caseSensitive bool, maxMatches int) (string, error) {
-	args := []string{"-n", "--no-heading", "--color", "never", "-g", "!.git", "--hidden"}
-	if !caseSensitive {
-		args = append(args, "--ignore-case")
-	}
-	if literal {
-		args = append(args, "--fixed-strings")
-	}
-	if maxMatches > 0 {
-		args = append(args, "--max-count", fmt.Sprintf("%d", maxMatches))
-	}
+type searchInput struct {
+	Query         string   `json:"query"`
+	Mode          string   `json:"mode"`
+	Path          string   `json:"path"`
+	Globs         []string `json:"globs"`
+	CaseSensitive bool     `json:"case_sensitive"`
+	MaxMatches    int      `json:"max_matches"`
+}
+
+// errNoRipgrep is returned when rg is missing. Every search mode depends on
+// it, so the message names the fix rather than the symptom.
+var errNoRipgrep = errors.New("search requires rg (ripgrep) in PATH")
+
+// globArgs appends the caller's glob filters, skipping blanks.
+func globArgs(args []string, globs []string) []string {
 	for _, g := range globs {
 		if g = strings.TrimSpace(g); g != "" {
 			args = append(args, "-g", g)
 		}
 	}
-	args = append(args, "--", query, path)
+	return args
+}
 
+// runRg executes ripgrep and returns its captured output. Exit status 1 is
+// ripgrep's "no matches", which is a result rather than a failure, so it comes
+// back as empty output and a nil error.
+//
+// Every search mode goes through here: the timeout, the output cap and the
+// exit-status interpretation are decided once.
+func runRg(parent context.Context, ws Workspace, lim config.Limits, args []string) (out string, truncated bool, err error) {
 	if parent == nil {
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(parent, lim.SearchTimeout)
 	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "rg", args...)
-	if ws.Dir() != "" {
-		cmd.Dir = ws.Dir()
+	if dir := ws.Dir(); dir != "" {
+		cmd.Dir = dir
 	}
 	buf := &limitBuf{limit: lim.SearchOutputBytes}
-	cmd.Stdout = buf
-	cmd.Stderr = buf
-	err := cmd.Run()
+	cmd.Stdout, cmd.Stderr = buf, buf
+
+	runErr := cmd.Run()
+	captured, truncated := buf.snapshot()
+	if runErr == nil {
+		return strings.TrimRight(captured, "\n"), truncated, nil
+	}
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		return "", false, fmt.Errorf("search timed out after %s", lim.SearchTimeout)
+	case parent.Err() != nil:
+		return "", false, parent.Err()
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 {
+		return "", false, nil
+	}
+	if strings.Contains(runErr.Error(), "executable file not found") {
+		return "", false, errNoRipgrep
+	}
+	return "", false, runErr
+}
+
+// runRipgrep serves the literal and regex modes.
+func runRipgrep(parent context.Context, ws Workspace, lim config.Limits, p searchInput, literal bool) (string, error) {
+	args := []string{"-n", "--no-heading", "--color", "never", "-g", "!.git", "--hidden"}
+	if !p.CaseSensitive {
+		args = append(args, "--ignore-case")
+	}
+	if literal {
+		args = append(args, "--fixed-strings")
+	}
+	if p.MaxMatches > 0 {
+		args = append(args, "--max-count", fmt.Sprintf("%d", p.MaxMatches))
+	}
+	args = globArgs(args, p.Globs)
+	args = append(args, "--", p.Query, p.Path)
+
+	out, truncated, err := runRg(parent, ws, lim, args)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("search timed out after %s", lim.SearchTimeout)
-		}
-		if parent.Err() != nil {
-			return "", parent.Err()
-		}
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return fmt.Sprintf("query: %s\npath: %s\nno matches", query, path), nil
-		}
-		if strings.Contains(err.Error(), "executable file not found") {
-			return "", fmt.Errorf("search requires rg in PATH")
-		}
 		return "", err
 	}
-
-	captured, truncated := buf.snapshot()
-	out := strings.TrimRight(captured, "\n")
 	var b strings.Builder
-	fmt.Fprintf(&b, "query: %s\npath: %s\n", query, path)
+	fmt.Fprintf(&b, "query: %s\npath: %s\n", p.Query, p.Path)
 	if out == "" {
 		b.WriteString("no matches")
 	} else {
@@ -134,7 +162,8 @@ func runRipgrep(parent context.Context, ws Workspace, lim config.Limits, query, 
 
 // runTrace: regex-based symbol trace. Finds definitions, callers, and callees.
 // Heuristic. Good enough for ~80% of cases. Tree-sitter upgrade is future work.
-func runTrace(parent context.Context, ws Workspace, lim config.Limits, symbol, path string, globs []string, maxMatches int) (string, error) {
+func runTrace(parent context.Context, ws Workspace, lim config.Limits, p searchInput) (string, error) {
+	symbol, path, globs, maxMatches := p.Query, p.Path, p.Globs, p.MaxMatches
 	// Two def patterns OR'd together:
 	//   1. plain decl:   func Foo, function Foo, def Foo, class Foo, ...
 	//   2. Go method:    func (recv T) Foo
@@ -195,53 +224,19 @@ type rgHit struct {
 }
 
 func rgCollect(parent context.Context, ws Workspace, lim config.Limits, pattern, path string, globs []string, maxMatches int) ([]rgHit, error) {
-	// Use --field-context-separator and a NUL byte separator pair? Simpler:
-	// emit JSON with --json and parse, but that's a bigger change. Instead
-	// use a fixed-width separator that real paths can't contain. rg already
-	// guarantees this with --field-match-separator, but availability varies;
-	// fall back to colon parsing that's robust to colons in paths by
-	// matching `:<digits>:` at the end of the prefix.
 	args := []string{"-n", "--no-heading", "--color", "never", "-g", "!.git"}
 	if maxMatches > 0 {
 		args = append(args, "--max-count", fmt.Sprintf("%d", maxMatches))
 	}
-	for _, g := range globs {
-		if g = strings.TrimSpace(g); g != "" {
-			args = append(args, "-g", g)
-		}
-	}
+	args = globArgs(args, globs)
 	args = append(args, "--", pattern, path)
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, lim.SearchTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "rg", args...)
-	if ws.Dir() != "" {
-		cmd.Dir = ws.Dir()
-	}
-	buf := &limitBuf{limit: lim.SearchOutputBytes}
-	cmd.Stdout = buf
-	cmd.Stderr = buf
-	err := cmd.Run()
+
+	captured, _, err := runRg(parent, ws, lim, args)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("search timed out after %s", lim.SearchTimeout)
-		}
-		if parent.Err() != nil {
-			return nil, parent.Err()
-		}
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return nil, nil
-		}
-		if strings.Contains(err.Error(), "executable file not found") {
-			return nil, fmt.Errorf("trace requires rg in PATH")
-		}
 		return nil, err
 	}
 	var hits []rgHit
-	captured, _ := buf.snapshot()
-	for _, ln := range strings.Split(strings.TrimRight(captured, "\n"), "\n") {
+	for _, ln := range strings.Split(captured, "\n") {
 		if ln == "" {
 			continue
 		}

@@ -112,7 +112,7 @@ func writeSaveMode(ws Workspace, abs, content string) (string, error) {
 		priorContent = string(before)
 	}
 	ws.RecordEdit(abs, priorContent, content)
-	if err := writeBytes(abs, []byte(content)); err != nil {
+	if err := WriteFileAtomic(abs, []byte(content)); err != nil {
 		return "", err
 	}
 	if existed {
@@ -136,7 +136,7 @@ func writeReplaceStringMode(ws Workspace, abs, oldStr, newStr string) (string, e
 	}
 	after := strings.Replace(old, oldStr, newStr, 1)
 	ws.RecordEdit(abs, old, after)
-	return "replaced 1 occurrence in " + abs, writeBytes(abs, []byte(after))
+	return "replaced 1 occurrence in " + abs, WriteFileAtomic(abs, []byte(after))
 }
 
 func writeReplaceLinesMode(ws Workspace, abs string, startLine, endLine int, content string) (string, error) {
@@ -158,7 +158,7 @@ func writeReplaceLinesMode(ws Workspace, abs string, startLine, endLine int, con
 	newLines := append(append(append([]string{}, head...), replacement...), tail...)
 	after := strings.Join(newLines, "\n")
 	ws.RecordEdit(abs, old, after)
-	return fmt.Sprintf("replaced lines %d-%d in %s", startLine, endLine, abs), writeBytes(abs, []byte(after))
+	return fmt.Sprintf("replaced lines %d-%d in %s", startLine, endLine, abs), WriteFileAtomic(abs, []byte(after))
 }
 
 func writeInsertAtMode(ws Workspace, abs string, startLine int, content string) (string, error) {
@@ -177,5 +177,5 @@ func writeInsertAtMode(ws Workspace, abs string, startLine int, content string) 
 	newLines := append(append(append([]string{}, head...), insert...), tail...)
 	after := strings.Join(newLines, "\n")
 	ws.RecordEdit(abs, old, after)
-	return fmt.Sprintf("inserted at line %d in %s", startLine, abs), writeBytes(abs, []byte(after))
+	return fmt.Sprintf("inserted at line %d in %s", startLine, abs), WriteFileAtomic(abs, []byte(after))
 }
