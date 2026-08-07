@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+
+	"github.com/atakang7/axon/internal/llm"
 )
 
 // api.go — public library API.
@@ -21,6 +23,58 @@ import (
 // Built-in tools (read, write, exec, search, task, bash_output,
 // kill_shell) are unconditional — every agent has them. Custom tools
 // supplied via Config.Tools are appended.
+
+// ---------------------------------------------------------------------------
+// Model layer, re-exported
+//
+// Provider, Msg, ToolCall and Client are owned by internal/llm. These are
+// aliases, not wrappers: agent.Msg and llm.Msg are the same type, so a Session
+// marshals identically and an embedder can pass values across either name.
+// Re-exporting here keeps internal/llm unreachable from outside the module
+// while leaving the public API exactly as it was.
+// ---------------------------------------------------------------------------
+
+type (
+	// Provider selects the LLM endpoint: base URL, model, credentials.
+	Provider = llm.Provider
+	// Msg is one entry in the conversation log.
+	Msg = llm.Msg
+	// ToolCall is a model's request to invoke one tool.
+	ToolCall = llm.ToolCall
+	// Client is the OpenAI-compatible streaming chat client.
+	Client = llm.Client
+	// ToolSpec is a tool as the model sees it — name, description, schema,
+	// no implementation. Client methods take these; use toolSpecs to project
+	// a []Tool down to them.
+	ToolSpec = llm.ToolSpec
+)
+
+// ErrAmbiguousProvider signals that several (provider, model) pairs are
+// configured and no LLM_PROVIDER selector was given — prompt the user.
+var ErrAmbiguousProvider = llm.ErrAmbiguousProvider
+
+// NewClient builds a chat client for the given provider.
+func NewClient(p Provider) (*Client, error) { return llm.NewClient(p) }
+
+// LoadProviders reads providers.json. A missing file is not an error.
+func LoadProviders() (map[string]Provider, error) { return llm.LoadProviders() }
+
+// ResolveProvider picks one (provider, model) pair from configuration and the
+// environment, returning ErrAmbiguousProvider when the choice is not unique.
+func ResolveProvider(providers map[string]Provider) (Provider, error) {
+	return llm.ResolveProvider(providers)
+}
+
+// toolSpecs projects tools down to what the model layer is allowed to see:
+// name, description, schema — never Fn. This is the one place the execution
+// layer crosses into the model layer, and it is an allowlist by construction.
+func toolSpecs(tools []Tool) []llm.ToolSpec {
+	specs := make([]llm.ToolSpec, len(tools))
+	for i, t := range tools {
+		specs[i] = llm.ToolSpec{Name: t.Name, Description: t.Description, Schema: t.Schema}
+	}
+	return specs
+}
 
 // Sentinel errors. Wrap with %w when returning from internals; check
 // with errors.Is at the boundary.

@@ -1,6 +1,9 @@
 package agent
 
-import "github.com/atakang7/axon/internal/config"
+import (
+	"github.com/atakang7/axon/internal/config"
+	"github.com/atakang7/axon/internal/llm"
+)
 
 // exports.go — the stable surface embedders need for path and environment
 // resolution. internal/config is unreachable from outside this module by
@@ -34,7 +37,7 @@ func SessionPath() string { return config.SessionPath() }
 // Used by the CLI picker so that env values still override the chosen
 // config entry.
 func ApplyProviderEnvOverrides(p Provider) (Provider, error) {
-	return applyProviderEnvOverrides(p)
+	return llm.ApplyEnvOverrides(p)
 }
 
 // EnvString returns the trimmed value of the given environment variable.
@@ -44,5 +47,5 @@ func EnvString(key string) string { return config.String(key) }
 
 // ProviderNames returns the sorted keys of a providers map.
 func ProviderNames(providers map[string]Provider) []string {
-	return providerNames(providers)
+	return llm.ProviderNames(providers)
 }

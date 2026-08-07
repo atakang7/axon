@@ -79,7 +79,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			}
 		}
 		a.emit(ctx, Event{Kind: KindAPICall})
-		msg, err := a.client.ChatStream(ctx, a.session.ContextMessages(), tools,
+		msg, err := a.client.ChatStream(ctx, a.session.ContextMessages(), toolSpecs(tools),
 			func(t string) {
 				a.emit(ctx, Event{Kind: KindToken, Text: t})
 			},

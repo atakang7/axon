@@ -1,4 +1,4 @@
-package agent
+package llm
 
 import (
 	"bufio"
@@ -76,24 +76,20 @@ func NewClient(p Provider) (*Client, error) {
 	return &Client{http: &http.Client{Timeout: 30 * time.Minute}, baseURL: url, p: p}, nil
 }
 
-// LoadProviders reads providers.json and returns a flattened map keyed by
-// "provider/model". Each provider entry may carry multiple models under a
-// "models" array; the legacy single "model" field is still accepted so old
-// configs keep working.
+// ToolSpec is a tool as the model sees it: a name, a description, and a JSON
+// schema. It deliberately has no implementation field.
 //
-//	{
-//	  "providers": [
-//	    {
-//	      "name": "openrouter",
-//	      "base_url": "https://openrouter.ai/api",
-//	      "api_key": "sk-...",
-//	      "provider": "",
-//	      "models": [{"model": "anthropic/claude-sonnet-4-6"}]
-//	    }
-//	  ]
-//	}
+// This type is the contract that keeps the model layer independent of the
+// execution layer. The agent package holds the richer Tool (schema plus the
+// Go function that runs it) and projects it down to ToolSpec at the call
+// boundary, so nothing here can reach a tool's behaviour — only its shape.
+type ToolSpec struct {
+	Name        string
+	Description string
+	Schema      map[string]any
+}
 
-func (c *Client) Chat(ctx context.Context, msgs []Msg, tools []Tool, onToken func(string), onPhase func(string, time.Duration)) (*Msg, error) {
+func (c *Client) Chat(ctx context.Context, msgs []Msg, tools []ToolSpec, onToken func(string), onPhase func(string, time.Duration)) (*Msg, error) {
 	return c.ChatStream(ctx, msgs, tools, onToken, nil, nil, nil, onPhase)
 }
 
@@ -104,7 +100,7 @@ func (c *Client) Chat(ctx context.Context, msgs []Msg, tools []Tool, onToken fun
 // streaming them — meaning a "frozen" screen is sometimes a healthy stream
 // with no deltas yet. The heartbeat fires every second after first-byte so
 // the UI can show "alive, waiting Ns" instead of looking dead.
-func (c *Client) ChatStream(ctx context.Context, msgs []Msg, tools []Tool, onToken, onReasoning func(string), onToolArg func(name, delta string), onHeartbeat func(elapsed time.Duration), onPhase func(string, time.Duration)) (*Msg, error) {
+func (c *Client) ChatStream(ctx context.Context, msgs []Msg, tools []ToolSpec, onToken, onReasoning func(string), onToolArg func(name, delta string), onHeartbeat func(elapsed time.Duration), onPhase func(string, time.Duration)) (*Msg, error) {
 	t0 := time.Now()
 	emit := func(name string, since time.Time) {
 		if onPhase != nil {
