@@ -179,29 +179,41 @@ func (s *bgShell) readNew(maxBytes int) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	off := s.readOffset
 	f, err := os.Open(s.LogPath)
 	if err != nil {
 		return "", false, err
 	}
 	defer f.Close()
-	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		return "", false, err
-	}
-	data, err := io.ReadAll(f)
+	fi, err := f.Stat()
 	if err != nil {
 		return "", false, err
 	}
 
-	advance := int64(len(data))
+	// Seek past the backlog rather than reading it and throwing it away. A
+	// watcher left running between two polls can append hundreds of megabytes;
+	// reading that in full to return the last 32KB of it would defeat the cap
+	// it is being read under and can exhaust memory on its own.
+	size := fi.Size()
+	off := min(s.readOffset, size) // a truncated or recreated log restarts
 	truncated := false
-	if maxBytes > 0 && len(data) > maxBytes {
-		data = data[len(data)-maxBytes:]
+	if maxBytes > 0 && size-off > int64(maxBytes) {
+		off = size - int64(maxBytes)
 		truncated = true
 	}
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return "", false, err
+	}
 
-	s.readOffset += advance
-	return string(data), truncated, nil
+	data := make([]byte, size-off)
+	n, err := io.ReadFull(f, data)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return "", false, err
+	}
+
+	// Advance by what was actually read, not by size: the writer may have
+	// appended since Stat, and those bytes belong to the next poll.
+	s.readOffset = off + int64(n)
+	return string(data[:n]), truncated, nil
 }
 
 func (s *bgShell) status() string {
