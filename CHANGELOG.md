@@ -35,6 +35,80 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 
 ### Bug Fixes
 
+* **llm:** force include_reasoning for openrouter to prevent missing JSON schemas ([104275c](https://github.com/atakang7/axon/commit/104275c4e077995112870a7c468f705249ee9caf))
+* **llm:** omit tools payload when empty to prevent silent provider failures ([f6c8449](https://github.com/atakang7/axon/commit/f6c8449837480cc49185c6b2bbab4f9f71a2ae8e))
+* **llm:** report the whole provider error body, not its first line ([96693d2](https://github.com/atakang7/axon/commit/96693d22ab6f5b481676b2ffebaf1f27c48f7f06))
+* **pruner:** report blocks the curator named but could not be parked ([bebaad1](https://github.com/atakang7/axon/commit/bebaad1bc72f8c3de808402fd8373453e9dc152d))
+* **session:** keep the session file where the embedder put it on Reset ([6ae439c](https://github.com/atakang7/axon/commit/6ae439c723a2720051e4bb2ffcfb49edb6a25402))
+* three hangs and a swallowed interrupt found in review ([802bed1](https://github.com/atakang7/axon/commit/802bed1ed2acaba3f94df51f3266cc260b8d347e))
+
+
+### Performance
+
+* **session:** bound the undo ledger ([b38e14c](https://github.com/atakang7/axon/commit/b38e14c9c29f9a94f41ef71f781864ba1b6fbc09))
+* **session:** stamp block IDs at load, not on every ensure ([8ad513b](https://github.com/atakang7/axon/commit/8ad513b71deac9591f88f0e27557ae477fec80ef))
+* **tools:** seek past the backlog when reading a shell log ([3a61f9a](https://github.com/atakang7/axon/commit/3a61f9ae82b946f4cac7cfb141601356214b002e))
+
+
+### Refactoring
+
+* **agent:** resolve tool limits once at construction instead of at call depth ([c96c589](https://github.com/atakang7/axon/commit/c96c589a291345c65f7963f4c3fae677faaf1489))
+* **config:** extract path and limit resolution into internal/config ([0ba36f5](https://github.com/atakang7/axon/commit/0ba36f5d7693e3efd0412ea9b393164874e74db1))
+* **llm:** move the model layer into internal/llm behind ToolSpec ([8b36b9e](https://github.com/atakang7/axon/commit/8b36b9e119c2337824f577f83db02ea331823dae))
+* **llm:** read the SSE stream on the calling goroutine ([37e359f](https://github.com/atakang7/axon/commit/37e359f8bf163e33483b8292ecccd875f18c1385))
+* **pruner:** reduce the curator to a single verb ([60acad9](https://github.com/atakang7/axon/commit/60acad9283be0e37da466131d6a0b52e01e8c73f))
+* remove the runtime's own configuration and prompt enrichment ([b919072](https://github.com/atakang7/axon/commit/b919072e5697e942273a321aa1906c9df1bd4fa9))
+* **session:** keep only pre-edit contents in the undo ledger ([d5cc939](https://github.com/atakang7/axon/commit/d5cc939bf2fd673350201a47fbbf3f007713aeda))
+* **session:** move conversation state into internal/session ([34dccd7](https://github.com/atakang7/axon/commit/34dccd769538fc0bf5cbb002a0c636c463cf14bc))
+* **tools:** drop the formatter dispatch table and unify the rg runner ([d8ed9ee](https://github.com/atakang7/axon/commit/d8ed9ee205f1c47102f578a4a8b3975b04ed9d34))
+* **tools:** drop the modes that guess at the language ([e18c0ef](https://github.com/atakang7/axon/commit/e18c0ef5053dbe80d0e031dc0990b774f0fb7b52))
+* **tools:** move tools into internal/tools behind narrow capabilities ([16be7df](https://github.com/atakang7/axon/commit/16be7df976d57737b84d8d2cdf38a858b8533454))
+* **tools:** stop defending against a nil context ([b7a4a6a](https://github.com/atakang7/axon/commit/b7a4a6a3d8228cdb630408f94fb4e971a8b4bdf5))
+
+
+### Documentation
+
+* correct false invariants and make the layering rule executable ([4fb5122](https://github.com/atakang7/axon/commit/4fb51224540bcdc746b7574588b3b41a32abdd57))
+* stop overclaiming what the layering test enforces ([7f15713](https://github.com/atakang7/axon/commit/7f15713e06bbee39d2ca1828504cc49290b45d15))
+* sync ARCHITECTURE with the current API ([35d3407](https://github.com/atakang7/axon/commit/35d3407223cbac3ccd69a2a1d2fce2dce8d19856))
+
+## [2.0.0](https://github.com/atakang7/axon/compare/v1.0.3...v2.0.0) (2026-08-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** New rejects a Config.Tools entry with no Name, no Schema
+or no Fn instead of accepting it. A caller relying on a tool being
+constructed without one of those now gets ErrInvalidTool at New.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+* **session:** tools.Workspace.RecordEdit takes (path, before) instead
+of (path, before, after), and session.Edit no longer has an After field.
+An embedder with its own Workspace implementation drops the argument.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+* **tools:** read no longer accepts mode=skeleton, search no longer
+accepts mode=trace, and exec no longer accepts a mode field at all
+(command becomes a required parameter). Callers relying on verify's
+auto-detection must pass the build command explicitly.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+* publish the vocabulary so an embedder can read its documentation
+* **agent:** allow bounding the built-in toolset, and fix Undo lying to the model
+* remove the runtime's own configuration and prompt enrichment
+* **agent:** make the model a port instead of a hardwired client
+* **pruner:** reduce the curator to a single verb
+
+### Features
+
+* **agent:** allow bounding the built-in toolset, and fix Undo lying to the model ([b6bfff8](https://github.com/atakang7/axon/commit/b6bfff8be08c3ecd6524fcc990a4bae7640b3d48))
+* **agent:** make the model a port instead of a hardwired client ([d69621a](https://github.com/atakang7/axon/commit/d69621a9c3c463b0383e4abeb68cbd712a6ac34d))
+* **agent:** reject a malformed tool at construction ([b31d7f7](https://github.com/atakang7/axon/commit/b31d7f7542b12e716cb3a7f386441dd39e9f3094))
+* publish the vocabulary so an embedder can read its documentation ([066d46f](https://github.com/atakang7/axon/commit/066d46fefbeebaba908a2d9b7ee1d6dcbb3a46ce))
+
+
+### Bug Fixes
+
 * **llm:** omit tools payload when empty to prevent silent provider failures ([f6c8449](https://github.com/atakang7/axon/commit/f6c8449837480cc49185c6b2bbab4f9f71a2ae8e))
 * **llm:** report the whole provider error body, not its first line ([96693d2](https://github.com/atakang7/axon/commit/96693d22ab6f5b481676b2ffebaf1f27c48f7f06))
 * **pruner:** report blocks the curator named but could not be parked ([bebaad1](https://github.com/atakang7/axon/commit/bebaad1bc72f8c3de808402fd8373453e9dc152d))
