@@ -189,9 +189,12 @@ var (
 - **The pruner has exactly one verb: park.** A block is active or parked,
   nothing else. There is one source of truth for a parked block — the `Msg`
   itself — so no side-table can disagree with the log.
-- **Built-ins are unconditional.** Every agent has the hands-and-legs tools
-  (read, write, exec, search, task, bash_output, kill_shell). No knob removes
-  them. Custom tool names cannot collide with them; enforced at `New`.
+- **Every tool satisfies its contract before the loop starts.** `New` rejects a
+  `Config.Tools` entry with no `Name`, no `Schema` or no `Fn` (`ErrInvalidTool`),
+  and one whose name collides with a built-in the agent still has
+  (`ErrDuplicateTool`). A nil `Fn` would otherwise panic mid-turn, inside the
+  embedder, after the model had committed to the call. Excluding a built-in via
+  `Config.ExcludeBuiltins` frees its name for a custom tool.
 - **Nothing is process-global.** Every piece of mutable state an agent uses is
   created in `New` and released in `Close`. Two agents in one process share
   no shells, no limits and no session.

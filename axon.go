@@ -150,13 +150,24 @@ type ToolCall struct {
 // is written for the model to read. Returning an error is not fatal: the error
 // text becomes the result and the model gets to react to it, which is usually
 // what you want for a failure it could recover from.
+//
+// Name, Schema and Fn are required. agent.New rejects a Tool missing any of
+// them with agent.ErrInvalidTool rather than letting the turn loop discover it:
+// a nil Fn would otherwise panic mid-turn, after the model had already
+// committed to the call.
 type Tool struct {
-	// Name is what the model calls. It must not collide with a built-in
-	// (read, write, exec, search, task, bash_output, kill_shell).
+	// Name is what the model calls. Required. It must not collide with a
+	// built-in the agent still has (read, write, exec, search, task,
+	// bash_output, kill_shell) — a built-in removed via Config.ExcludeBuiltins
+	// frees its name.
 	Name string
-	// Description tells the model when to reach for this tool.
+	// Description tells the model when to reach for this tool. Optional, but a
+	// tool the model cannot tell apart from the others will not get called.
 	Description string
-	// Schema is the JSON Schema for Fn's arguments.
+	// Schema is the JSON Schema for Fn's arguments. Required; use
+	// map[string]any{"type": "object"} for a tool that takes none. It is not
+	// optional because providers disagree about what a null parameter schema
+	// means, and the disagreement surfaces as a rejected request.
 	Schema map[string]any
 	// Fn runs the tool. The context is turn-scoped: it is cancelled when the
 	// turn is interrupted, so long-running work should honour it.

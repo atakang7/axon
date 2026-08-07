@@ -129,6 +129,7 @@ var (
 	ErrNoSystemPrompt = errors.New("agent: Config.SystemPrompt is required")
 	ErrToolNotFound   = errors.New("agent: tool not found")
 	ErrDuplicateTool  = errors.New("agent: duplicate tool name")
+	ErrInvalidTool    = errors.New("agent: invalid tool")
 	ErrInterrupted    = errors.New("agent: turn interrupted")
 )
 

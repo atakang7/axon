@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/atakang7/axon/internal/config"
 	"github.com/atakang7/axon/internal/tools"
@@ -48,6 +49,12 @@ func New(cfg Config) (*Agent, error) {
 		seen[t.Name] = true
 	}
 	for _, t := range cfg.Tools {
+		// A tool is checked here rather than where it is called: a nil Fn
+		// discovered mid-turn panics inside the embedder, after the model has
+		// already committed to the call and the user has already paid for it.
+		if missing := missingToolFields(t); missing != "" {
+			return nil, fmt.Errorf("%w: tool %q has no %s", ErrInvalidTool, t.Name, missing)
+		}
 		if seen[t.Name] {
 			return nil, fmt.Errorf("%w: %q", ErrDuplicateTool, t.Name)
 		}
@@ -71,6 +78,23 @@ func New(cfg Config) (*Agent, error) {
 		customTools:     cfg.Tools,
 		excludeBuiltins: cfg.ExcludeBuiltins,
 	}, nil
+}
+
+// missingToolFields names the first required field a tool leaves unset, or ""
+// when it is complete. Schema is required even for a tool that takes no
+// arguments (use map[string]any{"type": "object"}) because providers disagree
+// about what a null parameter schema means, and the disagreement surfaces as a
+// rejected request rather than as a clear error here.
+func missingToolFields(t Tool) string {
+	switch {
+	case strings.TrimSpace(t.Name) == "":
+		return "Name"
+	case t.Schema == nil:
+		return "Schema"
+	case t.Fn == nil:
+		return "Fn"
+	}
+	return ""
 }
 
 // builtinTools binds the built-in tool set to this agent's capabilities. Each
