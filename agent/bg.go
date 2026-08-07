@@ -234,9 +234,15 @@ func (r *bgRegistry) list() []*bgShell {
 // killAll terminates every live shell. Called on /new and on process exit so
 // background servers do not outlive the session that started them.
 func (r *bgRegistry) killAll() {
+	var wg sync.WaitGroup
 	for _, sh := range r.list() {
-		_ = sh.kill(2 * time.Second)
+		wg.Add(1)
+		go func(s *bgShell) {
+			defer wg.Done()
+			_ = s.kill(2 * time.Second)
+		}(sh)
 	}
+	wg.Wait()
 }
 
 // formatBgStart renders the immediate response after spawning a background

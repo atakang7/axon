@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -150,10 +151,12 @@ func retryable(err error) bool {
 			return true
 		}
 	}
-	for _, s := range []string{"connection reset", "connection refused", "no such host"} {
-		if strings.Contains(m, s) {
-			return true
-		}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
 	}
 	return false
 }
