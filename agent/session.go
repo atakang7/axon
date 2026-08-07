@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
 type Edit struct {
@@ -81,7 +83,7 @@ func (s *Session) TaskBlock() string {
 }
 
 func LoadOrCreateSession() *Session {
-	p := sessionPath()
+	p := config.SessionPath()
 	if data, err := os.ReadFile(p); err == nil {
 		var s Session
 		if json.Unmarshal(data, &s) == nil {
@@ -102,7 +104,7 @@ func LoadOrCreateSession() *Session {
 }
 
 func (s *Session) Reset() {
-	*s = Session{ID: fmt.Sprintf("%d", time.Now().UnixNano()), StartedAt: time.Now(), path: sessionPath()}
+	*s = Session{ID: fmt.Sprintf("%d", time.Now().UnixNano()), StartedAt: time.Now(), path: config.SessionPath()}
 	s.ensure()
 }
 

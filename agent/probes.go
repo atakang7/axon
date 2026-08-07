@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
 // Probe is one shell command run once at session startup. Its trimmed stdout
@@ -38,16 +39,8 @@ const (
 	probeOutputLimit = 2000
 )
 
-func probesPath() string {
-	if path := envString("AXON_CONTEXT_PROBES_PATH"); path != "" {
-		return path
-	}
-	return filepath.Join(configDir(), "context.json")
-}
-
 func loadProbes() []Probe {
-	path := probesPath()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(config.ProbesPath())
 	if err != nil {
 		return defaultProbes
 	}

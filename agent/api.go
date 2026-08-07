@@ -99,8 +99,6 @@ type StepResult struct {
 	Turn      int
 }
 
-
-
 // Session returns the agent's current Session. Treat it as read-mostly;
 // use Reset to wipe and Undo to revert edits.
 func (a *Agent) Session() *Session { return a.session }

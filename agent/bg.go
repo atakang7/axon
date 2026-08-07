@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
 // Background processes are how the agent operates servers, watchers, and
@@ -52,7 +54,7 @@ type bgRegistry struct {
 var bgReg = newBgRegistry()
 
 func newBgRegistry() *bgRegistry {
-	dir := filepath.Join(dataDir(), "bg", fmt.Sprintf("%d", os.Getpid()))
+	dir := config.BackgroundLogDir(os.Getpid())
 	_ = os.MkdirAll(dir, 0755)
 	return &bgRegistry{shells: map[string]*bgShell{}, dir: dir}
 }

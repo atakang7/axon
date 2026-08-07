@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -50,7 +52,7 @@ func SearchTool(s *Session) Tool {
 				p.Path = "."
 			}
 			if p.MaxMatches <= 0 {
-				p.MaxMatches = searchLimit()
+				p.MaxMatches = config.SearchMaxMatches()
 			}
 			if p.Mode == "" {
 				p.Mode = searchLiteral
@@ -90,19 +92,19 @@ func runRipgrep(parent context.Context, s *Session, query, path string, globs []
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(searchTimeoutSeconds())*time.Second)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(config.SearchTimeoutSeconds())*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rg", args...)
 	if s.Cwd != "" {
 		cmd.Dir = s.Cwd
 	}
-	buf := &limitBuf{limit: searchOutputLimit()}
+	buf := &limitBuf{limit: config.SearchOutputBytes()}
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 	err := cmd.Run()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("search timed out after %ds", searchTimeoutSeconds())
+			return "", fmt.Errorf("search timed out after %ds", config.SearchTimeoutSeconds())
 		}
 		if parent.Err() != nil {
 			return "", parent.Err()
@@ -212,19 +214,19 @@ func rgCollect(parent context.Context, s *Session, pattern, path string, globs [
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(searchTimeoutSeconds())*time.Second)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(config.SearchTimeoutSeconds())*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rg", args...)
 	if s.Cwd != "" {
 		cmd.Dir = s.Cwd
 	}
-	buf := &limitBuf{limit: searchOutputLimit()}
+	buf := &limitBuf{limit: config.SearchOutputBytes()}
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 	err := cmd.Run()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("search timed out after %ds", searchTimeoutSeconds())
+			return nil, fmt.Errorf("search timed out after %ds", config.SearchTimeoutSeconds())
 		}
 		if parent.Err() != nil {
 			return nil, parent.Err()

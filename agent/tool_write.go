@@ -39,7 +39,7 @@ func parseAndValidateWriteInput(raw json.RawMessage, s *Session) (*writeInput, s
 		return nil, "", fmt.Errorf("path is required")
 	}
 	abs := s.ResolvePath(p.Path)
-	
+
 	switch p.Mode {
 	case writeSave:
 		// no extra validation needed
@@ -78,7 +78,7 @@ func WriteTool(s *Session) Tool {
 			if err != nil {
 				return "", err
 			}
-			
+
 			switch p.Mode {
 			case writeSave:
 				return writeSaveMode(s, abs, p.Content)

@@ -9,6 +9,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,7 +46,7 @@ func parseAndValidateReadInput(raw json.RawMessage, s *Session) (*readInput, str
 }
 
 func ReadTool(s *Session) Tool {
-	limit := readLimit()
+	limit := config.ReadLines()
 	return Tool{
 		Name:        toolRead,
 		Description: readDescription,
@@ -128,7 +130,7 @@ func readFullMode(abs string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	max := int64(readMaxBytes())
+	max := int64(config.ReadMaxBytes())
 	if fi.Size() > max {
 		return fmt.Sprintf("[full read refused: %s is %d bytes (>%d cap). Use mode=slice to page through, or raise AXON_READ_MAX_BYTES.]", abs, fi.Size(), max), nil
 	}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -52,7 +54,7 @@ func parseAndValidateExecInput(raw json.RawMessage, s *Session, defaultTimeout i
 		}
 		p.Command = cmd
 		if p.TailLines <= 0 {
-			p.TailLines = execDefaultTailLines()
+			p.TailLines = config.ExecTailLines()
 		}
 		if p.ExpectedOutcome == "" {
 			p.ExpectedOutcome = "no errors"
@@ -67,13 +69,13 @@ func parseAndValidateExecInput(raw json.RawMessage, s *Session, defaultTimeout i
 	default:
 		return nil, "", fmt.Errorf("unknown mode %q: run | verify", p.Mode)
 	}
-	if max := execMaxTailLines(); p.TailLines > max {
+	if max := config.ExecMaxTailLines(); p.TailLines > max {
 		p.TailLines = max
 	}
 	if p.TimeoutSeconds <= 0 {
 		p.TimeoutSeconds = defaultTimeout
 	}
-	if max := execMaxTimeoutSeconds(); p.TimeoutSeconds > max {
+	if max := config.ExecMaxTimeoutSeconds(); p.TimeoutSeconds > max {
 		p.TimeoutSeconds = max
 	}
 	if p.RunInBackground && p.Mode == execVerify {
@@ -103,7 +105,7 @@ func detectVerifyCommand(dir string) (string, error) {
 }
 
 func ExecTool(s *Session) Tool {
-	timeout := execTimeoutSeconds()
+	timeout := config.ExecTimeoutSeconds()
 	return Tool{
 		Name:        toolExec,
 		Description: execDescription,
@@ -153,7 +155,7 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string)
 		defer dn.Close()
 	}
 
-	buf := &limitBuf{limit: execOutputLimit()}
+	buf := &limitBuf{limit: config.ExecOutputBytes()}
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 
@@ -162,7 +164,7 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	
+
 	var runErr error
 	select {
 	case runErr = <-done:
@@ -170,7 +172,7 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string)
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		runErr = <-done
 	}
-	
+
 	code := 0
 	note := ""
 	if runErr != nil {
@@ -222,7 +224,7 @@ func BashOutputTool(s *Session) Tool {
 			}
 			cap := p.MaxBytes
 			if cap <= 0 {
-				cap = bashOutputMaxBytes()
+				cap = config.BashOutputMaxBytes()
 			}
 			out, byteTrunc, err := sh.readNew(cap)
 			if err != nil {

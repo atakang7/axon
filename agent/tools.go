@@ -123,4 +123,3 @@ func enumSchema(desc string, values ...string) map[string]any {
 	}
 	return map[string]any{"type": "string", "description": desc, "enum": vs}
 }
-

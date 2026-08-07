@@ -147,4 +147,3 @@ func projectOrientation(s *Session) string {
 	}
 	return b.String()
 }
-

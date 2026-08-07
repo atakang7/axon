@@ -1,159 +1,35 @@
 package agent
 
+// config.go — provider selection.
+//
+// Path and limit resolution moved to internal/config; this file now holds
+// only the logic that turns environment variables plus providers.json into
+// one concrete Provider. It belongs beside the LLM client, and moves there
+// when the llm package lands.
+
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
-func envString(key string) string {
-	return strings.TrimSpace(os.Getenv(key))
-}
-
-func envInt(key string, fallback, min int) int {
-	raw := envString(key)
-	if raw == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < min {
-		return fallback
-	}
-	return n
-}
-
-func userHomeDir() string {
-	home, _ := os.UserHomeDir()
-	if home != "" {
-		return home
-	}
-	if wd, err := os.Getwd(); err == nil {
-		return wd
-	}
-	return "."
-}
-
-func configDir() string {
-	if dir := envString("AXON_CONFIG_DIR"); dir != "" {
-		return dir
-	}
-	if dir := envString("XDG_CONFIG_HOME"); dir != "" {
-		return filepath.Join(dir, "agent")
-	}
-	return filepath.Join(userHomeDir(), ".config", "agent")
-}
-
-func dataDir() string {
-	if dir := envString("AXON_DATA_DIR"); dir != "" {
-		return dir
-	}
-	if dir := envString("XDG_DATA_HOME"); dir != "" {
-		return filepath.Join(dir, "agent")
-	}
-	return filepath.Join(userHomeDir(), ".local", "share", "agent")
-}
-
-func providersPath() string {
-	if path := envString("AXON_PROVIDERS_PATH"); path != "" {
-		return path
-	}
-	return filepath.Join(configDir(), "providers.json")
-}
-
-func sessionPath() string {
-	if path := envString("AXON_SESSION_PATH"); path != "" {
-		return path
-	}
-	return filepath.Join(dataDir(), "sessions", sessionKeyForCwd()+".json")
-}
-
-// sessionKeyForCwd derives a stable per-directory key so each working
-// directory keeps its own session. Falls back to "default" if cwd is
-// unavailable, preserving the old single-session behavior in that case.
-func sessionKeyForCwd() string {
-	wd, err := os.Getwd()
-	if err != nil || wd == "" {
-		return "default"
-	}
-	if abs, err := filepath.Abs(wd); err == nil {
-		wd = abs
-	}
-	sum := sha256.Sum256([]byte(wd))
-	return filepath.Base(wd) + "-" + hex.EncodeToString(sum[:6])
-}
-
-func readLimit() int {
-	return envInt("AXON_READ_LIMIT", 200, 1)
-}
-
-// readMaxBytes caps mode=full reads. A 50MB log file would otherwise be
-// loaded into memory and split line-by-line into context. Default 2 MiB.
-func readMaxBytes() int {
-	return envInt("AXON_READ_MAX_BYTES", 2*1024*1024, 1)
-}
-
-func execTimeoutSeconds() int {
-	return envInt("AXON_EXEC_TIMEOUT_SECONDS", 30, 1)
-}
-
-// execMaxTimeoutSeconds caps any per-call timeout the LLM supplies. Without a
-// ceiling a single tool call could hold the turn for hours. Default 600s (10m).
-func execMaxTimeoutSeconds() int {
-	return envInt("AXON_EXEC_MAX_TIMEOUT_SECONDS", 600, 1)
-}
-
-// bashOutputMaxBytes caps a single bash_output read so a noisy server
-// can't dump megabytes into context per poll. Default 32 KiB.
-func bashOutputMaxBytes() int {
-	return envInt("AXON_BASH_OUTPUT_MAX_BYTES", 32*1024, 1)
-}
-
-// searchTimeoutSeconds bounds rg per call. Default 30s.
-func searchTimeoutSeconds() int {
-	return envInt("AXON_SEARCH_TIMEOUT_SECONDS", 30, 1)
-}
-
-// searchLimit caps the number of matches a single search returns. Default 100.
-func searchLimit() int {
-	return envInt("AXON_SEARCH_LIMIT", 100, 1)
-}
-
-func execOutputLimit() int {
-	return envInt("AXON_EXEC_OUTPUT_LIMIT", 12000, 1)
-}
-
-func searchOutputLimit() int {
-	return envInt("AXON_SEARCH_OUTPUT_LIMIT", 12000, 1)
-}
-
-func execDefaultTailLines() int {
-	return envInt("AXON_EXEC_TAIL_LINES", 50, 1)
-}
-
-func execMaxTailLines() int {
-	return envInt("AXON_EXEC_MAX_TAIL_LINES", 500, 1)
-}
-
 func providerFromEnv() (Provider, bool, error) {
-	model := envString("LLM_MODEL")
-	baseURL := envString("LLM_BASE_URL")
-	apiKey := envString("LLM_API_KEY")
-	extraText := envString("LLM_PROVIDER_EXTRA")
+	model := config.String("LLM_MODEL")
+	baseURL := config.String("LLM_BASE_URL")
+	apiKey := config.String("LLM_API_KEY")
+	extraText := config.String("LLM_PROVIDER_EXTRA")
 	if model == "" && baseURL == "" && apiKey == "" && extraText == "" {
 		return Provider{}, false, nil
 	}
 	if model == "" || baseURL == "" {
 		return Provider{}, false, fmt.Errorf("LLM_MODEL and LLM_BASE_URL are required when provider config is supplied via env")
 	}
-	name := envString("LLM_PROVIDER_NAME")
+	name := config.String("LLM_PROVIDER_NAME")
 	if name == "" {
-		name = envString("LLM_PROVIDER")
+		name = config.String("LLM_PROVIDER")
 	}
 	if name == "" {
 		name = "env"
@@ -175,16 +51,16 @@ func providerFromEnv() (Provider, bool, error) {
 }
 
 func applyProviderEnvOverrides(p Provider) (Provider, error) {
-	if baseURL := envString("LLM_BASE_URL"); baseURL != "" {
+	if baseURL := config.String("LLM_BASE_URL"); baseURL != "" {
 		p.BaseURL = baseURL
 	}
-	if model := envString("LLM_MODEL"); model != "" {
+	if model := config.String("LLM_MODEL"); model != "" {
 		p.Model = model
 	}
-	if apiKey := envString("LLM_API_KEY"); apiKey != "" {
+	if apiKey := config.String("LLM_API_KEY"); apiKey != "" {
 		p.APIKey = apiKey
 	}
-	if extraText := envString("LLM_PROVIDER_EXTRA"); extraText != "" {
+	if extraText := config.String("LLM_PROVIDER_EXTRA"); extraText != "" {
 		if !json.Valid([]byte(extraText)) {
 			return Provider{}, fmt.Errorf("LLM_PROVIDER_EXTRA must be valid JSON")
 		}
@@ -207,9 +83,9 @@ func providerNames(providers map[string]Provider) []string {
 //     it has exactly one model configured.
 //  2. Single configured pair → use it.
 //  3. Pure-env config (LLM_MODEL + LLM_BASE_URL with no providers.json).
-//  4. Otherwise return ErrAmbiguousProvider so main.go can run the picker.
+//  4. Otherwise return ErrAmbiguousProvider so the embedder can run a picker.
 func ResolveProvider(providers map[string]Provider) (Provider, error) {
-	if sel := strings.TrimSpace(envString("LLM_PROVIDER")); sel != "" {
+	if sel := config.String("LLM_PROVIDER"); sel != "" {
 		if p, ok := providers[strings.ToLower(sel)]; ok {
 			return applyProviderEnvOverrides(p)
 		}
@@ -225,7 +101,7 @@ func ResolveProvider(providers map[string]Provider) (Provider, error) {
 		} else if ok && strings.EqualFold(p.Name, sel) {
 			return p, nil
 		}
-		return Provider{}, fmt.Errorf("provider %q not found in %s", sel, providersPath())
+		return Provider{}, fmt.Errorf("provider %q not found in %s", sel, config.ProvidersPath())
 	}
 	if len(providers) == 1 {
 		for _, p := range providers {
@@ -238,14 +114,14 @@ func ResolveProvider(providers map[string]Provider) (Provider, error) {
 		return p, nil
 	}
 	if len(providers) == 0 {
-		return Provider{}, fmt.Errorf("no provider configured; set LLM_MODEL and LLM_BASE_URL or create %s", providersPath())
+		return Provider{}, fmt.Errorf("no provider configured; set LLM_MODEL and LLM_BASE_URL or create %s", config.ProvidersPath())
 	}
 	return Provider{}, ErrAmbiguousProvider
 }
 
 // ErrAmbiguousProvider signals that more than one (provider, model) pair is
-// configured and no LLM_PROVIDER selector was given. main.go catches this
-// and runs the interactive picker.
+// configured and no LLM_PROVIDER selector was given. Embedders catch this and
+// run an interactive picker.
 var ErrAmbiguousProvider = fmt.Errorf("multiple provider/model pairs configured")
 
 // providersByName returns all keys whose provider-name segment matches sel.
@@ -257,7 +133,6 @@ func providersByName(providers map[string]Provider, sel string) []string {
 		if strings.EqualFold(p.Name, sel) {
 			out = append(out, key)
 		}
-		_ = key
 	}
 	sort.Strings(out)
 	return out

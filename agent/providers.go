@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/atakang7/axon/internal/config"
 )
 
 // providers.go — Provider struct + LoadProviders config loader.
@@ -16,7 +18,7 @@ type Provider struct {
 
 func LoadProviders() (map[string]Provider, error) {
 	out := map[string]Provider{}
-	data, err := os.ReadFile(providersPath())
+	data, err := os.ReadFile(config.ProvidersPath())
 	if os.IsNotExist(err) {
 		return out, nil
 	}
