@@ -127,15 +127,26 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (before, after int, err 
 	if err != nil {
 		return before, before, fmt.Errorf("pruner: %w", err)
 	}
+	// A model that names a block that does not exist, or one already parked,
+	// is a bad answer rather than a broken session: park what is valid and
+	// report the rest instead of discarding the whole pass. Silently ignoring
+	// them would hide a pruner that had started hallucinating ids entirely.
+	var rejected []string
 	for _, id := range ids {
 		block := fmt.Sprintf("m%d", id)
-		_ = s.Park(block, gist(s, block), "pruner: not needed to continue")
+		if err := s.Park(block, gist(s, block), "pruner: not needed to continue"); err != nil {
+			rejected = append(rejected, block)
+		}
 	}
 	if err := s.Save(); err != nil {
 		return before, before, err
 	}
 
 	p.lastFire = p.ContextTokens(s)
+	if len(rejected) > 0 {
+		return before, p.lastFire, fmt.Errorf("pruner: named %d unusable block(s): %s",
+			len(rejected), strings.Join(rejected, ", "))
+	}
 	return before, p.lastFire, nil
 }
 

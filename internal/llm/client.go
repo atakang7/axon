@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -244,7 +245,7 @@ type reply struct {
 // readStream consumes the SSE body until the server closes it, applying an
 // idle timeout so a silent provider fails fast instead of hanging the turn.
 // cancel aborts the in-flight request when that happens.
-func readStream(ctx context.Context, body interface{ Read([]byte) (int, error) }, stream Stream, cancel context.CancelFunc) (*Msg, error) {
+func readStream(ctx context.Context, body io.Reader, stream Stream, cancel context.CancelFunc) (*Msg, error) {
 	out := &reply{
 		toolArgs: map[int]*strings.Builder{},
 		toolMeta: map[int]ToolCall{},
