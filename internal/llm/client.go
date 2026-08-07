@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	axon "github.com/atakang7/axon"
@@ -183,6 +184,13 @@ type reply struct {
 // readStream consumes the SSE body until the server closes it, applying an
 // idle timeout so a silent provider fails fast instead of hanging the turn.
 // cancel aborts the in-flight request when that happens.
+//
+// The read is synchronous because it is already interruptible: cancelling the
+// request context closes the response body, and a blocked sc.Scan returns with
+// an error the moment that happens. An earlier version pumped lines through a
+// buffered channel from a second goroutine to give the reader a deadline. That
+// bought nothing the transport does not already provide, and cost a goroutine,
+// a channel, a three-way select and a timer-drain dance per completion.
 func readStream(ctx context.Context, body io.Reader, stream Stream, cancel context.CancelFunc) (*Msg, error) {
 	out := &reply{
 		toolArgs: map[int]*strings.Builder{},
@@ -192,67 +200,32 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 
-	// Pump lines through a channel so the reader can be given a deadline;
-	// sc.Scan alone would block uninterruptibly on a silent connection.
-	type line struct {
-		text string
-		err  error
-	}
-	// Every send is guarded by ctx. When this function returns early — an idle
-	// timeout, or the user interrupting the turn — nothing drains the channel
-	// again, so an unguarded send would block this goroutine forever once the
-	// buffer filled, leaking a goroutine and its connection per cancelled
-	// stream. Interrupting mid-stream is routine in an agent, not an edge case.
-	lines := make(chan line, 32)
-	go func() {
-		defer close(lines)
-		send := func(l line) bool {
-			select {
-			case lines <- l:
-				return true
-			case <-ctx.Done():
-				return false
-			}
-		}
-		for sc.Scan() {
-			if !send(line{text: sc.Text()}) {
-				return
-			}
-		}
-		if err := sc.Err(); err != nil {
-			send(line{err: err})
-		}
-	}()
-
-	idle := time.NewTimer(idleTimeout)
+	// stalled distinguishes our own idle cancellation from the caller's: both
+	// surface as a closed body, and only one of them is the provider's fault.
+	var stalled atomic.Bool
+	idle := time.AfterFunc(idleTimeout, func() {
+		stalled.Store(true)
+		cancel()
+	})
 	defer idle.Stop()
 
-	for {
-		select {
-		case l, ok := <-lines:
-			if !ok {
-				return out.message(), nil
-			}
-			if l.err != nil {
-				return nil, l.err
-			}
-			if !idle.Stop() {
-				select {
-				case <-idle.C:
-				default:
-				}
-			}
-			idle.Reset(idleTimeout)
-			out.consume(l.text, stream)
-
-		case <-idle.C:
-			cancel()
-			return nil, fmt.Errorf("stream stalled: no data for %s (provider went silent mid-response)", idleTimeout)
-
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	for sc.Scan() {
+		idle.Reset(idleTimeout)
+		out.consume(sc.Text(), stream)
 	}
+
+	if stalled.Load() {
+		return nil, fmt.Errorf("stream stalled: no data for %s (provider went silent mid-response)", idleTimeout)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	// A cancelled turn can close the body cleanly enough that the scanner just
+	// ends. Report the cancellation rather than a truncated reply.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out.message(), nil
 }
 
 // consume applies one SSE line. Anything unparseable is skipped: a malformed
