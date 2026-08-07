@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,14 +17,11 @@ import (
 // EXEC — non-interactive shell command. LLM controls tail size.
 // ---------------------------------------------------------------------------
 
-const execDescription = `Run a shell command.
-  - run: arbitrary non-interactive command. tail_lines required.
-  - verify: auto-detected build/type-check (go build, tsc, cargo check, …).
+const execDescription = `Run a shell command. tail_lines is required.
 Set run_in_background=true for any command that *might* wait — servers, watchers, HTTP clients (curl/wget against any service, including ones you just started), database clients, anything reading stdin or a socket, anything connecting to a host you don't fully control. The rule is the chance of hanging, not the certainty: if you'd be surprised by either outcome, go background. Foreground is for commands you know terminate on their own (build, vet, test, format, file I/O, deterministic CPU work). Background returns a shell_id immediately; use bash_output to read logs and kill_shell to stop.
 Stdin is always /dev/null — interactive commands (prompts, REPLs, password reads) WILL hang. Use non-interactive flags (-y, --yes, --non-interactive) instead.`
 
 type execInput struct {
-	Mode            string `json:"mode"`
 	Command         string `json:"command"`
 	TailLines       int    `json:"tail_lines"`
 	ExpectedOutcome string `json:"expected_outcome"`
@@ -39,35 +35,15 @@ func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, lim config.Lim
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
 	}
-	if p.Mode == "" {
-		p.Mode = execRun
-	}
 	resolvedDir := ws.Dir()
 	if strings.TrimSpace(p.Dir) != "" {
 		resolvedDir = ws.ResolvePath(p.Dir)
 	}
-	switch p.Mode {
-	case execVerify:
-		cmd, err := detectVerifyCommand(resolvedDir)
-		if err != nil {
-			return nil, "", err
-		}
-		p.Command = cmd
-		if p.TailLines <= 0 {
-			p.TailLines = lim.ExecTailLines
-		}
-		if p.ExpectedOutcome == "" {
-			p.ExpectedOutcome = "no errors"
-		}
-	case execRun:
-		if strings.TrimSpace(p.Command) == "" {
-			return nil, "", fmt.Errorf("command is required for mode=run")
-		}
-		if !p.RunInBackground && p.TailLines <= 0 {
-			return nil, "", fmt.Errorf("tail_lines is required and must be > 0 for mode=run")
-		}
-	default:
-		return nil, "", fmt.Errorf("unknown mode %q: run | verify", p.Mode)
+	if strings.TrimSpace(p.Command) == "" {
+		return nil, "", fmt.Errorf("command is required")
+	}
+	if !p.RunInBackground && p.TailLines <= 0 {
+		return nil, "", fmt.Errorf("tail_lines is required and must be > 0")
 	}
 	if max := lim.ExecMaxTailLines; p.TailLines > max {
 		p.TailLines = max
@@ -78,30 +54,7 @@ func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, lim config.Lim
 	if max := int(lim.ExecMaxTimeout.Seconds()); p.TimeoutSeconds > max {
 		p.TimeoutSeconds = max
 	}
-	if p.RunInBackground && p.Mode == execVerify {
-		return nil, "", fmt.Errorf("run_in_background is not valid with mode=verify")
-	}
 	return &p, resolvedDir, nil
-}
-
-func detectVerifyCommand(dir string) (string, error) {
-	for _, marker := range []struct {
-		file string
-		cmd  string
-	}{
-		{"go.mod", "go build ./..."},
-		{"Cargo.toml", "cargo check"},
-		{"tsconfig.json", "tsc --noEmit"},
-		{"package.json", "npm run build --if-present"},
-		{"Makefile", "make"},
-		{"pyproject.toml", "python -m compileall -q ."},
-		{"setup.py", "python -m compileall -q ."},
-	} {
-		if _, err := os.Stat(filepath.Join(dir, marker.file)); err == nil {
-			return marker.cmd, nil
-		}
-	}
-	return "", fmt.Errorf("could not detect build/check command: no go.mod, Cargo.toml, tsconfig.json, package.json, or Makefile found in %s", dir)
 }
 
 func ExecTool(ws Workspace, shells *BackgroundShells, lim config.Limits) Tool {
@@ -109,14 +62,13 @@ func ExecTool(ws Workspace, shells *BackgroundShells, lim config.Limits) Tool {
 		Name:        toolExec,
 		Description: execDescription,
 		Schema: obj("object", props{
-			"mode":              enumSchema("run | verify. Optional; defaults to run.", execRun, execVerify),
-			"command":           strSchema("Shell command. Required for mode=run."),
-			"tail_lines":        intSchema("Last N lines to keep. Required for mode=run; defaults to 50 for mode=verify. Ignored when run_in_background=true."),
+			"command":           strSchema("Shell command."),
+			"tail_lines":        intSchema("Last N lines to keep. Required. Ignored when run_in_background=true."),
 			"expected_outcome":  strSchema("What success looks like. Optional but enables structured failure diagnosis."),
 			"dir":               strSchema("Optional working directory override."),
 			"timeout_seconds":   intSchema(fmt.Sprintf("Default %d. Ignored when run_in_background=true.", int(lim.ExecTimeout.Seconds()))),
 			"run_in_background": boolSchema("Spawn detached and return a shell_id immediately. Use for servers, watchers, anything long-running. Default false."),
-		}, []string{}),
+		}, []string{"command"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			p, resolvedDir, err := parseAndValidateExecInput(raw, ws, lim)
 			if err != nil {

@@ -21,15 +21,23 @@ package tools
 //      string on every call; it was dropped to cut per-call latency and token
 //      cost. The model's own reasoning trace is the audit log.
 //   4. `mode` is required on write and task (modes take different params and
-//      have no safe default). On read/exec/search, `mode` is optional with a
-//      sensible default (slice, run, literal) so the cheap common case is one
+//      have no safe default). On read and search, `mode` is optional with a
+//      sensible default (slice, literal) so the cheap common case is one
 //      argument away. Every mode stays reachable; defaults only set the
-//      default door.
-//   5. Tool descriptions teach the cost model in plain terms ("full read is ~10x
-//      skeleton", "tool-call loops resend full context"). Reality, not nagging.
-//   6. Output is structured and traceable. Search/trace returns a unified "bingo"
-//      view across files. Exec failures return diagnostics, not raw dumps.
-//   7. No mutation blocklist and no built-in approval prompt today. The LLM
+//      default door. exec has no mode: one door is not a choice.
+//   5. Tool descriptions teach the cost model in plain terms ("tool-call loops
+//      resend full context"). Reality, not nagging.
+//   6. No tool guesses at the language it is looking at. read/skeleton,
+//      search/trace and exec/verify each shipped a table of keywords, regexes
+//      or build-system markers, and each was silently wrong outside the two
+//      languages it was written against — skeleton returned one line for a
+//      Rust file with four functions and nothing at all for C, while claiming
+//      to be a 10x cost saving. A confident wrong answer is worse than no
+//      answer, and the model already knows what language it is reading: it can
+//      write a regex that fits, or run the build command it can see. The
+//      runtime supplies the primitives (read, search, exec), not the guesses.
+//   7. Output is structured. Exec failures return diagnostics, not raw dumps.
+//   8. No mutation blocklist and no built-in approval prompt today. The LLM
 //      decides what's destructive. Hard caps that DO exist: per-call exec
 //      timeout (capped by AXON_EXEC_MAX_TIMEOUT_SECONDS), tail-line cap
 //      (AXON_EXEC_MAX_TAIL_LINES), output byte caps on exec/search, full-read
@@ -37,7 +45,7 @@ package tools
 //      execution is bound to the turn context so Ctrl-C kills the running
 //      command's process group. A user-facing approval/sandbox layer is a
 //      future addition, not present in this build — do not assume it exists.
-//   8. Atomicity: all writes go through WriteFileAtomic (tmp + rename, mode
+//   9. Atomicity: all writes go through WriteFileAtomic (tmp + rename, mode
 //      preserved), so a write is byte-exact and /undo restores exactly what
 //      was there. The runtime does not format what it writes: bundling a
 //      dispatch table of twenty third-party formatter binaries was unbounded
@@ -101,23 +109,19 @@ const (
 	toolTask       = "task"
 )
 
-// Mode constants. Required on read/write/search; one door per call.
+// Mode constants. Required on write; optional with a default on read and
+// search. One door per call.
 const (
-	readSkeleton = "skeleton"
-	readSlice    = "slice"
-	readFull     = "full"
+	readSlice = "slice"
+	readFull  = "full"
 
 	writeSave       = "save"
 	writeReplaceStr = "replace_string"
 	writeReplaceLn  = "replace_lines"
 	writeInsertAt   = "insert_at_line"
 
-	execRun    = "run"
-	execVerify = "verify"
-
 	searchLiteral = "literal"
 	searchRegex   = "regex"
-	searchTrace   = "trace"
 )
 
 // Catalog lists the built-in tools for the system prompt. Terse on purpose:
@@ -129,12 +133,12 @@ const (
 // names and the blurbs cannot drift apart from the tools they describe.
 func Catalog() string {
 	rows := []struct{ name, blurb string }{
-		{toolRead, "Read files (skeleton / slice / full)."},
+		{toolRead, "Read files (slice / full) and list directories."},
 		{toolWrite, "Write files (create / overwrite / replace / insert)."},
-		{toolExec, "Execute commands (run / verify; set run_in_background=true for servers and watchers)."},
+		{toolExec, "Execute commands (set run_in_background=true for servers and watchers)."},
 		{toolBashOutput, "Read new output from a background shell (delta only)."},
 		{toolKillShell, "Stop a background shell. Always clean up servers you started."},
-		{toolSearch, "Search (literal / regex / trace)."},
+		{toolSearch, "Search file contents (literal / regex)."},
 		{toolTask, "Register a task objective."},
 	}
 	var b strings.Builder

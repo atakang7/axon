@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/atakang7/axon/internal/config"
@@ -18,10 +17,12 @@ import (
 // ---------------------------------------------------------------------------
 
 const readDescription = `Read one file, or list a directory.
-  - skeleton: signatures only. ~10x cheaper than full.
   - slice: lines [offset, offset+limit).
   - full: entire file.
-If path is a directory, returns its entries (subdirs marked with trailing '/'); mode is ignored.`
+If path is a directory, returns its entries (subdirs marked with trailing '/'); mode is ignored.
+To see only a file's signatures, search it with a regex for the declaration
+keywords of that language — you know which language it is, so you can write a
+pattern that actually fits it.`
 
 type readInput struct {
 	Path   string `json:"path"`
@@ -52,7 +53,7 @@ func ReadTool(ws Workspace, lim config.Limits) Tool {
 		Description: readDescription,
 		Schema: obj("object", props{
 			"path":   strSchema("Relative or absolute file path."),
-			"mode":   enumSchema("skeleton | slice | full. Optional; defaults to slice.", readSkeleton, readSlice, readFull),
+			"mode":   enumSchema("slice | full. Optional; defaults to slice.", readSlice, readFull),
 			"offset": intSchema("1-based start line. Used when mode=slice."),
 			"limit":  intSchema(fmt.Sprintf("Lines to return. Used when mode=slice. Default %d if omitted.", limit)),
 		}, []string{"path"}),
@@ -68,8 +69,6 @@ func ReadTool(ws Workspace, lim config.Limits) Tool {
 				return msg, nil
 			}
 			switch p.Mode {
-			case readSkeleton:
-				return readSkeletonMode(abs)
 			case readSlice:
 				if p.Offset < 1 {
 					p.Offset = 1
@@ -81,7 +80,7 @@ func ReadTool(ws Workspace, lim config.Limits) Tool {
 			case readFull:
 				return readFullMode(abs, lim.ReadMaxBytes)
 			default:
-				return "", fmt.Errorf("unknown mode %q: skeleton | slice | full", p.Mode)
+				return "", fmt.Errorf("unknown mode %q: slice | full", p.Mode)
 			}
 		},
 	}
@@ -144,15 +143,8 @@ func readFullMode(abs string, maxBytes int) (string, error) {
 		fmt.Fprintf(&b, "%d\t%s\n", i+1, line)
 	}
 	approx := len(data) / 4
-	header := fmt.Sprintf("[full read: ~%d tokens. consider mode=skeleton (~10x cheaper) or mode=slice if you need only part of this file]\n", approx)
+	header := fmt.Sprintf("[full read: ~%d tokens. use mode=slice if you need only part of this file]\n", approx)
 	return header + strings.TrimRight(b.String(), "\n"), nil
-}
-
-var skeletonPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`^\s*(package|import|from|using|namespace)\b`),
-	regexp.MustCompile(`^\s*(func|function|def|class|type|struct|interface|trait|enum|impl|module)\b`),
-	regexp.MustCompile(`^\s*(public|private|protected|static|export|async|const|let|var)\s+(function|class|def|fn|struct|type|interface|enum)\b`),
-	regexp.MustCompile(`^\s*(export\s+)?(default\s+)?(function|class|const|let|var|async)\b.*[({]`),
 }
 
 func readDirListing(abs string) (string, error) {
@@ -180,41 +172,4 @@ func readDirListing(abs string) (string, error) {
 		b.WriteString(f + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
-}
-
-func readSkeletonMode(abs string) (string, error) {
-	f, err := os.Open(abs)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	const skelLineCap = 4096
-	r := bufio.NewReader(f)
-	var out []string
-	line := 0
-	for {
-		line++
-		text, err := r.ReadString('\n')
-		eof := err != nil
-		if err != nil && err != io.EOF {
-			return "", err
-		}
-		text = strings.TrimRight(text, "\n")
-		if len(text) <= skelLineCap {
-			for _, re := range skeletonPatterns {
-				if re.MatchString(text) {
-					out = append(out, fmt.Sprintf("%d\t%s", line, text))
-					break
-				}
-			}
-		}
-		if eof {
-			break
-		}
-	}
-	if len(out) == 0 {
-		return "[skeleton found no signatures]", nil
-	}
-	return strings.Join(out, "\n"), nil
 }

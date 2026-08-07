@@ -86,9 +86,9 @@ internal/session/
 internal/tools/
   tools.go            Tool, Workspace, Plan, Catalog, schema helpers
   tools_helpers.go    WriteFileAtomic, formatters, binary refusal, output capping
-  tool_read.go        ReadTool (skeleton/slice/full)
+  tool_read.go        ReadTool (slice/full, directory listing)
   tool_write.go       WriteTool (save/replace_string/replace_lines/insert_at_line)
-  tool_search.go      SearchTool (literal/regex/trace)
+  tool_search.go      SearchTool (literal/regex)
   tool_exec.go        ExecTool, BashOutputTool, KillShellTool
   tool_task.go        TaskTool
   bg.go               BackgroundShells registry (servers, watchers)
@@ -260,6 +260,14 @@ go test ./...
 - **No MCP client yet.** Reserved as a tool kind, not implemented.
 - **No sandbox or per-tool permission prompt.** The model decides what is
   destructive; the embedder gates with `Interrupt` and `Undo`.
+- **No language heuristics in tools.** `read` had a `skeleton` mode, `search`
+  had `trace`, and `exec` had `verify`. Each carried a table of keywords,
+  regexes or build-system markers, and each was silently wrong outside the two
+  languages it was written against: `skeleton` returned one line for a Rust
+  file with four functions, and nothing at all for C, while its description
+  advertised a 10x saving. The runtime cannot know what language it is looking
+  at; the model already does, and can write a regex that fits or run the build
+  command it can see. The runtime ships the primitives, not the guesses.
 - **No `reason` field on tool calls.** Earlier builds required a justification
   string on every call. It was dropped: it cost latency and tokens on every
   call, and the model's own reasoning trace already serves as the audit log.
