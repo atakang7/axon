@@ -39,13 +39,20 @@ func main() {
 		},
 	}
 
-	ag, err := agent.New(agent.Config{
+	model, err := agent.OpenAI(agent.OpenAIConfig{
 		Provider: agent.Provider{
 			Name:    "openai",
 			Model:   "gpt-4o",
 			BaseURL: "https://api.openai.com",
 			APIKey:  os.Getenv("OPENAI_API_KEY"),
 		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ag, err := agent.New(agent.Config{
+		Model:        model,
 		SystemPrompt: "You are a deployment assistant. Use the deploy tool to ship services on request.",
 		Tools:        []agent.Tool{deploy},
 	})

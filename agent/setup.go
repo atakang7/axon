@@ -15,19 +15,12 @@ import (
 // New constructs an Agent. Built-in tools are always present; cfg.Tools
 // are appended.
 func New(cfg Config) (*Agent, error) {
-	if cfg.Provider.Name == "" && cfg.Provider.BaseURL == "" && cfg.Provider.Model == "" {
-		return nil, ErrNoProvider
+	if cfg.Model == nil {
+		return nil, ErrNoModel
 	}
 	if cfg.SystemPrompt == "" {
 		return nil, ErrNoSystemPrompt
 	}
-	client, err := NewClient(cfg.Provider)
-	if err != nil {
-		return nil, fmt.Errorf("agent: build client: %w", err)
-	}
-	client.MaxTokens = cfg.MaxTokens
-	client.ReasoningEffort = cfg.ReasoningEffort
-	client.ExcludeReasoning = cfg.ExcludeReasoning
 
 	sess := cfg.Session
 	if sess == nil {
@@ -67,7 +60,7 @@ func New(cfg Config) (*Agent, error) {
 	}
 
 	return &Agent{
-		client:       client,
+		model:        cfg.Model,
 		tools:        toolset,
 		session:      sess,
 		shells:       shells,

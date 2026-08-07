@@ -23,7 +23,7 @@ import (
 // retryable errors, executing a single tool call.
 
 type Agent struct {
-	client  *Client
+	model   Model
 	tools   []Tool
 	session *Session
 	pruner  *Pruner
@@ -87,20 +87,21 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			}
 		}
 		a.emit(ctx, Event{Kind: KindAPICall})
-		msg, err := a.client.ChatStream(ctx, a.session.ContextMessages(), toolSpecs(tools),
-			func(t string) {
-				a.emit(ctx, Event{Kind: KindToken, Text: t})
+		msg, err := a.model.Complete(ctx, Request{
+			Messages: a.session.ContextMessages(),
+			Tools:    toolSpecs(tools),
+			Stream: Stream{
+				Token: func(t string) {
+					a.emit(ctx, Event{Kind: KindToken, Text: t})
+				},
+				Reasoning: func(t string) {
+					a.emit(ctx, Event{Kind: KindReasoning, Text: t})
+				},
+				ToolArgs: func(name, delta string) {
+					a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
+				},
 			},
-			func(t string) {
-				a.emit(ctx, Event{Kind: KindReasoning, Text: t})
-			},
-			func(name, delta string) {
-				a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
-			},
-			nil,
-			func(phase string, duration time.Duration) {
-				// Phase callback for tracking API phases.
-			})
+		})
 		if err == nil {
 			if msg != nil && strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 {
 				lastErr = fmt.Errorf("empty response from model")

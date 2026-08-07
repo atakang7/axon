@@ -20,11 +20,16 @@ github.com/atakang7/bouton      ← terminal coding agent built on axon
 ```go
 import "github.com/atakang7/axon/agent"
 
-ag, err := agent.New(agent.Config{
+model, err := agent.OpenAI(agent.OpenAIConfig{
     Provider: agent.Provider{
         Name: "openai", Model: "gpt-4o", BaseURL: "https://api.openai.com",
         APIKey: os.Getenv("OPENAI_API_KEY"),
     },
+})
+if err != nil { return err }
+
+ag, err := agent.New(agent.Config{
+    Model:        model,
     SystemPrompt: "You are a coding assistant.",
 })
 if err != nil { return err }
@@ -54,7 +59,7 @@ deployTool := agent.Tool{
 }
 
 ag, _ := agent.New(agent.Config{
-    Provider:     myProvider,
+    Model:        myModel,
     SystemPrompt: "You are a deployment assistant.",
     Tools:        []agent.Tool{deployTool},
 })
@@ -108,6 +113,21 @@ ag.Session() *Session       // read live session state
 ag.SessionPath() string     // on-disk path of the session file
 ag.Close() error            // release background shells
 ```
+
+### Pluggable model
+
+`Config.Model` is an interface:
+
+```go
+type Model interface {
+    Complete(ctx context.Context, req Request) (*Msg, error)
+}
+```
+
+`agent.OpenAI(...)` returns the implementation that ships, for any
+OpenAI-compatible endpoint. Implement the interface yourself to reach a
+different provider, route through a gateway, or hand the loop a deterministic
+fake so it can be driven in tests with no network and no API key.
 
 ### Pluggable session storage
 

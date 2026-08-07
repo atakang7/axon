@@ -12,12 +12,61 @@ import (
 	"time"
 )
 
-// Msg is one entry in the conversation. Session.Messages is the immutable log.
-// Memory state is projection metadata set by the pruner:
+// Model is an LLM the runtime can talk to.
 //
-//   - Parked == true means ContextMessages emits a breadcrumb for this block,
-//     not the original content. The original lives in Session.ParkedBlocks
-//     under this Msg.ID.
+// This interface is the whole contract. Implement it to reach a provider that
+// is not OpenAI-compatible, to route through your own gateway, or to supply a
+// deterministic fake so the turn loop can be tested without a network. Client,
+// below, is simply the implementation that ships.
+type Model interface {
+	Complete(ctx context.Context, req Request) (*Msg, error)
+}
+
+// Request is one completion.
+type Request struct {
+	// Messages is the conversation as the model should see it.
+	Messages []Msg
+	// Tools the model may call. Empty means none.
+	Tools []ToolSpec
+	// MaxTokens caps this one reply. Zero means the model's own default.
+	// It is per-request because callers want different budgets: an agent turn
+	// may need thousands of tokens, while the pruner needs one line of JSON.
+	MaxTokens int
+	// Stream receives output as it arrives. The zero value discards it.
+	Stream Stream
+}
+
+// Stream receives incremental output during a completion. Every field is
+// optional; a nil func is simply not called.
+//
+// Reasoning is separate from Token because reasoning models emit a long
+// thinking block before any content, and a caller usually wants to render the
+// two differently. ToolArgs exists because some providers buffer tool-call
+// arguments to end-of-message rather than streaming them, so a UI that only
+// watches Token can look frozen during a perfectly healthy stream.
+type Stream struct {
+	Token     func(text string)
+	Reasoning func(text string)
+	ToolArgs  func(name, delta string)
+}
+
+// ToolSpec is a tool as the model sees it: a name, a description, and a JSON
+// schema. It deliberately has no implementation field.
+//
+// This type is the contract that keeps the model layer independent of the
+// execution layer. The agent package holds the richer Tool (schema plus the Go
+// function that runs it) and projects it down to ToolSpec at the call
+// boundary, so nothing here can reach a tool's behaviour — only its shape.
+type ToolSpec struct {
+	Name        string
+	Description string
+	Schema      map[string]any
+}
+
+// Msg is one entry in the conversation. Session.Messages is the immutable log.
+//
+// Parked == true means ContextMessages emits a one-line breadcrumb for this
+// block instead of its content. The content itself is never modified.
 type Msg struct {
 	Role        string     `json:"role"`
 	Content     string     `json:"content,omitempty"`
@@ -39,178 +88,199 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
-type Client struct {
-	http    *http.Client
-	baseURL string
-	p       Provider
+// ---------------------------------------------------------------------------
+// The OpenAI-compatible implementation
+// ---------------------------------------------------------------------------
 
-	// MaxTokens, when > 0, overrides the default per-request max_tokens cap.
-	// Used by the pruner to keep its output bounded — a chatty cheap model can
-	// otherwise emit thousands of tokens of "reasoning" before producing the
-	// structured output.
+// ClientConfig configures the shipped Model implementation.
+type ClientConfig struct {
+	// Provider is the endpoint, model name and credentials. Required.
+	Provider Provider
+
+	// MaxTokens is the default cap when a Request does not set its own.
+	// Zero uses defaultMaxTokens. Lower it for budget-sensitive providers
+	// that reject very large caps.
 	MaxTokens int
 
-	// ReasoningEffort, when set, is forwarded as OpenRouter/OpenAI-style
-	// reasoning.effort (for example "none", "minimal", "low"). This lets
-	// embedders run reasoning-capable models in fast tool-use mode.
+	// ReasoningEffort is forwarded as OpenRouter/OpenAI-style
+	// reasoning.effort ("none", "minimal", "low", …). Use "none" for fast
+	// tool-use runs on models that otherwise think too long before acting.
 	ReasoningEffort string
 
-	// ExcludeReasoning requests that providers omit reasoning tokens from the
-	// response stream when they support it.
+	// ExcludeReasoning asks the provider to omit reasoning tokens entirely.
 	ExcludeReasoning bool
 }
 
-func NewClient(p Provider) (*Client, error) {
-	url := strings.TrimRight(p.BaseURL, "/")
+const defaultMaxTokens = 20000
+
+// Client is an OpenAI-compatible streaming Model. It is safe for concurrent
+// use: every request carries its own state, and nothing here is mutated after
+// construction.
+type Client struct {
+	http    *http.Client
+	baseURL string
+	cfg     ClientConfig
+}
+
+// NewClient builds a Model for any OpenAI-compatible endpoint.
+func NewClient(cfg ClientConfig) (*Client, error) {
+	url := strings.TrimRight(cfg.Provider.BaseURL, "/")
 	if url == "" {
-		return nil, fmt.Errorf("provider %q has no base_url", p.Name)
+		return nil, fmt.Errorf("provider %q has no base_url", cfg.Provider.Name)
 	}
 	if !strings.HasSuffix(url, "/v1") {
 		url += "/v1"
 	}
-	return &Client{http: &http.Client{Timeout: 30 * time.Minute}, baseURL: url, p: p}, nil
+	return &Client{
+		http:    &http.Client{Timeout: 30 * time.Minute},
+		baseURL: url,
+		cfg:     cfg,
+	}, nil
 }
 
-// ToolSpec is a tool as the model sees it: a name, a description, and a JSON
-// schema. It deliberately has no implementation field.
-//
-// This type is the contract that keeps the model layer independent of the
-// execution layer. The agent package holds the richer Tool (schema plus the
-// Go function that runs it) and projects it down to ToolSpec at the call
-// boundary, so nothing here can reach a tool's behaviour — only its shape.
-type ToolSpec struct {
-	Name        string
-	Description string
-	Schema      map[string]any
+// Model reports which model this client talks to. Useful for logging and for
+// the session header.
+func (c *Client) Model() string { return c.cfg.Provider.Model }
+
+// idleTimeout bounds silence mid-stream. Without it a provider that stops
+// sending without closing the connection would hold the turn until the HTTP
+// client's own 30-minute timeout.
+const idleTimeout = 20 * time.Second
+
+// Complete sends one request and assembles the reply, invoking req.Stream as
+// output arrives.
+func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
+	body, err := c.requestBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	// Without Accept: text/event-stream, some OpenAI-compatible routers
+	// (OpenRouter in particular) buffer the whole SSE response server-side and
+	// flush it as one chunk, making `stream: true` behave like a non-streaming
+	// call. Setting it forces true incremental delivery.
+	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Cache-Control", "no-cache")
+	if key := c.cfg.Provider.APIKey; key != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		// Include the first line of the body: a bare status tells you nothing
+		// about which of a dozen things the provider objected to.
+		s := bufio.NewScanner(resp.Body)
+		s.Scan()
+		return nil, fmt.Errorf("API error %s: %s", resp.Status, s.Text())
+	}
+	return readStream(ctx, resp.Body, req.Stream, cancel)
 }
 
-func (c *Client) Chat(ctx context.Context, msgs []Msg, tools []ToolSpec, onToken func(string), onPhase func(string, time.Duration)) (*Msg, error) {
-	return c.ChatStream(ctx, msgs, tools, onToken, nil, nil, nil, onPhase)
-}
+func (c *Client) requestBody(req Request) ([]byte, error) {
+	tools := make([]map[string]any, len(req.Tools))
+	for i, t := range req.Tools {
+		tools[i] = map[string]any{"type": "function", "function": map[string]any{
+			"name": t.Name, "description": t.Description, "parameters": t.Schema,
+		}}
+	}
 
-// ChatStream is Chat with separate callbacks for reasoning tokens, tool-call
-// argument deltas, and a per-second heartbeat. DeepSeek and other reasoning
-// models stream a long reasoning block before any content arrives, and some
-// providers buffer tool_calls.function.arguments to end-of-message instead of
-// streaming them — meaning a "frozen" screen is sometimes a healthy stream
-// with no deltas yet. The heartbeat fires every second after first-byte so
-// the UI can show "alive, waiting Ns" instead of looking dead.
-func (c *Client) ChatStream(ctx context.Context, msgs []Msg, tools []ToolSpec, onToken, onReasoning func(string), onToolArg func(name, delta string), onHeartbeat func(elapsed time.Duration), onPhase func(string, time.Duration)) (*Msg, error) {
-	t0 := time.Now()
-	emit := func(name string, since time.Time) {
-		if onPhase != nil {
-			onPhase(name, time.Since(since))
-		}
+	maxTokens := req.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = c.cfg.MaxTokens
 	}
-	td := make([]map[string]any, len(tools))
-	for i, t := range tools {
-		td[i] = map[string]any{"type": "function", "function": map[string]any{"name": t.Name, "description": t.Description, "parameters": t.Schema}}
+	if maxTokens == 0 {
+		maxTokens = defaultMaxTokens
 	}
-	maxTokens := 20000
-	if c.MaxTokens > 0 {
-		maxTokens = c.MaxTokens
-	}
+
 	body := map[string]any{
-		"model": c.p.Model, "messages": msgs, "tools": td,
-		"stream": true, "parallel_tool_calls": true, "max_tokens": maxTokens,
+		"model":               c.cfg.Provider.Model,
+		"messages":            req.Messages,
+		"tools":               tools,
+		"stream":              true,
+		"parallel_tool_calls": true,
+		"max_tokens":          maxTokens,
 	}
-	if c.ReasoningEffort != "" || c.ExcludeReasoning {
+	if c.cfg.ReasoningEffort != "" || c.cfg.ExcludeReasoning {
 		reasoning := map[string]any{}
-		if c.ReasoningEffort != "" {
-			reasoning["effort"] = c.ReasoningEffort
+		if c.cfg.ReasoningEffort != "" {
+			reasoning["effort"] = c.cfg.ReasoningEffort
 		}
-		if c.ExcludeReasoning {
+		if c.cfg.ExcludeReasoning {
 			reasoning["exclude"] = true
 			body["include_reasoning"] = false // legacy OpenRouter compatibility
 		}
 		body["reasoning"] = reasoning
 	}
-	if len(c.p.Extra) > 0 {
-		body["provider"] = c.p.Extra
+	if len(c.cfg.Provider.Extra) > 0 {
+		body["provider"] = c.cfg.Provider.Extra
 	}
-	raw, _ := json.Marshal(body)
-	emit("body-marshal", t0)
-	tReq := time.Now()
-	reqCtx, cancelReq := context.WithCancel(ctx)
-	defer cancelReq()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	// Without Accept: text/event-stream, some OpenAI-compatible routers
-	// (OpenRouter in particular) buffer the entire SSE response server-side
-	// and flush it as one chunk — making `stream: true` behave like a
-	// non-streaming call. Setting it forces true incremental delivery.
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	if c.p.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.p.APIKey)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	emit("http-headers", tReq)
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		s := bufio.NewScanner(resp.Body)
-		s.Scan()
-		return nil, fmt.Errorf("API error %s: %s", resp.Status, s.Text())
-	}
-	st := &streamState{
-		content:  &strings.Builder{},
+	return json.Marshal(body)
+}
+
+// ---------------------------------------------------------------------------
+// SSE
+// ---------------------------------------------------------------------------
+
+// reply accumulates a streamed response. Tool calls arrive as fragments keyed
+// by index and are assembled at the end.
+type reply struct {
+	content  strings.Builder
+	toolArgs map[int]*strings.Builder
+	toolMeta map[int]ToolCall
+}
+
+// readStream consumes the SSE body until the server closes it, applying an
+// idle timeout so a silent provider fails fast instead of hanging the turn.
+// cancel aborts the in-flight request when that happens.
+func readStream(ctx context.Context, body interface{ Read([]byte) (int, error) }, stream Stream, cancel context.CancelFunc) (*Msg, error) {
+	out := &reply{
 		toolArgs: map[int]*strings.Builder{},
 		toolMeta: map[int]ToolCall{},
 	}
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	tStream := time.Now()
 
-	// Pump SSE lines into a channel so the consumer can apply an idle-read
-	// timeout. Without this, a silent upstream (no [DONE], no close) would
-	// block sc.Scan() until http.Client.Timeout (30 minutes).
-	type lineMsg struct {
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+
+	// Pump lines through a channel so the reader can be given a deadline;
+	// sc.Scan alone would block uninterruptibly on a silent connection.
+	type line struct {
 		text string
 		err  error
 	}
-	lines := make(chan lineMsg, 32)
+	lines := make(chan line, 32)
 	go func() {
 		defer close(lines)
 		for sc.Scan() {
-			lines <- lineMsg{text: sc.Text()}
+			lines <- line{text: sc.Text()}
 		}
 		if err := sc.Err(); err != nil {
-			lines <- lineMsg{err: err}
+			lines <- line{err: err}
 		}
 	}()
 
-	const idleTimeout = 20 * time.Second
 	idle := time.NewTimer(idleTimeout)
 	defer idle.Stop()
 
-	// Heartbeat: while the stream is open but bytes are sparse, tick every
-	// second so the UI can show "stream alive, waiting…" instead of looking
-	// frozen. Stops once anything starts arriving fast enough on its own.
-	heartbeat := time.NewTicker(1 * time.Second)
-	defer heartbeat.Stop()
-
-streamLoop:
 	for {
-		var lm lineMsg
-		var ok bool
 		select {
-		case <-heartbeat.C:
-			if onHeartbeat != nil && st.gotFirstByte {
-				onHeartbeat(time.Since(tStream))
-			}
-			continue
-		case lm, ok = <-lines:
+		case l, ok := <-lines:
 			if !ok {
-				break streamLoop
+				return out.message(), nil
 			}
-			if lm.err != nil {
-				return nil, lm.err
+			if l.err != nil {
+				return nil, l.err
 			}
 			if !idle.Stop() {
 				select {
@@ -219,62 +289,23 @@ streamLoop:
 				}
 			}
 			idle.Reset(idleTimeout)
+			out.consume(l.text, stream)
+
 		case <-idle.C:
-			cancelReq()
+			cancel()
 			return nil, fmt.Errorf("stream stalled: no data for %s (provider went silent mid-response)", idleTimeout)
+
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		if !st.gotFirstByte {
-			st.gotFirstByte = true
-			emit("first-byte", tStream)
-		}
-		processSSEChunk(lm.text, st, tStream, emit, onReasoning, onToken, onToolArg)
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	emit("stream-end", tStream)
-	emit("total", t0)
-	if onPhase != nil {
-		onPhase(fmt.Sprintf("bytes reasoning=%d content=%d toolargs=%d", st.reasoningBytes, st.contentBytes, st.toolArgBytes), 0)
-	}
-	if len(st.toolMeta) > 0 {
-		indices := make([]int, 0, len(st.toolMeta))
-		for i := range st.toolMeta {
-			indices = append(indices, i)
-		}
-		sort.Ints(indices)
-		calls := make([]ToolCall, 0, len(st.toolMeta))
-		for _, i := range indices {
-			tc := st.toolMeta[i]
-			tc.Function.Arguments = st.toolArgs[i].String()
-			if tc.Function.Arguments == "" {
-				tc.Function.Arguments = "{}"
-			}
-			calls = append(calls, tc)
-		}
-		return &Msg{Role: "assistant", Content: st.content.String(), ToolCalls: calls}, nil
-	}
-	return &Msg{Role: "assistant", Content: st.content.String()}, nil
 }
 
-type streamState struct {
-	gotFirstByte      bool
-	gotFirstReasoning bool
-	gotFirstContent   bool
-	gotFirstTool      bool
-	reasoningBytes    int
-	contentBytes      int
-	toolArgBytes      int
-	content           *strings.Builder
-	toolArgs          map[int]*strings.Builder
-	toolMeta          map[int]ToolCall
-}
-
-func processSSEChunk(text string, st *streamState, tStream time.Time, emit func(string, time.Time), onReasoning, onToken func(string), onToolArg func(string, string)) {
-	line := strings.TrimPrefix(text, "data: ")
-	if line == "" || line == "[DONE]" {
+// consume applies one SSE line. Anything unparseable is skipped: a malformed
+// keep-alive or comment must not abort an otherwise healthy stream.
+func (r *reply) consume(text string, stream Stream) {
+	data := strings.TrimPrefix(text, "data: ")
+	if data == "" || data == "[DONE]" {
 		return
 	}
 	var chunk struct {
@@ -294,46 +325,56 @@ func processSSEChunk(text string, st *streamState, tStream time.Time, emit func(
 			} `json:"delta"`
 		} `json:"choices"`
 	}
-	if json.Unmarshal([]byte(line), &chunk) != nil || len(chunk.Choices) == 0 {
+	if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Choices) == 0 {
 		return
 	}
-	d := chunk.Choices[0].Delta
-	if d.ReasoningContent != "" {
-		if !st.gotFirstReasoning {
-			st.gotFirstReasoning = true
-			emit("first-reasoning", tStream)
-		}
-		st.reasoningBytes += len(d.ReasoningContent)
-		if onReasoning != nil {
-			onReasoning(d.ReasoningContent)
+	delta := chunk.Choices[0].Delta
+
+	if delta.ReasoningContent != "" && stream.Reasoning != nil {
+		stream.Reasoning(delta.ReasoningContent)
+	}
+	if delta.Content != "" {
+		r.content.WriteString(delta.Content)
+		if stream.Token != nil {
+			stream.Token(delta.Content)
 		}
 	}
-	if d.Content != "" {
-		if !st.gotFirstContent {
-			st.gotFirstContent = true
-			emit("first-content", tStream)
+	for _, tc := range delta.ToolCalls {
+		if _, seen := r.toolMeta[tc.Index]; !seen {
+			meta := ToolCall{ID: tc.ID, Type: tc.Type}
+			meta.Function.Name = tc.Function.Name
+			r.toolMeta[tc.Index] = meta
+			r.toolArgs[tc.Index] = &strings.Builder{}
 		}
-		st.contentBytes += len(d.Content)
-		st.content.WriteString(d.Content)
-		if onToken != nil {
-			onToken(d.Content)
-		}
-	}
-	for _, tc := range d.ToolCalls {
-		if !st.gotFirstTool {
-			st.gotFirstTool = true
-			emit("first-toolcall", tStream)
-		}
-		st.toolArgBytes += len(tc.Function.Arguments)
-		if _, ok := st.toolMeta[tc.Index]; !ok {
-			m := ToolCall{ID: tc.ID, Type: tc.Type}
-			m.Function.Name = tc.Function.Name
-			st.toolMeta[tc.Index] = m
-			st.toolArgs[tc.Index] = &strings.Builder{}
-		}
-		st.toolArgs[tc.Index].WriteString(tc.Function.Arguments)
-		if onToolArg != nil && tc.Function.Arguments != "" {
-			onToolArg(st.toolMeta[tc.Index].Function.Name, tc.Function.Arguments)
+		r.toolArgs[tc.Index].WriteString(tc.Function.Arguments)
+		if stream.ToolArgs != nil && tc.Function.Arguments != "" {
+			stream.ToolArgs(r.toolMeta[tc.Index].Function.Name, tc.Function.Arguments)
 		}
 	}
+}
+
+// message assembles the finished assistant message, ordering tool calls by the
+// index the provider gave them so the sequence is stable.
+func (r *reply) message() *Msg {
+	if len(r.toolMeta) == 0 {
+		return &Msg{Role: "assistant", Content: r.content.String()}
+	}
+	indices := make([]int, 0, len(r.toolMeta))
+	for i := range r.toolMeta {
+		indices = append(indices, i)
+	}
+	sort.Ints(indices)
+
+	calls := make([]ToolCall, 0, len(indices))
+	for _, i := range indices {
+		tc := r.toolMeta[i]
+		tc.Function.Arguments = r.toolArgs[i].String()
+		if tc.Function.Arguments == "" {
+			// A tool called with no arguments still needs valid JSON, or the
+			// provider rejects the follow-up request.
+			tc.Function.Arguments = "{}"
+		}
+		calls = append(calls, tc)
+	}
+	return &Msg{Role: "assistant", Content: r.content.String(), ToolCalls: calls}
 }

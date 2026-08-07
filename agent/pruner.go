@@ -30,7 +30,7 @@ import (
 // the policy for when to fire. It owns its own bookkeeping — the agent holds
 // no pruning state.
 type Pruner struct {
-	client *Client
+	model Model
 
 	// lastFire is the projected context size at the previous successful pass,
 	// zero if it has never run.
@@ -44,17 +44,25 @@ const (
 	pruneGrowth = 5000
 )
 
-// NewPruner wraps a client. Pass nil to disable pruning; every method is safe
-// on a nil *Pruner, so the caller needs no special case.
-func NewPruner(c *Client) *Pruner {
-	if c == nil {
+// NewPruner wraps a model — typically a cheap, fast, long-context one. Pass
+// nil to disable pruning; every method is safe on a nil *Pruner, so the caller
+// needs no special case.
+//
+// The model may be shared with the agent. The output cap lives on the request,
+// not on the model, so the pruner cannot narrow anyone else's budget. An
+// earlier version set MaxTokens on the client it was handed, which would have
+// silently capped a shared model at 256 tokens.
+func NewPruner(m Model) *Pruner {
+	if m == nil {
 		return nil
 	}
-	// Hard cap on emission: the answer is one line of JSON. A chatty model
-	// that wants to think out loud hits the wall instead of burning tokens.
-	c.MaxTokens = 256
-	return &Pruner{client: c}
+	return &Pruner{model: m}
 }
+
+// prunerMaxTokens caps the curator's reply. The answer is one line of JSON; a
+// chatty model that wants to think out loud hits this wall instead of burning
+// tokens on prose nobody reads.
+const prunerMaxTokens = 256
 
 // ContextTokens estimates what the next request will cost. Character count
 // over four is plenty for a threshold decision; provider-accurate counting
@@ -101,10 +109,13 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (before, after int, err 
 	callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	reply, err := p.client.Chat(callCtx, []Msg{
-		{Role: "system", Content: prunerSystemPrompt},
-		{Role: "user", Content: prunerRequest(s)},
-	}, nil, nil, nil)
+	reply, err := p.model.Complete(callCtx, Request{
+		Messages: []Msg{
+			{Role: "system", Content: prunerSystemPrompt},
+			{Role: "user", Content: prunerRequest(s)},
+		},
+		MaxTokens: prunerMaxTokens,
+	})
 	if err != nil {
 		return before, before, fmt.Errorf("pruner: %w", err)
 	}

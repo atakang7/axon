@@ -27,7 +27,7 @@ states its own boundary rule in its package comment.
 | Layer | Package | Owns | May import |
 |---|---|---|---|
 | 0 | `internal/config` | XDG/`AXON_*` paths, `Limits` | nothing |
-| 1 | `internal/llm` | `Provider`, `Msg`, `ToolCall`, `ToolSpec`, streaming `Client` | config |
+| 1 | `internal/llm` | `Model` port, `Provider`, `Msg`, `ToolCall`, `ToolSpec`, OpenAI `Client` | config |
 | 2 | `internal/session` | append-only log, cwd, edit history, task plan | config, llm |
 | 3 | `internal/tools` | the seven built-in tools, background shells | config, llm, session |
 | 4 | `agent` | `Agent`, the turn loop, events, prompt, pruner | all of the above |
@@ -71,7 +71,7 @@ internal/config/
 
 internal/llm/
   provider.go         Provider, LoadProviders, ResolveProvider
-  client.go           Msg, ToolCall, ToolSpec, OpenAI-compatible streaming Client
+  client.go           Model, Request, Stream, Msg, ToolCall, ToolSpec; OpenAI Client
 
 internal/session/
   session.go          Session, append-only log, edit history, undo, task plan
@@ -103,7 +103,7 @@ append user msg ─► session.Save
 prune? ──► Pruner.Prune (parks old blocks)
    │
    ▼
-chat() ──► Client.ChatStream(toolSpecs(tools))
+chat() ──► Model.Complete(Request{toolSpecs(tools), Stream{...}})
    │           │       │      │
    │       tokens   reasoning  tool-arg deltas
    │           └──► Config.OnEvent(ctx, Event{...})
@@ -141,19 +141,23 @@ func (a *Agent) Session() *Session
 func (a *Agent) SessionPath() string
 func (a *Agent) Close() error
 
-// Config — Provider and SystemPrompt are required; the rest default to zero.
+// Config — Model and SystemPrompt are required; the rest default to zero.
 type Config struct {
-    Provider         Provider
-    SystemPrompt     string
-    Tools            []Tool
-    Pruner           *Pruner
-    MaxTokens        int
-    ReasoningEffort  string
-    ExcludeReasoning bool
-    Cwd              string
-    Session          *Session
-    OnEvent          func(ctx, Event)
+    Model        Model     // agent.OpenAI(...), or your own implementation
+    SystemPrompt string
+    Tools        []Tool
+    Pruner       *Pruner
+    Cwd          string
+    Session      *Session
+    OnEvent      func(ctx, Event)
 }
+
+// The model is an interface, so the turn loop can be driven with no network.
+type Model interface {
+    Complete(ctx context.Context, req Request) (*Msg, error)
+}
+
+func OpenAI(OpenAIConfig) (Model, error)  // the implementation that ships
 
 // Tools — the extension surface
 type Tool struct {
@@ -198,6 +202,8 @@ var (
   (tmp + rename). Formatters run after, never during, so `Undo` is byte-exact.
 - **The runtime never writes to stdout.** All observability goes through
   `Config.OnEvent`.
+- **The model is a port, not a dependency.** `Config.Model` is an interface, so
+  the entire turn loop runs against a scripted fake with no network.
 
 ## Extending
 
@@ -222,6 +228,9 @@ and never touch the network. The sharp edges are covered deliberately:
   prompt is unremovable, and `Reset` keeps a session where the embedder put it.
 - `internal/tools` — registry independence, the `bash_output` delta contract,
   process-group kills, injected limits, and binary refusal.
+- `agent` — the turn loop against a scripted `Model`: tools run until the model
+  stops asking, results are fed back into the next request, only schemas cross
+  to the model, and events bracket the turn. Plus the layering rule itself.
 
 ```
 go test ./...

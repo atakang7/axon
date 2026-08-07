@@ -51,8 +51,17 @@ type (
 	Msg = llm.Msg
 	// ToolCall is a model's request to invoke one tool.
 	ToolCall = llm.ToolCall
-	// Client is the OpenAI-compatible streaming chat client.
+	// Model is the LLM the agent talks to. Implement it to reach a
+	// non-OpenAI provider, or to supply a deterministic fake in tests.
+	Model = llm.Model
+	// Request is one completion: messages, tools, cap, stream sinks.
+	Request = llm.Request
+	// Stream receives incremental output during a completion.
+	Stream = llm.Stream
+	// Client is the shipped OpenAI-compatible Model implementation.
 	Client = llm.Client
+	// OpenAIConfig configures that implementation.
+	OpenAIConfig = llm.ClientConfig
 	// ToolSpec is a tool as the model sees it — name, description, schema,
 	// no implementation. Client methods take these; use toolSpecs to project
 	// a []Tool down to them.
@@ -90,8 +99,9 @@ func LoadOrCreateSession() *Session { return session.LoadOrCreateSession() }
 // configured and no LLM_PROVIDER selector was given — prompt the user.
 var ErrAmbiguousProvider = llm.ErrAmbiguousProvider
 
-// NewClient builds a chat client for the given provider.
-func NewClient(p Provider) (*Client, error) { return llm.NewClient(p) }
+// OpenAI builds a Model for any OpenAI-compatible endpoint. This is the
+// implementation that ships; Config.Model accepts any other.
+func OpenAI(cfg OpenAIConfig) (Model, error) { return llm.NewClient(cfg) }
 
 // LoadProviders reads providers.json. A missing file is not an error.
 func LoadProviders() (map[string]Provider, error) { return llm.LoadProviders() }
@@ -116,7 +126,7 @@ func toolSpecs(tools []Tool) []llm.ToolSpec {
 // Sentinel errors. Wrap with %w when returning from internals; check
 // with errors.Is at the boundary.
 var (
-	ErrNoProvider     = errors.New("agent: no provider configured")
+	ErrNoModel        = errors.New("agent: Config.Model is required")
 	ErrNoSystemPrompt = errors.New("agent: Config.SystemPrompt is required")
 	ErrToolNotFound   = errors.New("agent: tool not found")
 	ErrDuplicateTool  = errors.New("agent: duplicate tool name")
@@ -126,8 +136,13 @@ var (
 // Config is the contract for constructing an Agent. Provider and
 // SystemPrompt are required; every other field has a zero-value default.
 type Config struct {
-	// Provider selects the LLM endpoint. Required.
-	Provider Provider
+	// Model is the LLM this agent talks to. Required.
+	//
+	//	m, err := agent.OpenAI(agent.OpenAIConfig{Provider: p})
+	//
+	// Any implementation of the interface works, so an embedder can route
+	// through its own gateway, or pass a fake and drive the loop offline.
+	Model Model
 
 	// SystemPrompt is the agent's role text — the entire "who am I"
 	// answer the runtime sends to the model. Required. The runtime
@@ -141,22 +156,9 @@ type Config struct {
 	// bash_output, kill_shell).
 	Tools []Tool
 
-	// Pruner, when non-nil, lets the runtime drop or park old messages
-	// when context grows. nil disables pruning.
+	// Pruner, when non-nil, parks old messages as the context grows.
+	// nil disables pruning.
 	Pruner *Pruner
-
-	// MaxTokens, when > 0, overrides the default per-request max_tokens cap.
-	// Leave zero to use the runtime default. Embedders can lower this for
-	// budget-sensitive providers that reject very large caps.
-	MaxTokens int
-
-	// ReasoningEffort forwards an OpenRouter/OpenAI-style reasoning effort to
-	// providers that support it. Use "none" for fast tool-use runs on models
-	// that otherwise spend too long thinking before tool calls.
-	ReasoningEffort string
-
-	// ExcludeReasoning asks providers to omit reasoning tokens from responses.
-	ExcludeReasoning bool
 
 	// Cwd is the working directory the agent operates against. Empty
 	// means the current process cwd at New() time.
