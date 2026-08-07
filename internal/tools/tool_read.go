@@ -45,8 +45,8 @@ func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, s
 	return &p, abs, nil
 }
 
-func ReadTool(ws Workspace) Tool {
-	limit := config.ReadLines()
+func ReadTool(ws Workspace, lim config.Limits) Tool {
+	limit := lim.ReadLines
 	return Tool{
 		Name:        toolRead,
 		Description: readDescription,
@@ -79,7 +79,7 @@ func ReadTool(ws Workspace) Tool {
 				}
 				return readSliceMode(abs, p.Offset, p.Limit)
 			case readFull:
-				return readFullMode(abs)
+				return readFullMode(abs, lim.ReadMaxBytes)
 			default:
 				return "", fmt.Errorf("unknown mode %q: skeleton | slice | full", p.Mode)
 			}
@@ -125,12 +125,12 @@ func readSliceMode(abs string, offset, limit int) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
-func readFullMode(abs string) (string, error) {
+func readFullMode(abs string, maxBytes int) (string, error) {
 	fi, err := os.Stat(abs)
 	if err != nil {
 		return "", err
 	}
-	max := int64(config.ReadMaxBytes())
+	max := int64(maxBytes)
 	if fi.Size() > max {
 		return fmt.Sprintf("[full read refused: %s is %d bytes (>%d cap). Use mode=slice to page through, or raise AXON_READ_MAX_BYTES.]", abs, fi.Size(), max), nil
 	}

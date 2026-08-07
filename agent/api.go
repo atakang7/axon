@@ -11,10 +11,18 @@ import (
 
 // api.go — public library API.
 //
-// The surface a Go program imports to embed axon. The reference CLI in
-// cmd/axon is one consumer of this API; HTTP servers, orchestrators,
-// and test harnesses are others. The runtime makes no assumptions about
-// who is calling — no flags, no signals, no terminal, no os.Exit.
+// The surface a Go program imports to embed axon. The terminal coding agent
+// bouton is one consumer of this API; HTTP servers, orchestrators, and test
+// harnesses are others. The runtime makes no assumptions about who is
+// calling — no flags, no signals, no terminal, no os.Exit.
+//
+// Everything below the surface lives under internal/: config, llm, session
+// and tools. They are unreachable from outside this module, which is what
+// makes them free to change. The layering is strict and one-directional:
+//
+//	config  <- llm  <- session  <- tools  <- agent
+//
+// A package may import anything to its left and nothing to its right.
 //
 // Construction:  New(Config) (*Agent, error)
 // Drive loop:    (*Agent).Run(ctx, InputFunc) error

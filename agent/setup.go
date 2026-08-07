@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 
+	"github.com/atakang7/axon/internal/config"
 	"github.com/atakang7/axon/internal/tools"
 )
 
@@ -43,7 +44,12 @@ func New(cfg Config) (*Agent, error) {
 	// process shared shells and either one's Close killed the other's servers.
 	shells := tools.NewBackgroundShells()
 
-	toolset := builtinTools(sess, shells)
+	// Caps are resolved once, here, and travel with the agent. No tool reads
+	// the environment at call depth, so two agents in one process can be tuned
+	// independently and a test can vary a cap without touching os.Environ.
+	limits := config.LoadLimits()
+
+	toolset := builtinTools(sess, shells, limits)
 	seen := map[string]bool{}
 	for _, t := range toolset {
 		seen[t.Name] = true
@@ -65,6 +71,7 @@ func New(cfg Config) (*Agent, error) {
 		tools:        toolset,
 		session:      sess,
 		shells:       shells,
+		limits:       limits,
 		pruner:       cfg.Pruner,
 		onEvent:      cfg.OnEvent,
 		systemPrompt: cfg.SystemPrompt,
@@ -74,16 +81,17 @@ func New(cfg Config) (*Agent, error) {
 
 // builtinTools binds the built-in tool set to this agent's capabilities. Each
 // tool receives only what it needs: a Workspace for the filesystem tools, the
-// shell registry for the process tools, a Plan for the task tool. None of them
-// gets the Session itself.
-func builtinTools(ws *Session, shells *tools.BackgroundShells) []Tool {
+// shell registry for the process tools, a Plan for the task tool, and the caps
+// it must obey. None of them gets the Session itself, and none of them reads
+// the environment — this is the single place those decisions are made.
+func builtinTools(ws *Session, shells *tools.BackgroundShells, lim config.Limits) []Tool {
 	return []Tool{
-		tools.ReadTool(ws),
+		tools.ReadTool(ws, lim),
 		tools.WriteTool(ws),
-		tools.ExecTool(ws, shells),
-		tools.BashOutputTool(shells),
+		tools.ExecTool(ws, shells, lim),
+		tools.BashOutputTool(shells, lim),
 		tools.KillShellTool(shells),
-		tools.SearchTool(ws),
+		tools.SearchTool(ws, lim),
 		tools.TaskTool(ws),
 	}
 }
@@ -94,7 +102,7 @@ func (a *Agent) Reset() {
 	a.shells.KillAll()
 	a.session.Reset()
 	a.initSessionMessages()
-	a.tools = append(builtinTools(a.session, a.shells), a.customTools...)
+	a.tools = append(builtinTools(a.session, a.shells, a.limits), a.customTools...)
 }
 
 // Undo reverts the last recorded edit (atomic file write). Returns the

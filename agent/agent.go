@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/atakang7/axon/internal/config"
 	"github.com/atakang7/axon/internal/tools"
 )
 
@@ -52,6 +53,11 @@ type Agent struct {
 	// than package-global so two agents in one process cannot terminate each
 	// other's servers on Close or Reset.
 	shells *tools.BackgroundShells
+
+	// limits are the tool caps resolved once at construction. Held here so
+	// Reset can rebind the built-ins without re-reading the environment, and
+	// so two agents in one process can be tuned independently.
+	limits config.Limits
 }
 
 // Interrupt cancels the in-flight chat if there is one, returning true.

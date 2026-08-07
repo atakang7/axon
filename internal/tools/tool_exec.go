@@ -34,7 +34,7 @@ type execInput struct {
 	RunInBackground bool   `json:"run_in_background"`
 }
 
-func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, defaultTimeout int) (*execInput, string, error) {
+func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, lim config.Limits) (*execInput, string, error) {
 	var p execInput
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
@@ -54,7 +54,7 @@ func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, defaultTimeout
 		}
 		p.Command = cmd
 		if p.TailLines <= 0 {
-			p.TailLines = config.ExecTailLines()
+			p.TailLines = lim.ExecTailLines
 		}
 		if p.ExpectedOutcome == "" {
 			p.ExpectedOutcome = "no errors"
@@ -69,13 +69,13 @@ func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, defaultTimeout
 	default:
 		return nil, "", fmt.Errorf("unknown mode %q: run | verify", p.Mode)
 	}
-	if max := config.ExecMaxTailLines(); p.TailLines > max {
+	if max := lim.ExecMaxTailLines; p.TailLines > max {
 		p.TailLines = max
 	}
 	if p.TimeoutSeconds <= 0 {
-		p.TimeoutSeconds = defaultTimeout
+		p.TimeoutSeconds = int(lim.ExecTimeout.Seconds())
 	}
-	if max := config.ExecMaxTimeoutSeconds(); p.TimeoutSeconds > max {
+	if max := int(lim.ExecMaxTimeout.Seconds()); p.TimeoutSeconds > max {
 		p.TimeoutSeconds = max
 	}
 	if p.RunInBackground && p.Mode == execVerify {
@@ -104,8 +104,7 @@ func detectVerifyCommand(dir string) (string, error) {
 	return "", fmt.Errorf("could not detect build/check command: no go.mod, Cargo.toml, tsconfig.json, package.json, or Makefile found in %s", dir)
 }
 
-func ExecTool(ws Workspace, shells *BackgroundShells) Tool {
-	timeout := config.ExecTimeoutSeconds()
+func ExecTool(ws Workspace, shells *BackgroundShells, lim config.Limits) Tool {
 	return Tool{
 		Name:        toolExec,
 		Description: execDescription,
@@ -115,11 +114,11 @@ func ExecTool(ws Workspace, shells *BackgroundShells) Tool {
 			"tail_lines":        intSchema("Last N lines to keep. Required for mode=run; defaults to 50 for mode=verify. Ignored when run_in_background=true."),
 			"expected_outcome":  strSchema("What success looks like. Optional but enables structured failure diagnosis."),
 			"dir":               strSchema("Optional working directory override."),
-			"timeout_seconds":   intSchema(fmt.Sprintf("Default %d. Ignored when run_in_background=true.", timeout)),
+			"timeout_seconds":   intSchema(fmt.Sprintf("Default %d. Ignored when run_in_background=true.", int(lim.ExecTimeout.Seconds()))),
 			"run_in_background": boolSchema("Spawn detached and return a shell_id immediately. Use for servers, watchers, anything long-running. Default false."),
 		}, []string{}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			p, resolvedDir, err := parseAndValidateExecInput(raw, ws, timeout)
+			p, resolvedDir, err := parseAndValidateExecInput(raw, ws, lim)
 			if err != nil {
 				return "", err
 			}
@@ -132,12 +131,12 @@ func ExecTool(ws Workspace, shells *BackgroundShells) Tool {
 				return formatBgStart(sh), nil
 			}
 
-			return runForegroundProcess(ctx, p, resolvedDir)
+			return runForegroundProcess(ctx, p, resolvedDir, lim.ExecOutputBytes)
 		},
 	}
 }
 
-func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string) (string, error) {
+func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string, outputBytes int) (string, error) {
 	parent := ctx
 	if parent == nil {
 		parent = context.Background()
@@ -155,7 +154,7 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string)
 		defer dn.Close()
 	}
 
-	buf := &limitBuf{limit: config.ExecOutputBytes()}
+	buf := &limitBuf{limit: outputBytes}
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 
@@ -200,7 +199,7 @@ const bashOutputDescription = `Read new output from a background shell since the
   - tail_lines: optional. Keep only the last N lines of the delta. Useful for chatty servers.
   - max_bytes: optional. Cap returned bytes (tail kept). Default ~32 KiB; offset still advances past dropped bytes so the next call continues from "now."`
 
-func BashOutputTool(shells *BackgroundShells) Tool {
+func BashOutputTool(shells *BackgroundShells, lim config.Limits) Tool {
 	return Tool{
 		Name:        toolBashOutput,
 		Description: bashOutputDescription,
@@ -224,7 +223,7 @@ func BashOutputTool(shells *BackgroundShells) Tool {
 			}
 			cap := p.MaxBytes
 			if cap <= 0 {
-				cap = config.BashOutputMaxBytes()
+				cap = lim.BashOutputMaxBytes
 			}
 			out, byteTrunc, err := sh.readNew(cap)
 			if err != nil {

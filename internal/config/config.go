@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -149,39 +150,67 @@ func sessionKeyForCwd() string {
 // deliberately conservative default.
 // ---------------------------------------------------------------------------
 
-// ReadLines is the default number of lines a slice read returns.
-func ReadLines() int { return Int("AXON_READ_LIMIT", 200, 1) }
+// Limits is the complete set of caps a tool obeys. It is resolved once, by
+// LoadLimits, when an agent is constructed, and then passed down explicitly.
+//
+// This is a value rather than a set of accessor functions on purpose. Reading
+// the environment at call depth makes every tool's behaviour depend on ambient
+// process state: two agents in one process could not be tuned differently, and
+// a test could not vary a cap without mutating the environment of everything
+// else running. Resolved once and passed down, the caps travel with the agent
+// that owns them.
+type Limits struct {
+	// ReadLines is the default number of lines a slice read returns.
+	ReadLines int
+	// ReadMaxBytes caps a full read. Without it a 50MB log would be loaded
+	// into memory and split line-by-line straight into context.
+	ReadMaxBytes int
 
-// ReadMaxBytes caps a full read. Without it a 50MB log would be loaded into
-// memory and split line-by-line straight into context.
-func ReadMaxBytes() int { return Int("AXON_READ_MAX_BYTES", 2*1024*1024, 1) }
+	// ExecTimeout is the default foreground exec timeout.
+	ExecTimeout time.Duration
+	// ExecMaxTimeout caps any timeout the model asks for. Without a ceiling
+	// one tool call could hold the turn for hours.
+	ExecMaxTimeout time.Duration
+	// ExecOutputBytes caps the output of a single foreground exec.
+	ExecOutputBytes int
+	// ExecTailLines is the default number of trailing lines kept from a
+	// command whose output exceeded the cap.
+	ExecTailLines int
+	// ExecMaxTailLines caps the tail size the model may request.
+	ExecMaxTailLines int
 
-// ExecTimeoutSeconds is the default per-call foreground exec timeout.
-func ExecTimeoutSeconds() int { return Int("AXON_EXEC_TIMEOUT_SECONDS", 30, 1) }
+	// BashOutputMaxBytes caps one background-shell poll, so a noisy server
+	// cannot dump megabytes into context per read.
+	BashOutputMaxBytes int
 
-// ExecMaxTimeoutSeconds caps any timeout the model asks for. Without a
-// ceiling one tool call could hold the turn for hours.
-func ExecMaxTimeoutSeconds() int { return Int("AXON_EXEC_MAX_TIMEOUT_SECONDS", 600, 1) }
+	// SearchTimeout bounds a single ripgrep invocation.
+	SearchTimeout time.Duration
+	// SearchMaxMatches caps how many matches one search returns.
+	SearchMaxMatches int
+	// SearchOutputBytes caps the total byte size of a search result.
+	SearchOutputBytes int
+}
 
-// ExecOutputBytes caps the output of a single foreground exec.
-func ExecOutputBytes() int { return Int("AXON_EXEC_OUTPUT_LIMIT", 12000, 1) }
+// LoadLimits reads every cap from the environment, falling back to defaults
+// chosen so the runtime works with nothing configured at all.
+func LoadLimits() Limits {
+	seconds := func(key string, fallback int) time.Duration {
+		return time.Duration(Int(key, fallback, 1)) * time.Second
+	}
+	return Limits{
+		ReadLines:    Int("AXON_READ_LIMIT", 200, 1),
+		ReadMaxBytes: Int("AXON_READ_MAX_BYTES", 2*1024*1024, 1),
 
-// ExecTailLines is the default number of trailing lines kept from a command
-// whose output exceeded the cap.
-func ExecTailLines() int { return Int("AXON_EXEC_TAIL_LINES", 50, 1) }
+		ExecTimeout:      seconds("AXON_EXEC_TIMEOUT_SECONDS", 30),
+		ExecMaxTimeout:   seconds("AXON_EXEC_MAX_TIMEOUT_SECONDS", 600),
+		ExecOutputBytes:  Int("AXON_EXEC_OUTPUT_LIMIT", 12000, 1),
+		ExecTailLines:    Int("AXON_EXEC_TAIL_LINES", 50, 1),
+		ExecMaxTailLines: Int("AXON_EXEC_MAX_TAIL_LINES", 500, 1),
 
-// ExecMaxTailLines caps the tail size the model may request.
-func ExecMaxTailLines() int { return Int("AXON_EXEC_MAX_TAIL_LINES", 500, 1) }
+		BashOutputMaxBytes: Int("AXON_BASH_OUTPUT_MAX_BYTES", 32*1024, 1),
 
-// BashOutputMaxBytes caps one background-shell poll, so a noisy server cannot
-// dump megabytes into context per read.
-func BashOutputMaxBytes() int { return Int("AXON_BASH_OUTPUT_MAX_BYTES", 32*1024, 1) }
-
-// SearchTimeoutSeconds bounds a single ripgrep invocation.
-func SearchTimeoutSeconds() int { return Int("AXON_SEARCH_TIMEOUT_SECONDS", 30, 1) }
-
-// SearchMaxMatches caps how many matches one search returns.
-func SearchMaxMatches() int { return Int("AXON_SEARCH_LIMIT", 100, 1) }
-
-// SearchOutputBytes caps the total byte size of a search result.
-func SearchOutputBytes() int { return Int("AXON_SEARCH_OUTPUT_LIMIT", 12000, 1) }
+		SearchTimeout:     seconds("AXON_SEARCH_TIMEOUT_SECONDS", 30),
+		SearchMaxMatches:  Int("AXON_SEARCH_LIMIT", 100, 1),
+		SearchOutputBytes: Int("AXON_SEARCH_OUTPUT_LIMIT", 12000, 1),
+	}
+}
