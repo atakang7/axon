@@ -27,8 +27,16 @@ import (
 	"github.com/atakang7/axon/internal/llm"
 )
 
+// Edit is one recorded file mutation: where it happened and what was there
+// before. That is the whole undo contract — restoring means writing Before back
+// to Path.
+//
+// It used to carry the post-edit contents too. Nothing ever read them: Undo
+// restores Before and the file on disk already holds After. They were pure
+// weight, and expensive weight, because the ledger is part of the session and
+// the session is re-marshalled in full on every save.
 type Edit struct {
-	Path, Before, After string
+	Path, Before string
 }
 
 // Task is the agent's registered objective for non-trivial work. It lives on
@@ -214,10 +222,10 @@ func (s *Session) SetCwd(p string) error {
 	return nil
 }
 
-func (s *Session) RecordEdit(path, before, after string) {
+func (s *Session) RecordEdit(path, before string) {
 	s.editsMu.Lock()
 	defer s.editsMu.Unlock()
-	s.Edits = append(s.Edits, Edit{path, before, after})
+	s.Edits = append(s.Edits, Edit{Path: path, Before: before})
 }
 
 func (s *Session) Undo() (Edit, bool) {

@@ -76,8 +76,10 @@ type Workspace interface {
 	// ResolvePath turns a possibly-relative path into an absolute one,
 	// interpreted against Dir.
 	ResolvePath(path string) string
-	// RecordEdit stores a before/after pair so the write can be reverted.
-	RecordEdit(path, before, after string)
+	// RecordEdit stores the pre-edit contents of path so the write can be
+	// reverted. The post-edit contents are not passed: reverting means writing
+	// before back, and the file on disk already holds the new version.
+	RecordEdit(path, before string)
 }
 
 // Plan is the task-tracking surface the task tool drives.
