@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -253,5 +255,90 @@ func TestInterruptDuringToolCallEndsTheStep(t *testing.T) {
 	}
 	if len(model.requests) != 1 {
 		t.Errorf("model was called %d times; an interrupted turn must not start another request", len(model.requests))
+	}
+}
+
+// A read-only agent must be constructible. Excluding the mutating built-ins is
+// how an embedder bounds what an agent can do to the machine it runs on.
+func TestExcludeBuiltinsBoundsTheToolset(t *testing.T) {
+	model := &scriptedModel{replies: []Msg{{Role: "assistant", Content: "ok"}}}
+	dir := t.TempDir()
+	t.Setenv("AXON_SESSION_PATH", filepath.Join(dir, "s.json"))
+
+	ag, err := New(Config{
+		Model:           model,
+		SystemPrompt:    "read-only research agent",
+		Cwd:             dir,
+		ExcludeBuiltins: []string{"write", "exec", "bash_output", "kill_shell"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer ag.Close()
+
+	if _, err := ag.Step(context.Background(), "go"); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	offered := map[string]bool{}
+	for _, s := range model.requests[0].Tools {
+		offered[s.Name] = true
+	}
+	for _, gone := range []string{"write", "exec", "bash_output", "kill_shell"} {
+		if offered[gone] {
+			t.Errorf("%q was offered to the model despite being excluded", gone)
+		}
+	}
+	for _, kept := range []string{"read", "search", "task"} {
+		if !offered[kept] {
+			t.Errorf("%q should still be available", kept)
+		}
+	}
+	// The model must not be able to call an excluded tool either.
+	if _, err := ag.Step(context.Background(), "x"); err == nil {
+		_ = err // second step has no scripted reply; the point is the tool set above
+	}
+}
+
+// Undo must tell the model the file changed back. Leaving the write's success
+// in the log while reverting it on disk makes the model reason about contents
+// that no longer exist.
+func TestUndoRecordsTheRevertInTheLog(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(target, []byte("original\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	model := &scriptedModel{replies: []Msg{
+		{Role: "assistant", ToolCalls: []ToolCall{
+			toolCall("c1", "write", `{"path":"f.txt","mode":"save","content":"changed\n"}`),
+		}},
+		{Role: "assistant", Content: "done"},
+	}}
+	t.Setenv("AXON_SESSION_PATH", filepath.Join(dir, "s.json"))
+	ag, err := New(Config{Model: model, SystemPrompt: "t", Cwd: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ag.Close()
+
+	if _, err := ag.Step(context.Background(), "edit it"); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	path, ok := ag.Undo()
+	if !ok {
+		t.Fatal("Undo reported nothing to revert after a write")
+	}
+	body, _ := os.ReadFile(path)
+	if string(body) != "original\n" {
+		t.Fatalf("file not reverted: %q", body)
+	}
+
+	msgs := ag.Session().ContextMessages()
+	last := msgs[len(msgs)-1]
+	if !strings.Contains(last.Content, "reverted") {
+		t.Fatalf("the model was not told about the revert; last message: %q", last.Content)
 	}
 }

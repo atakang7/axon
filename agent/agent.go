@@ -44,6 +44,10 @@ type Agent struct {
 	// preserves these across session wipes; built-ins are rebound.
 	customTools []Tool
 
+	// excludeBuiltins is Config.ExcludeBuiltins, kept so Reset rebinds the
+	// same tool set the agent was constructed with.
+	excludeBuiltins []string
+
 	// shells is this agent's background-process registry. Owned here rather
 	// than package-global so two agents in one process cannot terminate each
 	// other's servers on Close or Reset.

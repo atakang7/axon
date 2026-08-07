@@ -40,6 +40,12 @@ type Request struct {
 // Stream receives incremental output during a completion. Every field is
 // optional; a nil func is simply not called.
 //
+// Callbacks run synchronously on the goroutine reading the response, in
+// arrival order, and must not block. Anything slow — a network write to a
+// browser, a disk flush — has to be handed to a buffered channel and done
+// elsewhere: blocking here stops the read, and a stall long enough to trip the
+// idle timeout fails the whole completion.
+//
 // Reasoning is separate from Token because reasoning models emit a long
 // thinking block before any content, and a caller usually wants to render the
 // two differently. ToolArgs exists because some providers buffer tool-call

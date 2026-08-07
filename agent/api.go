@@ -29,6 +29,13 @@ import (
 //
 // A package may import anything to its left and nothing to its right.
 //
+// Concurrency: an *Agent drives one turn at a time. Step and Run must not be
+// called concurrently with each other or with Reset, Undo or Cd. Interrupt is
+// the exception — it is safe from any goroutine, and exists to be wired to a
+// signal handler. Session() hands back live state that Step mutates; copy what
+// you need from it between turns rather than reading it during one. Separate
+// Agents share nothing.
+//
 // Construction:  New(Config) (*Agent, error)
 // Drive loop:    (*Agent).Run(ctx, InputFunc) error
 // Single step:   (*Agent).Step(ctx, string) (StepResult, error)
@@ -148,6 +155,18 @@ type Config struct {
 	// bash_output, kill_shell).
 	Tools []Tool
 
+	// ExcludeBuiltins names built-in tools to leave out. Empty means the
+	// agent gets all seven.
+	//
+	// This is how you bound what an agent can do. A research agent that must
+	// not touch the machine it runs on:
+	//
+	//	ExcludeBuiltins: []string{"write", "exec", "bash_output", "kill_shell"}
+	//
+	// leaving read, search and task. Excluding a name that is not a built-in
+	// is not an error, so a list can outlive a renamed tool.
+	ExcludeBuiltins []string
+
 	// Pruner, when non-nil, parks old messages as the context grows.
 	// nil disables pruning.
 	Pruner *Pruner
@@ -157,8 +176,14 @@ type Config struct {
 	Cwd string
 
 	// Session, when non-nil, is reused (e.g. resuming an existing
-	// conversation). nil means the runtime loads or creates the
-	// default on-disk session at SessionPath().
+	// conversation). nil means the runtime loads or creates the default
+	// on-disk session for the current working directory.
+	//
+	// One session belongs to one agent. Two agents sharing a *Session race on
+	// its message log; two agents that both default to the same on-disk path
+	// each hold their own copy and overwrite the other's history on save.
+	// Give concurrent agents their own sessions, and set AXON_SESSION_PATH or
+	// construct them explicitly if they share a working directory.
 	Session *Session
 
 	// OnEvent receives observability events emitted by the runtime

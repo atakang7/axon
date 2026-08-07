@@ -42,7 +42,7 @@ func New(cfg Config) (*Agent, error) {
 	// independently and a test can vary a cap without touching os.Environ.
 	limits := config.LoadLimits()
 
-	toolset := builtinTools(sess, shells, limits)
+	toolset := builtinTools(sess, shells, limits, cfg.ExcludeBuiltins)
 	seen := map[string]bool{}
 	for _, t := range toolset {
 		seen[t.Name] = true
@@ -60,15 +60,16 @@ func New(cfg Config) (*Agent, error) {
 	}
 
 	return &Agent{
-		model:        cfg.Model,
-		tools:        toolset,
-		session:      sess,
-		shells:       shells,
-		limits:       limits,
-		pruner:       cfg.Pruner,
-		onEvent:      cfg.OnEvent,
-		systemPrompt: cfg.SystemPrompt,
-		customTools:  cfg.Tools,
+		model:           cfg.Model,
+		tools:           toolset,
+		session:         sess,
+		shells:          shells,
+		limits:          limits,
+		pruner:          cfg.Pruner,
+		onEvent:         cfg.OnEvent,
+		systemPrompt:    cfg.SystemPrompt,
+		customTools:     cfg.Tools,
+		excludeBuiltins: cfg.ExcludeBuiltins,
 	}, nil
 }
 
@@ -77,8 +78,8 @@ func New(cfg Config) (*Agent, error) {
 // shell registry for the process tools, a Plan for the task tool, and the caps
 // it must obey. None of them gets the Session itself, and none of them reads
 // the environment — this is the single place those decisions are made.
-func builtinTools(ws *Session, shells *tools.BackgroundShells, lim config.Limits) []Tool {
-	return []Tool{
+func builtinTools(ws *Session, shells *tools.BackgroundShells, lim config.Limits, exclude []string) []Tool {
+	all := []Tool{
 		tools.ReadTool(ws, lim),
 		tools.WriteTool(ws),
 		tools.ExecTool(ws, shells, lim),
@@ -87,6 +88,20 @@ func builtinTools(ws *Session, shells *tools.BackgroundShells, lim config.Limits
 		tools.SearchTool(ws, lim),
 		tools.TaskTool(ws),
 	}
+	if len(exclude) == 0 {
+		return all
+	}
+	skip := make(map[string]bool, len(exclude))
+	for _, name := range exclude {
+		skip[name] = true
+	}
+	kept := all[:0]
+	for _, t := range all {
+		if !skip[t.Name] {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 // Reset wipes the session and rebuilds the system prompt and tool set.
@@ -95,11 +110,14 @@ func (a *Agent) Reset() {
 	a.shells.KillAll()
 	a.session.Reset()
 	a.initSessionMessages()
-	a.tools = append(builtinTools(a.session, a.shells, a.limits), a.customTools...)
+	a.tools = append(builtinTools(a.session, a.shells, a.limits, a.excludeBuiltins), a.customTools...)
 }
 
-// Undo reverts the last recorded edit (atomic file write). Returns the
-// path that was restored and true, or ("", false) if nothing to undo.
+// Undo reverts the last recorded file edit and tells the model it happened.
+// Returns the path that was restored and true, or ("", false) if there was
+// nothing to undo.
+//
+// Not safe to call while Step is running.
 func (a *Agent) Undo() (string, bool) {
 	e, ok := a.session.Undo()
 	if !ok {
@@ -108,6 +126,15 @@ func (a *Agent) Undo() (string, bool) {
 	if err := tools.WriteFileAtomic(e.Path, []byte(e.Before)); err != nil {
 		return "", false
 	}
+	// The log still holds the write tool-call and its success result, so
+	// without this note the model would keep reasoning about contents the file
+	// no longer has -- editing around a change that is no longer there, or
+	// reporting work it did not keep. The log is append-only, so the revert is
+	// recorded rather than erased.
+	a.session.Append(Msg{
+		Role:    "system",
+		Content: fmt.Sprintf("[the edit to %s was reverted; the file is back to its previous contents]", e.Path),
+	})
 	_ = a.session.Save()
 	return e.Path, true
 }
