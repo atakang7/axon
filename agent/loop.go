@@ -24,15 +24,13 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	var assistantText string
 
 	for {
-		if a.pruner != nil && a.pruner.ShouldFire(a.session, a.lastPruneTokens) {
-			before := a.lastPruneTokens
-			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
-			next, err := a.pruner.Prune(ctx, a.session, a.lastPruneTokens)
-			if err == nil {
-				a.lastPruneTokens = next
-				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: next}})
-			} else {
+		if a.pruner.ShouldFire(a.session) {
+			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: a.pruner.ContextTokens(a.session)}})
+			before, after, err := a.pruner.Prune(ctx, a.session)
+			if err != nil {
 				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
+			} else {
+				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
 			}
 		}
 
@@ -50,7 +48,9 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			return StepResult{Turn: a.session.Turn, ToolCalls: calls}, err
 		}
 		a.session.Append(*msg)
-		a.session.Save()
+		if err := a.session.Save(); err != nil {
+			a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
+		}
 
 		if msg.Content != "" {
 			assistantText = msg.Content
@@ -69,6 +69,13 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 		}
 
 		for _, tc := range msg.ToolCalls {
+			// An interrupt mid-batch must stop the batch. Without this the
+			// remaining calls all run against a cancelled context, fail
+			// instantly, and get recorded as genuine tool failures the model
+			// then has to reason about.
+			if turnCtx.Err() != nil {
+				break
+			}
 			calls = append(calls, tc)
 			a.emit(ctx, Event{Kind: KindToolCall, Tool: &ToolEvent{
 				ID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments),
@@ -79,13 +86,28 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			if blockID != "" {
 				a.session.Messages[len(a.session.Messages)-1].Content = "[#" + blockID + "]\n" + result.Content
 			}
-			a.session.Save()
+			if err := a.session.Save(); err != nil {
+				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
+			}
 			a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
 				ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
 			}})
 		}
 		a.turnCancel.Store(nil)
+		// Interrupt fires turnCancel, which the tool loop above observes. It
+		// must also end the step: otherwise the next iteration opens a fresh
+		// context and calls the model again, and the interrupt is swallowed
+		// entirely — the agent visibly ignores Ctrl-C and keeps working.
+		interrupted := turnCtx.Err() != nil
 		cancel()
+		if interrupted {
+			a.emit(ctx, Event{Kind: KindTurnEnd})
+			return StepResult{
+				Assistant: assistantText,
+				ToolCalls: calls,
+				Turn:      a.session.Turn,
+			}, ErrInterrupted
+		}
 	}
 }
 

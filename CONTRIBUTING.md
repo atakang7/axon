@@ -15,14 +15,14 @@ cd axon
 go build ./...  # verify it compiles
 ```
 
-The repo currently ships without tests — they were removed during the runtime/CLI split and will be reintroduced against the new API. New behavior changes should land with tests.
+Run `go test -race ./...`. Tests run against real files and real processes in `t.TempDir()`, never mocks of our own code, and never touch the network — the turn loop is exercised against a scripted `Model`. New behaviour changes land with tests.
 
 ## Philosophy
 
 **Minimalism is paramount.** axon is intentionally small and focused. Before adding anything, ask:
 - Is this truly essential to the core experience?
 - Could this be done by the user (or the agent) instead of being built‑in?
-- Does it align with the "terminal coding agent" vision?
+- Is it a *runtime* concern, or a product decision? The runtime reads no config file, shells out to nothing at startup, and adds nothing to the system prompt but the tool catalog. Anything that costs tokens on every call belongs to the embedder.
 
 **No unnecessary abstractions.** Prefer concrete, straightforward code. If you find yourself creating interfaces or factories, reconsider.
 
@@ -38,11 +38,12 @@ The repo currently ships without tests — they were removed during the runtime/
 - Export only what's needed
 
 ### Testing
-- Every change that touches logic should have a test (the suite is being rebuilt; new tests are welcome)
-- Tests should be fast and isolated
+- Every change that touches logic should have a test
+- Tests should be fast and isolated; use `t.TempDir()` and `t.Setenv`
 - Use table‑driven tests for similar cases
-- Mock external dependencies (filesystem, HTTP) when appropriate
-- Run `go build ./...` before submitting; run `go test ./...` once tests exist in the area you touched
+- Prefer real execution over mocks: real files, real processes, real `rg`. Fake only what crosses the network — implement `agent.Model` for that
+- When a test covers a bug fix, verify it fails without the fix before you submit it
+- Run `go build ./... && go vet ./... && go test -race ./...` before submitting
 
 ### Pull requests
 - **One feature/fix per PR** – keep changes focused
@@ -120,38 +121,46 @@ axon is a library-only repository. The terminal coding agent lives in [bouton](h
 
 ```
 axon/
-├── agent/                     # the runtime library (the product of this repo)
-│   ├── api.go                 # Config, New, Step, Run, Reset, Undo, Cd, Session, SessionPath, Close
+├── agent/                     # the public runtime (the product of this repo)
+│   ├── api.go                 # Config, New, Step, Run, ...; re-exported types
 │   ├── agent.go               # Agent struct, chat/retry, runTool
+│   ├── setup.go               # New, Reset, Undo, Cd, Close — lifecycle
+│   ├── loop.go                # Step and Run — the turn loop
 │   ├── handler.go             # Event, Kind, ToolEvent, PruneInfo, SessionInfo
-│   ├── exports.go             # DataDir, ConfigDir, ProvidersPath, SessionPath, EnvString, ...
-│   ├── session.go             # append-only session log, edit history, undo
-│   ├── memory.go              # park/recall/forget Session methods; TaskTool
-│   ├── prompt.go              # buildSystemPrompt (role + catalog + probes + orientation)
-│   ├── pruner.go              # secondary-LLM pruner
-│   ├── providers.go           # Provider type + LoadProviders
-│   ├── config.go              # env/XDG path resolution
-│   ├── llm.go                 # OpenAI-compatible streaming chat client
-│   ├── tools.go               # Tool type, schema helpers, tool-name constants
-│   ├── tools_helpers.go       # atomic writes, formatters, binary refusal
-│   ├── tool_read.go           # ReadTool
-│   ├── tool_write.go          # WriteTool
-│   ├── tool_search.go         # SearchTool
-│   ├── tool_exec.go           # ExecTool, BashOutputTool, KillShellTool
-│   ├── bg.go                  # background shell registry
-│   └── probes.go              # language/build detection
-├── examples/minimal/          # smallest possible embed of agent.New + Step
-├── benchmark/                 # benchmark scripts
-├── README.md
-├── ARCHITECTURE.md
-├── CONTRIBUTING.md
-├── CHANGELOG.md
-├── LICENSE
-├── go.mod
-└── go.sum
+│   ├── prompt.go              # buildSystemPrompt (role text + tool catalog)
+│   └── pruner.go              # secondary-LLM pruner
+├── internal/                  # unreachable from outside the module
+│   ├── config/config.go       # session/bg paths, Limits
+│   ├── llm/                   # Model port, Provider, wire types, OpenAI client
+│   ├── session/               # append-only log, cwd, undo, task plan, projection
+│   └── tools/                 # the seven built-in tools, background shells
+└── ...                        # README, ARCHITECTURE, CHANGELOG, LICENSE, go.mod
 ```
 
 The runtime knows nothing about terminals, flags, YAML, or `os.Exit`. Library users build `agent.Config` directly.
+
+### The layering rule
+
+```
+config  ←  llm  ←  session  ←  tools  ←  agent
+```
+
+**A package may import anything to its left, and nothing to its right.** This
+is not a convention — each layer is its own package, so a wrong-direction
+import fails the build. Before adding an import, check which way it points; if
+it points right, the code is in the wrong layer.
+
+Two consequences worth knowing before you change anything:
+
+- `llm` must never learn what a `Tool` is. It takes `ToolSpec` (name,
+  description, schema) and never sees `Fn`. `agent.toolSpecs` is the only
+  crossing point.
+- `tools` must never take a `*Session`. A tool declares the narrowest
+  interface it needs (`Workspace`, `Plan`) in `internal/tools/tools.go`, and
+  `Session` satisfies it implicitly. If a new tool seems to need more than
+  that, say so in the PR rather than widening the interface quietly.
+
+`ARCHITECTURE.md` has the full table and the rationale.
 
 ## Releases
 

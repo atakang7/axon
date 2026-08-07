@@ -2,14 +2,19 @@
 
 **A Go runtime for building LLM agents.**
 
-Axon is a small library that runs the agent loop — streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under pressure, and emitting structured events at every step. Embedders supply a provider, optional tools, and a handler; the runtime drives the loop.
+Axon is a small library that runs the agent loop — streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under pressure, and emitting structured events at every step. Embedders supply a model, a system prompt, optional tools and a handler; the runtime drives the loop.
+
+It has no configuration of its own: no config file, nothing shelled out at startup, nothing added to your prompt but the tool catalog.
 
 This repo is library-only. The terminal coding agent that previously lived at `cmd/axon` has moved to its own project: **[bouton](https://github.com/atakang7/bouton)**.
 
 ```
-github.com/atakang7/axon/agent  ← the runtime (import this)
+github.com/atakang7/axon        ← the vocabulary you build with (Tool, Model, Provider…)
+github.com/atakang7/axon/agent  ← the runtime (New, Step, Run)
 github.com/atakang7/bouton      ← terminal coding agent built on axon
 ```
+
+`go doc github.com/atakang7/axon` documents every type you construct or implement.
 
 ---
 
@@ -20,11 +25,16 @@ github.com/atakang7/bouton      ← terminal coding agent built on axon
 ```go
 import "github.com/atakang7/axon/agent"
 
-ag, err := agent.New(agent.Config{
+model, err := agent.OpenAI(agent.OpenAIConfig{
     Provider: agent.Provider{
         Name: "openai", Model: "gpt-4o", BaseURL: "https://api.openai.com",
         APIKey: os.Getenv("OPENAI_API_KEY"),
     },
+})
+if err != nil { return err }
+
+ag, err := agent.New(agent.Config{
+    Model:        model,
     SystemPrompt: "You are a coding assistant.",
 })
 if err != nil { return err }
@@ -38,7 +48,7 @@ That's the whole minimum. `New` constructs an agent with the runtime's built-in 
 ### Adding your own tools
 
 ```go
-deployTool := agent.Tool{
+deployTool := axon.Tool{
     Name:        "deploy",
     Description: "Deploy a service to staging.",
     Schema: map[string]any{
@@ -54,7 +64,7 @@ deployTool := agent.Tool{
 }
 
 ag, _ := agent.New(agent.Config{
-    Provider:     myProvider,
+    Model:        myModel,
     SystemPrompt: "You are a deployment assistant.",
     Tools:        []agent.Tool{deployTool},
 })
@@ -109,6 +119,25 @@ ag.SessionPath() string     // on-disk path of the session file
 ag.Close() error            // release background shells
 ```
 
+### Pluggable model
+
+`Config.Model` is an interface:
+
+```go
+type Model interface {
+    Complete(ctx context.Context, req Request) (*Msg, error)
+}
+```
+
+`agent.OpenAI(...)` returns the implementation that ships, for any
+OpenAI-compatible endpoint. Implement the interface yourself to reach a
+different provider, route through a gateway, or hand the loop a deterministic
+fake so it can be driven in tests with no network and no API key.
+
+### What the runtime does not do
+
+It does not resolve providers (no `providers.json`, no `LLM_*` cascade — hand it a `Model`), and it does not enrich your prompt with machine facts or a directory listing. Those are embedder decisions with a per-call token cost, so they belong where you can see them.
+
 ### Pluggable session storage
 
 `Config.Session` accepts a `*agent.Session`. Most embedders leave it nil and let the runtime load or create the default on-disk session at `agent.SessionPath()`. If you want sessions in Postgres / Redis / RAM, construct your own `*Session` and pass it in.
@@ -132,11 +161,12 @@ Provider config, YAML agent personalities, slash commands, and the interactive p
 
 ## Design
 
-- **One LLM, no subagents.** The cost lever is aggressive forgetting via the secondary pruner LLM, not parallel agents.
-- **Append-only session log.** Park/recall/forget are projections (`ContextMessages`), never mutations. `/undo` is byte-exact because edits are atomic (tmp + rename).
+- **One LLM, no subagents.** The cost lever is a secondary pruner LLM parking stale context, not parallel agents.
+- **Append-only session log.** Parking is a projection (`ContextMessages`), never a mutation — the original stays in the log. `/undo` is byte-exact because edits are atomic (tmp + rename).
 - **Turn-scoped cancellation.** One `context.Context` per turn covers the HTTP stream *and* every tool subprocess. `Interrupt()` fires that cancel.
-- **Every tool call requires a `reason`.** The model must articulate intent before paying the call's token cost.
-- **No global state.** Two agents in one process is supported by construction.
+- **Strict one-directional layering.** `config ← llm ← session ← tools ← agent`; a package imports leftward only, and the Go compiler enforces it. Everything below `agent` is under `internal/`, so it is free to change.
+- **Tools take capabilities, not state.** A tool receives the narrowest interface it needs (`Workspace`, `Plan`), never the `Session`. It cannot read the conversation, and a fake for tests is six lines.
+- **No global state.** Every piece of mutable state is created in `New` and released in `Close`. Two agents in one process share no shells, no limits and no session.
 - **No sandbox or permission prompt today.** Ctrl-C and `/undo` are the guardrails. A permission layer can be added on top via a tool wrapper.
 
 See `ARCHITECTURE.md` for the loop, the pruner contract, and the extension points.

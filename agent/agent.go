@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/atakang7/axon/internal/config"
+	"github.com/atakang7/axon/internal/tools"
 )
 
 // agent.go — Agent struct, chat/tool dispatch, retry policy.
@@ -20,15 +23,10 @@ import (
 // retryable errors, executing a single tool call.
 
 type Agent struct {
-	client  *Client
+	model   Model
 	tools   []Tool
 	session *Session
 	pruner  *Pruner
-
-	// lastPruneTokens is the projected context size at the previous successful
-	// pruner fire. Pruner.ShouldFire compares the current size against this to
-	// avoid re-firing on small growth.
-	lastPruneTokens int
 
 	// turnCancel, when non-nil, cancels the currently in-flight chat call.
 	// Set at the start of each chat(), cleared after. Embedders call
@@ -45,6 +43,20 @@ type Agent struct {
 	// customTools holds the caller-supplied tools (Config.Tools). Reset
 	// preserves these across session wipes; built-ins are rebound.
 	customTools []Tool
+
+	// excludeBuiltins is Config.ExcludeBuiltins, kept so Reset rebinds the
+	// same tool set the agent was constructed with.
+	excludeBuiltins []string
+
+	// shells is this agent's background-process registry. Owned here rather
+	// than package-global so two agents in one process cannot terminate each
+	// other's servers on Close or Reset.
+	shells *tools.BackgroundShells
+
+	// limits are the tool caps resolved once at construction. Held here so
+	// Reset can rebind the built-ins without re-reading the environment, and
+	// so two agents in one process can be tuned independently.
+	limits config.Limits
 }
 
 // Interrupt cancels the in-flight chat if there is one, returning true.
@@ -59,7 +71,7 @@ func (a *Agent) Interrupt() bool {
 }
 
 func (a *Agent) initSessionMessages() {
-	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.session, a.systemPrompt)}}
+	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.systemPrompt)}}
 }
 
 func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
@@ -79,20 +91,21 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			}
 		}
 		a.emit(ctx, Event{Kind: KindAPICall})
-		msg, err := a.client.ChatStream(ctx, a.session.ContextMessages(), tools,
-			func(t string) {
-				a.emit(ctx, Event{Kind: KindToken, Text: t})
+		msg, err := a.model.Complete(ctx, Request{
+			Messages: a.session.ContextMessages(),
+			Tools:    toolSpecs(tools),
+			Stream: Stream{
+				Token: func(t string) {
+					a.emit(ctx, Event{Kind: KindToken, Text: t})
+				},
+				Reasoning: func(t string) {
+					a.emit(ctx, Event{Kind: KindReasoning, Text: t})
+				},
+				ToolArgs: func(name, delta string) {
+					a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
+				},
 			},
-			func(t string) {
-				a.emit(ctx, Event{Kind: KindReasoning, Text: t})
-			},
-			func(name, delta string) {
-				a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
-			},
-			nil,
-			func(phase string, duration time.Duration) {
-				// Phase callback for tracking API phases.
-			})
+		})
 		if err == nil {
 			if msg != nil && strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 {
 				lastErr = fmt.Errorf("empty response from model")

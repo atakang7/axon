@@ -9,35 +9,90 @@ github.com/atakang7/bouton      ← reference coding agent built on the runtime 
 
 The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. All terminal-shaped concerns live in [bouton](https://github.com/atakang7/bouton).
 
+## Layering
+
+This is the single most important rule in the repository.
+
+```
+axon  ←  config  ←  llm  ←  session  ←  tools  ←  agent
+```
+
+**A package may import anything to its left, and nothing to its right.** The
+arrows are dependencies, so `agent` sees everything and `axon` sees nothing.
+
+The rule is enforced by the Go compiler, not by review: each layer is its own
+package, and an import in the wrong direction is a build error. Every layer
+states its own boundary rule in its package comment.
+
+| Layer | Package | Owns | May import |
+|---|---|---|---|
+| 0 | `axon` (root) | the public vocabulary: `Model`, `Request`, `Stream`, `Provider`, `Msg`, `ToolCall`, `Tool`, `ToolSpec` | nothing |
+| 1 | `internal/config` | XDG/`AXON_*` paths, `Limits` | nothing |
+| 2 | `internal/llm` | `Model` port, `Provider`, `Msg`, `ToolCall`, `ToolSpec`, OpenAI `Client` | config |
+| 3 | `internal/session` | append-only log, cwd, edit history, task plan | config, llm |
+| 4 | `internal/tools` | the seven built-in tools, background shells | config, llm, session |
+| 5 | `agent` | `Agent`, the turn loop, events, prompt, pruner | all of the above |
+
+Everything below `agent` lives under `internal/` — except the root package
+`axon`, which is public on purpose. The types an embedder constructs must be
+documentable, and `go doc` on an alias into an internal package prints the
+alias and stops: a caller could not discover that a `Tool` has a `Name`, a
+`Schema` or an `Fn`. Behaviour stays internal; vocabulary is public.
+
+The rest is unreachable from
+outside this module. That is deliberate: those packages are free to change
+because nothing external can depend on them. The stable surface is `agent`.
+
+Two boundaries are worth calling out, because they are what keep the graph a
+DAG rather than a ball of mutual references:
+
+- **`llm` does not know what a `Tool` is.** It takes `ToolSpec` — name,
+  description, schema — and never sees a tool's `Fn`. `agent.toolSpecs`
+  projects `Tool` down to `ToolSpec` at the one crossing point, as an
+  allowlist. The model layer therefore cannot reach the execution layer.
+- **`tools` does not receive a `*Session`.** Each tool takes the narrowest
+  interface it needs, declared in `internal/tools/tools.go` on the consuming
+  side and satisfied implicitly by `Session`:
+  - `Workspace` — `Dir`, `ResolvePath`, `RecordEdit`
+  - `Plan` — `RegisterTask`, `AdvanceTask`, `ReplanTask` (write-only)
+
+  A tool cannot read conversation state, and a fake `Workspace` for a test is
+  six lines.
+
 ## Layout
 
 ```
+axon.go               Model, Request, Stream, Provider, Msg, ToolCall, Tool, ToolSpec
+
 agent/
-  api.go              Config, New, Step, Run, Reset, Undo, Cd, Session, SessionPath, Close
+  api.go              Config, New, Step, Run, Reset, Undo, Cd, Close; re-exported types
   agent.go            Agent struct, chat/retry, runTool
-  handler.go          Event, Kind, ToolEvent, PruneInfo, SessionInfo (emitted via Config.OnEvent)
-  exports.go          DataDir, ConfigDir, ProvidersPath, SessionPath, EnvString, ... (helpers CLIs need)
-  session.go          Session struct, append-only log, edit history, undo
-  memory.go           park/recall/forget projections (Session methods, pruner-driven); TaskTool lives here
-  prompt.go           buildSystemPrompt (role + built-in catalog + probes + orientation)
-  pruner.go           secondary LLM that drops/parks old blocks
-  providers.go        Provider type + LoadProviders
-  config.go           env/XDG path resolution
-  llm.go              OpenAI-compatible streaming chat client
-  tools.go            Tool type, schema helpers, tool-name constants
-  tools_helpers.go    atomic writes, formatters, binary refusal
-  tool_read.go        ReadTool (skeleton/slice/full)
+  setup.go            New, Reset, Undo, Cd, Close — construction and lifecycle
+  loop.go             Step and Run — the turn loop
+  handler.go          Event, Kind, ToolEvent, PruneInfo, SessionInfo
+  prompt.go           buildSystemPrompt (role text + tool catalog)
+  pruner.go           secondary LLM that parks old blocks
+
+internal/config/
+  config.go           session/bg paths, Limits, LoadLimits
+
+internal/llm/
+  client.go           Model, Request, Stream, Provider, Msg, ToolCall, ToolSpec; OpenAI Client
+
+internal/session/
+  session.go          Session, append-only log, edit history, undo, task plan
+  memory.go           ContextMessages projection; Park
+
+internal/tools/
+  tools.go            Tool, Workspace, Plan, Catalog, schema helpers
+  tools_helpers.go    WriteFileAtomic, binary refusal, output capping
+  tool_read.go        ReadTool (slice/full, directory listing)
   tool_write.go       WriteTool (save/replace_string/replace_lines/insert_at_line)
-  tool_search.go      SearchTool (literal/regex/trace)
+  tool_search.go      SearchTool (literal/regex)
   tool_exec.go        ExecTool, BashOutputTool, KillShellTool
-  bg.go               background shell registry (servers, watchers)
-  probes.go           language/build detection injected into the system prompt
-
-examples/minimal/
-  main.go             smallest possible embed of agent.New + agent.Step
+  tool_task.go        TaskTool
+  bg.go               BackgroundShells registry (servers, watchers)
 ```
-
-The terminal CLI (provider picker, YAML loader, TTY renderer, slash commands) lives in [bouton](https://github.com/atakang7/bouton).
 
 ## The turn loop
 
@@ -48,10 +103,10 @@ Step(ctx, input)
 append user msg ─► session.Save
    │
    ▼
-prune? ──► Pruner.Prune (parks/forgets old blocks)
+prune? ──► Pruner.Prune (parks old blocks)
    │
    ▼
-chat() ──► Client.ChatStream
+chat() ──► Model.Complete(Request{toolSpecs(tools), Stream{...}})
    │           │       │      │
    │       tokens   reasoning  tool-arg deltas
    │           └──► Config.OnEvent(ctx, Event{...})
@@ -74,14 +129,11 @@ emit AssistantEnd, TurnEnd, return StepResult
 
 ## Public API surface
 
-The whole API of `package agent`:
-
 ```go
 // Construction — built-ins are always present; cfg.Tools are appended.
 func New(Config) (*Agent, error)
 
 // Agent
-type Agent struct{ /* opaque */ }
 func (a *Agent) Step(ctx, input) (StepResult, error)
 func (a *Agent) Run(ctx, InputFunc) error
 func (a *Agent) Interrupt() bool
@@ -92,24 +144,24 @@ func (a *Agent) Session() *Session
 func (a *Agent) SessionPath() string
 func (a *Agent) Close() error
 
-// Result and input types
-type StepResult struct {
-    Assistant string
-    ToolCalls []ToolCall
-    Turn      int
-}
-type InputFunc func() (string, bool)
-
-// Config — Provider and SystemPrompt are required.
+// Config — Model and SystemPrompt are required; the rest default to zero.
 type Config struct {
-    Provider     Provider
-    SystemPrompt string
-    Tools        []Tool
-    Pruner       *Pruner
-    OnEvent      func(ctx, Event)
-    Cwd          string
-    Session      *Session
+    Model           Model  // agent.OpenAI(...), or your own implementation
+    SystemPrompt    string
+    Tools           []Tool // Name, Schema and Fn required; checked at New
+    ExcludeBuiltins []string
+    Pruner          *Pruner
+    Cwd             string
+    Session         *Session
+    OnEvent         func(ctx, Event)
 }
+
+// The model is an interface, so the turn loop can be driven with no network.
+type Model interface {
+    Complete(ctx context.Context, req Request) (*Msg, error)
+}
+
+func OpenAI(OpenAIConfig) (Model, error)  // the implementation that ships
 
 // Tools — the extension surface
 type Tool struct {
@@ -119,56 +171,120 @@ type Tool struct {
     Fn          func(ctx, args) (string, error)
 }
 
-// Observability — plain function field on Config. Fan-out is a
-// one-line closure that calls multiple sinks.
+// Provider, Msg, ToolCall, Client, ToolSpec, Session, Task, TaskStep and Edit
+// are type aliases for the internal packages that own them, so the types are
+// identical across both names.
 
 // Errors
 var (
-    ErrNoProvider, ErrNoSystemPrompt, ErrToolNotFound,
-    ErrDuplicateTool, ErrInterrupted
+    ErrNoModel, ErrNoSystemPrompt, ErrToolNotFound,
+    ErrDuplicateTool, ErrInvalidTool, ErrInterrupted
 )
 ```
 
 ## Invariants
 
-- **`Session.Messages` is append-only.** Park / recall / forget are projections built in `ContextMessages`, never mutations. Audit history survives pruning.
-- **Built-ins are unconditional.** Every agent has the hands-and-legs tools (read, write, exec, search, task, bash_output, kill_shell). No knob to remove them.
-- **Tool execution is turn-scoped.** Ctrl-C / `Interrupt` cancels the in-flight chat AND kills the running tool's process group. Background shells outlive turns but die on `Close` or process exit.
-- **Custom tool names cannot collide with built-ins.** Enforced at `New` time.
-- **Writes are atomic.** Every file mutation goes through `writeBytesRaw` (tmp + rename). Formatters run after, never during, so `Undo` is byte-exact.
-- **Reason field required on every tool call.** The model must articulate intent before paying the call's token cost.
-- **The runtime never writes to stdout.** All observability goes through `Config.OnEvent`. Renderers and TUIs (like bouton's) consume that stream.
-
-## How an embedder consumes the runtime
-
-```
-agent.LoadProviders()           ← reads ~/.config/agent/providers.json (optional)
-   │
-   ▼
-ag, _ := agent.New(agent.Config{
-    Provider, SystemPrompt, Tools, Pruner, OnEvent,
-})
-   │
-   ▼
-for each user turn:
-   ag.Step(ctx, input)
-```
-
-For a worked example see `examples/minimal`. For a full terminal CLI see [bouton](https://github.com/atakang7/bouton).
+- **`Session.Messages` is append-only.** Parking sets projection metadata;
+  `ContextMessages` derives the breadcrumb at emission time and the original
+  content is never touched. Audit history survives pruning.
+- **The pruner has exactly one verb: park.** A block is active or parked,
+  nothing else. There is one source of truth for a parked block — the `Msg`
+  itself — so no side-table can disagree with the log.
+- **Every tool satisfies its contract before the loop starts.** `New` rejects a
+  `Config.Tools` entry with no `Name`, no `Schema` or no `Fn` (`ErrInvalidTool`),
+  and one whose name collides with a built-in the agent still has
+  (`ErrDuplicateTool`). A nil `Fn` would otherwise panic mid-turn, inside the
+  embedder, after the model had committed to the call. Excluding a built-in via
+  `Config.ExcludeBuiltins` frees its name for a custom tool.
+- **Nothing is process-global.** Every piece of mutable state an agent uses is
+  created in `New` and released in `Close`. Two agents in one process share
+  no shells, no limits and no session.
+- **Limits are resolved once, at construction.** No tool reads the environment
+  at call depth, so two agents can be tuned differently and a test can vary a
+  cap without touching `os.Environ`.
+- **Tool execution is turn-scoped.** `Interrupt` cancels the in-flight chat and
+  kills the running tool's process group. Background shells outlive turns but
+  die on `Close`.
+- **Writes are atomic.** Every file mutation goes through `WriteFileAtomic`
+  (tmp + rename). Formatters run after, never during, so `Undo` is byte-exact.
+- **The runtime never writes to stdout.** All observability goes through
+  `Config.OnEvent`.
+- **The runtime has no configuration of its own.** It reads no config file,
+  shells out to nothing at startup, and does not inspect the working
+  directory. The embedder chooses the model and writes the system prompt; the
+  only thing the runtime adds to that prompt is the tool catalog.
+- **The model is a port, not a dependency.** `Config.Model` is an interface, so
+  the entire turn loop runs against a scripted fake with no network.
 
 ## Extending
 
-- **New built-in tool** → add `tool_<name>.go` with a `<Name>Tool(s *Session) Tool` constructor; register in `builtinTools` in `api.go`.
-- **New custom tool kind (e.g. MCP)** → custom tools are `agent.Tool` values whose `Fn` does whatever; embedders pass them via `Config.Tools`. The runtime needs no change.
-- **New observability sink** → write a function and pass it as `Config.OnEvent`. Fan-out is a one-line closure.
-- **New session store** → embedders pass their own `*Session` to `Config.Session`. The runtime works with whatever it gets.
-- **New provider** → extend `LoadProviders` in `providers.go`; the streaming layer is OpenAI-compatible and already handles most.
+- **New built-in tool** → add `internal/tools/tool_<name>.go` with a
+  constructor taking the narrowest capability it needs; register it in
+  `builtinTools` in `agent/setup.go`.
+- **New custom tool kind (e.g. MCP)** → custom tools are `agent.Tool` values
+  whose `Fn` does whatever; pass them via `Config.Tools`. No runtime change.
+- **New observability sink** → pass a function as `Config.OnEvent`. Fan-out is
+  a one-line closure.
+- **New session store** → pass your own `*Session` via `Config.Session`.
+- **New provider** → construct a `Provider` and hand it to `agent.OpenAI`; the
+  streaming layer is OpenAI-compatible and already handles most. Resolving
+  which provider to use is the embedder's job, not the runtime's.
+
+## Testing
+
+Tests run against real files and real processes in `t.TempDir()`, never mocks,
+and never touch the network. `Model` is an interface precisely so the turn loop
+can be driven by a scripted fake with no API key.
+
+Coverage is being rebuilt. What exists today:
+
+- `internal/session` — the `ContextMessages` projection: parked blocks take
+  their orphaned tool results with them, the log is never mutated, the system
+  prompt is unremovable, `Reset` keeps a session where the embedder put it, the
+  undo ledger stays bounded, and `Append` does not rescan the log.
+- `agent` — `New` rejects an incomplete or colliding tool, and excluding a
+  built-in frees its name.
+
+Still to be written: the turn loop, the pruner, every tool, the SSE client, the
+limit resolution, and the layering drift alarm that `agent/architecture_test.go`
+used to provide. That alarm is worth restoring but worth being honest about —
+Go's own import-cycle detection already rejects an upward import, and that is
+the real guard. A test adds two things the compiler will not catch: a new
+package outside the documented layering, and a wrong-direction import that is
+not a cycle, which becomes possible the moment any layer stops importing the
+one below it.
+
+```
+go test ./...
+```
 
 ## Things intentionally NOT here
 
-- **No subagents.** One LLM, full context every turn, aggressive forgetting is the cost lever.
+- **No subagents.** One LLM, full context every turn, aggressive parking is
+  the cost lever.
 - **No HTTP/API layer.** Build one on top with `Step`.
-- **No agent registry / discovery / lifecycle.** That belongs to a higher layer (the "docker for agents" surface this runtime was extracted to support).
+- **No agent registry / discovery / lifecycle.** That belongs to a higher layer.
 - **No MCP client yet.** Reserved as a tool kind, not implemented.
-- **No sandbox or per-tool permission prompt.** The model decides what's destructive; the embedder gates with `Interrupt` and `Undo`.
-- **No YAML in the runtime.** YAML is a CLI concern. The runtime's contract is `Config`.
+- **No sandbox or per-tool permission prompt.** The model decides what is
+  destructive; the embedder gates with `Interrupt` and `Undo`.
+- **No language heuristics in tools.** `read` had a `skeleton` mode, `search`
+  had `trace`, and `exec` had `verify`. Each carried a table of keywords,
+  regexes or build-system markers, and each was silently wrong outside the two
+  languages it was written against: `skeleton` returned one line for a Rust
+  file with four functions, and nothing at all for C, while its description
+  advertised a 10x saving. The runtime cannot know what language it is looking
+  at; the model already does, and can write a regex that fits or run the build
+  command it can see. The runtime ships the primitives, not the guesses.
+- **No `reason` field on tool calls.** Earlier builds required a justification
+  string on every call. It was dropped: it cost latency and tokens on every
+  call, and the model's own reasoning trace already serves as the audit log.
+- **No YAML in the runtime.** YAML is a CLI concern. The contract is `Config`.
+- **No provider discovery.** Parsing `providers.json`, resolving an
+  `LLM_*` environment cascade and picking between configured models is the
+  embedder's job. The runtime takes a `Model` that is already resolved.
+- **No prompt enrichment.** Earlier versions shelled out to `pwd`, `whoami`,
+  `uname` and `git status` at startup, and injected a two-level listing of the
+  working directory, into every system prompt. Both taxed every model call with
+  tokens the embedder never asked for and could not remove. An embedder that
+  wants them puts them in `SystemPrompt`, where the cost is visible.
+```
