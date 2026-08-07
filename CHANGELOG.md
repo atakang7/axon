@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/atakang7/axon/compare/v1.0.2...v1.0.3) (2026-08-07)
+
+
+### Refactoring
+
+* **internals:** eliminate cluttered logic in bg, pruner, and agent ([48f1022](https://github.com/atakang7/axon/commit/48f1022803e7d69ffefdcc944427ae4246c1ab6b))
+
 ## [1.0.2](https://github.com/atakang7/axon/compare/v1.0.1...v1.0.2) (2026-08-07)
 
 
