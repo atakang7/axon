@@ -70,10 +70,13 @@ type Workspace interface {
 	RecordEdit(path, before, after string)
 }
 
-// Plan is the task-tracking surface the task tool drives. It is deliberately
-// write-only: the tool registers, advances and replans, but never reads task
-// state back — the runtime injects the current plan into the prompt instead,
-// so there is exactly one place that renders it.
+// Plan is the task-tracking surface the task tool drives.
+//
+// The tool mutates the plan and is told what to do next; it cannot enumerate
+// or re-read the plan. AdvanceTask returns the next step precisely so the tool
+// can tell the model where it now is without gaining a reader for the whole
+// structure. Rendering the plan into the prompt stays the runtime's job, so
+// there is exactly one place that decides how a plan is presented.
 type Plan interface {
 	RegisterTask(goal string, steps []session.TaskStep) error
 	AdvanceTask() (string, error)

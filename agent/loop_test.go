@@ -222,3 +222,46 @@ func contains(kinds []Kind, want Kind) bool {
 	}
 	return false
 }
+
+// Interrupting mid-batch must end the step. Before this was fixed the loop
+// finished the turn, opened a fresh context and called the model again, so
+// Ctrl-C during a tool call was silently ignored and the agent kept working.
+func TestInterruptDuringToolCallEndsTheStep(t *testing.T) {
+	var ag *Agent
+	var secondRan bool
+
+	stop := Tool{
+		Name: "stop", Description: "interrupts", Schema: map[string]any{"type": "object"},
+		Fn: func(context.Context, json.RawMessage) (string, error) {
+			ag.Interrupt()
+			return "interrupted", nil
+		},
+	}
+	after := Tool{
+		Name: "after", Description: "should not run", Schema: map[string]any{"type": "object"},
+		Fn: func(context.Context, json.RawMessage) (string, error) {
+			secondRan = true
+			return "ran", nil
+		},
+	}
+
+	model := &scriptedModel{replies: []Msg{
+		{Role: "assistant", ToolCalls: []ToolCall{
+			toolCall("c1", "stop", `{}`),
+			toolCall("c2", "after", `{}`),
+		}},
+		{Role: "assistant", Content: "should never be reached"},
+	}}
+	ag = newTestAgent(t, model, stop, after)
+
+	_, err := ag.Step(context.Background(), "go")
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("Step returned %v, want ErrInterrupted", err)
+	}
+	if secondRan {
+		t.Error("a queued tool ran after the turn was interrupted")
+	}
+	if len(model.requests) != 1 {
+		t.Errorf("model was called %d times; an interrupted turn must not start another request", len(model.requests))
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -275,13 +276,21 @@ func binaryFileRefusal(abs string) (string, bool) {
 }
 
 // limitBuf is a write-capped buffer used to bound tool output size.
+//
+// It is mutex-guarded because os/exec writes into it from an internal copier
+// goroutine. When a command is killed on timeout that goroutine can still be
+// running while the caller reads the result, so an unguarded bytes.Buffer here
+// is a live data race, not a theoretical one.
 type limitBuf struct {
+	mu        sync.Mutex
 	buf       bytes.Buffer
 	limit     int
 	truncated bool
 }
 
 func (b *limitBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	remaining := b.limit - b.buf.Len()
 	if remaining <= 0 {
 		b.truncated = true
@@ -293,4 +302,12 @@ func (b *limitBuf) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	return b.buf.Write(p)
+}
+
+// snapshot returns what has been captured so far, and whether anything was
+// dropped for exceeding the cap. Safe to call while writes are still arriving.
+func (b *limitBuf) snapshot() (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String(), b.truncated
 }

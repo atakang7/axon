@@ -260,14 +260,29 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 		text string
 		err  error
 	}
+	// Every send is guarded by ctx. When this function returns early — an idle
+	// timeout, or the user interrupting the turn — nothing drains the channel
+	// again, so an unguarded send would block this goroutine forever once the
+	// buffer filled, leaking a goroutine and its connection per cancelled
+	// stream. Interrupting mid-stream is routine in an agent, not an edge case.
 	lines := make(chan line, 32)
 	go func() {
 		defer close(lines)
+		send := func(l line) bool {
+			select {
+			case lines <- l:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 		for sc.Scan() {
-			lines <- line{text: sc.Text()}
+			if !send(line{text: sc.Text()}) {
+				return
+			}
 		}
 		if err := sc.Err(); err != nil {
-			lines <- line{err: err}
+			send(line{err: err})
 		}
 	}()
 

@@ -136,6 +136,10 @@ func ExecTool(ws Workspace, shells *BackgroundShells, lim config.Limits) Tool {
 	}
 }
 
+// killGrace bounds how long we wait for a killed command's output copier to
+// finish before giving up on it and returning what we captured.
+const killGrace = 2 * time.Second
+
 func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string, outputBytes int) (string, error) {
 	parent := ctx
 	if parent == nil {
@@ -165,11 +169,24 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 	go func() { done <- cmd.Wait() }()
 
 	var runErr error
+	abandoned := false
 	select {
 	case runErr = <-done:
 	case <-runCtx.Done():
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		runErr = <-done
+		// Do not wait on Wait indefinitely. Because Stdout is an io.Writer
+		// rather than a file, os/exec pipes the output through a copier
+		// goroutine, and Wait blocks until that copier sees EOF. A grandchild
+		// that escaped the process group (anything calling setsid, or a
+		// daemonising server) still holds the write end open, so EOF never
+		// arrives and Wait never returns. Blocking here would hang the turn
+		// forever with no way out but killing the agent.
+		select {
+		case runErr = <-done:
+		case <-time.After(killGrace):
+			abandoned = true
+			runErr = fmt.Errorf("killed, but a child process is still holding the output pipe open")
+		}
 	}
 
 	code := 0
@@ -179,6 +196,9 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 		case runCtx.Err() == context.DeadlineExceeded:
 			code = -1
 			note = "timed out"
+		case abandoned:
+			code = -1
+			note = "timed out; killed, but an escaped child still holds the output pipe — output may be incomplete"
 		case parent.Err() != nil:
 			code = -1
 			note = "cancelled"
@@ -191,8 +211,9 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 		}
 	}
 
-	tailed, hidden := tailN(buf.buf.String(), p.TailLines)
-	return formatExec(p.Command, cmd.Dir, code, p.ExpectedOutcome, tailed, hidden, buf.truncated, note), nil
+	captured, truncated := buf.snapshot()
+	tailed, hidden := tailN(captured, p.TailLines)
+	return formatExec(p.Command, cmd.Dir, code, p.ExpectedOutcome, tailed, hidden, truncated, note), nil
 }
 
 const bashOutputDescription = `Read new output from a background shell since the last read. Status is "running" or the exit summary. Returns only the delta — calling this in a poll loop is cheap; rereading the same bytes is not.

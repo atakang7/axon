@@ -117,7 +117,8 @@ func runRipgrep(parent context.Context, ws Workspace, lim config.Limits, query, 
 		return "", err
 	}
 
-	out := strings.TrimRight(buf.buf.String(), "\n")
+	captured, truncated := buf.snapshot()
+	out := strings.TrimRight(captured, "\n")
 	var b strings.Builder
 	fmt.Fprintf(&b, "query: %s\npath: %s\n", query, path)
 	if out == "" {
@@ -125,7 +126,7 @@ func runRipgrep(parent context.Context, ws Workspace, lim config.Limits, query, 
 	} else {
 		b.WriteString(out)
 	}
-	if buf.truncated {
+	if truncated {
 		b.WriteString("\n[output truncated]")
 	}
 	return b.String(), nil
@@ -239,7 +240,8 @@ func rgCollect(parent context.Context, ws Workspace, lim config.Limits, pattern,
 		return nil, err
 	}
 	var hits []rgHit
-	for _, ln := range strings.Split(strings.TrimRight(buf.buf.String(), "\n"), "\n") {
+	captured, _ := buf.snapshot()
+	for _, ln := range strings.Split(strings.TrimRight(captured, "\n"), "\n") {
 		if ln == "" {
 			continue
 		}
