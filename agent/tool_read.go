@@ -21,6 +21,28 @@ const readDescription = `Read one file, or list a directory.
   - full: entire file.
 If path is a directory, returns its entries (subdirs marked with trailing '/'); mode is ignored.`
 
+type readInput struct {
+	Path   string `json:"path"`
+	Mode   string `json:"mode"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
+func parseAndValidateReadInput(raw json.RawMessage, s *Session) (*readInput, string, error) {
+	var p readInput
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return nil, "", fmt.Errorf("path is required")
+	}
+	if p.Mode == "" {
+		p.Mode = readSlice
+	}
+	abs := s.ResolvePath(p.Path)
+	return &p, abs, nil
+}
+
 func ReadTool(s *Session) Tool {
 	limit := readLimit()
 	return Tool{
@@ -33,22 +55,10 @@ func ReadTool(s *Session) Tool {
 			"limit":  intSchema(fmt.Sprintf("Lines to return. Used when mode=slice. Default %d if omitted.", limit)),
 		}, []string{"path"}),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var p struct {
-				Path   string `json:"path"`
-				Mode   string `json:"mode"`
-				Offset int    `json:"offset"`
-				Limit  int    `json:"limit"`
-			}
-			if err := json.Unmarshal(raw, &p); err != nil {
+			p, abs, err := parseAndValidateReadInput(raw, s)
+			if err != nil {
 				return "", err
 			}
-			if strings.TrimSpace(p.Path) == "" {
-				return "", fmt.Errorf("path is required")
-			}
-			if p.Mode == "" {
-				p.Mode = readSlice
-			}
-			abs := s.ResolvePath(p.Path)
 			if info, err := os.Stat(abs); err == nil && info.IsDir() {
 				return readDirListing(abs)
 			}
@@ -63,7 +73,7 @@ func ReadTool(s *Session) Tool {
 					p.Offset = 1
 				}
 				if p.Limit <= 0 {
-					p.Limit = readLimit()
+					p.Limit = limit
 				}
 				return readSliceMode(abs, p.Offset, p.Limit)
 			case readFull:
@@ -82,12 +92,6 @@ func readSliceMode(abs string, offset, limit int) (string, error) {
 	}
 	defer f.Close()
 
-	// Use bufio.Reader.ReadString('\n') instead of bufio.Scanner: Scanner
-	// has a fixed token cap (default 64 KiB, we previously raised it to
-	// 1 MiB) and aborts with "token too long" on any single line beyond it.
-	// minified bundles, generated SQL, and certain logs routinely exceed
-	// that. ReadString grows naturally; we still cap the per-line bytes we
-	// emit so a 50 MiB line doesn't blow the response.
 	const lineDisplayCap = 8192
 	r := bufio.NewReader(f)
 	var out []string
@@ -137,14 +141,11 @@ func readFullMode(abs string) (string, error) {
 	for i, line := range lines {
 		fmt.Fprintf(&b, "%d\t%s\n", i+1, line)
 	}
-	approx := len(data) / 4 // ~4 chars per token, rough
+	approx := len(data) / 4
 	header := fmt.Sprintf("[full read: ~%d tokens. consider mode=skeleton (~10x cheaper) or mode=slice if you need only part of this file]\n", approx)
 	return header + strings.TrimRight(b.String(), "\n"), nil
 }
 
-// readSkeletonMode emits structural lines: imports, top-level decls, signatures.
-// Heuristic — language-agnostic regex pass. Good enough for Go/JS/TS/Python.
-// Tree-sitter upgrade is a future step.
 var skeletonPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^\s*(package|import|from|using|namespace)\b`),
 	regexp.MustCompile(`^\s*(func|function|def|class|type|struct|interface|trait|enum|impl|module)\b`),
@@ -152,9 +153,6 @@ var skeletonPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^\s*(export\s+)?(default\s+)?(function|class|const|let|var|async)\b.*[({]`),
 }
 
-// readDirListing returns a one-shot listing when read is called on a directory.
-// Trailing '/' marks subdirectories so the next call knows which entries are
-// files (readable) vs dirs (need to descend).
 func readDirListing(abs string) (string, error) {
 	fis, err := os.ReadDir(abs)
 	if err != nil {
@@ -189,7 +187,6 @@ func readSkeletonMode(abs string) (string, error) {
 	}
 	defer f.Close()
 
-	// Same reasoning as readSliceMode: Scanner trips on long lines.
 	const skelLineCap = 4096
 	r := bufio.NewReader(f)
 	var out []string
