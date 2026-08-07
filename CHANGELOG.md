@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/atakang7/axon/compare/v1.0.0...v1.0.1) (2026-08-07)
+
+
+### Refactoring
+
+* apply GCMF principles to memory, session, and llm components ([59e78bc](https://github.com/atakang7/axon/commit/59e78bc4507fea611eafe166a44731de62c42997))
+
 ## [1.0.0](https://github.com/atakang7/axon/compare/v0.4.3...v1.0.0) (2026-05-19)
 
 
