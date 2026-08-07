@@ -10,7 +10,7 @@ import (
 )
 
 // tools_helpers.go — shared helpers used by every tool: atomic writes,
-// formatter dispatch, binary-file refusal, output capping, reason check.
+// binary-file refusal, output capping.
 
 // ---------------------------------------------------------------------------
 // Shared utilities

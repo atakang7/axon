@@ -85,7 +85,7 @@ internal/session/
 
 internal/tools/
   tools.go            Tool, Workspace, Plan, Catalog, schema helpers
-  tools_helpers.go    WriteFileAtomic, formatters, binary refusal, output capping
+  tools_helpers.go    WriteFileAtomic, binary refusal, output capping
   tool_read.go        ReadTool (slice/full, directory listing)
   tool_write.go       WriteTool (save/replace_string/replace_lines/insert_at_line)
   tool_search.go      SearchTool (literal/regex)
@@ -146,13 +146,14 @@ func (a *Agent) Close() error
 
 // Config — Model and SystemPrompt are required; the rest default to zero.
 type Config struct {
-    Model        Model     // agent.OpenAI(...), or your own implementation
-    SystemPrompt string
-    Tools        []Tool
-    Pruner       *Pruner
-    Cwd          string
-    Session      *Session
-    OnEvent      func(ctx, Event)
+    Model           Model  // agent.OpenAI(...), or your own implementation
+    SystemPrompt    string
+    Tools           []Tool // Name, Schema and Fn required; checked at New
+    ExcludeBuiltins []string
+    Pruner          *Pruner
+    Cwd             string
+    Session         *Session
+    OnEvent         func(ctx, Event)
 }
 
 // The model is an interface, so the turn loop can be driven with no network.
@@ -176,8 +177,8 @@ type Tool struct {
 
 // Errors
 var (
-    ErrNoProvider, ErrNoSystemPrompt, ErrToolNotFound,
-    ErrDuplicateTool, ErrInterrupted, ErrAmbiguousProvider
+    ErrNoModel, ErrNoSystemPrompt, ErrToolNotFound,
+    ErrDuplicateTool, ErrInvalidTool, ErrInterrupted
 )
 ```
 
@@ -225,30 +226,33 @@ var (
 - **New observability sink** → pass a function as `Config.OnEvent`. Fan-out is
   a one-line closure.
 - **New session store** → pass your own `*Session` via `Config.Session`.
-- **New provider** → extend `LoadProviders` in `internal/llm/provider.go`; the
-  streaming layer is OpenAI-compatible and already handles most.
+- **New provider** → construct a `Provider` and hand it to `agent.OpenAI`; the
+  streaming layer is OpenAI-compatible and already handles most. Resolving
+  which provider to use is the embedder's job, not the runtime's.
 
 ## Testing
 
 Tests run against real files and real processes in `t.TempDir()`, never mocks,
-and never touch the network. The sharp edges are covered deliberately:
+and never touch the network. `Model` is an interface precisely so the turn loop
+can be driven by a scripted fake with no API key.
+
+Coverage is being rebuilt. What exists today:
 
 - `internal/session` — the `ContextMessages` projection: parked blocks take
   their orphaned tool results with them, the log is never mutated, the system
-  prompt is unremovable, and `Reset` keeps a session where the embedder put it.
-- `internal/tools` — registry independence, the `bash_output` delta contract,
-  process-group kills, injected limits, and binary refusal.
-- `agent` — the turn loop against a scripted `Model`: tools run until the model
-  stops asking, results are fed back into the next request, only schemas cross
-  to the model, events bracket the turn, and an interrupt actually ends the step.
+  prompt is unremovable, `Reset` keeps a session where the embedder put it, the
+  undo ledger stays bounded, and `Append` does not rescan the log.
+- `agent` — `New` rejects an incomplete or colliding tool, and excluding a
+  built-in frees its name.
 
-`agent/architecture_test.go` checks the layering table above. Be clear about
-what it is worth: while every layer imports the one below it, Go's own
-import-cycle detection already rejects an upward import, and that is the real
-guard. The test adds two things the compiler will not catch — a new package
-added outside the documented layering, and a wrong-direction import that is not
-a cycle, which becomes possible the moment any layer stops importing the one
-below it. It is a drift alarm, not the enforcement mechanism.
+Still to be written: the turn loop, the pruner, every tool, the SSE client, the
+limit resolution, and the layering drift alarm that `agent/architecture_test.go`
+used to provide. That alarm is worth restoring but worth being honest about —
+Go's own import-cycle detection already rejects an upward import, and that is
+the real guard. A test adds two things the compiler will not catch: a new
+package outside the documented layering, and a wrong-direction import that is
+not a cycle, which becomes possible the moment any layer stops importing the
+one below it.
 
 ```
 go test ./...
