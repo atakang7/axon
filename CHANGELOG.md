@@ -1,3 +1,13 @@
+## [1.0.2](https://github.com/atakang7/axon/compare/v1.0.1...v1.0.2) (2026-08-07)
+
+
+### Refactoring
+
+* **api:** deconstruct monolithic api.go into semantic modules ([1d62914](https://github.com/atakang7/axon/commit/1d6291478af978ca7159fa5d521d78b84a2b618d))
+* **tools:** isolate ExecTool logic into semantic functions ([21f8c62](https://github.com/atakang7/axon/commit/21f8c62d7365f6fa14fa4c7cb129bb005f843608))
+* **tools:** simplify ReadTool with parseAndValidateReadInput ([9ea6a22](https://github.com/atakang7/axon/commit/9ea6a226851dbba4ee90c4a7c47c867e56fddaab))
+* **tools:** simplify WriteTool with parseAndValidateWriteInput ([71c62bc](https://github.com/atakang7/axon/commit/71c62bc0ae6c3857b6c7457c8ca7d1d315780c84))
+
 ## [1.0.1](https://github.com/atakang7/axon/compare/v1.0.0...v1.0.1) (2026-08-07)
 
 
