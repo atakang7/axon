@@ -134,7 +134,6 @@ axon/
 │   ├── llm/                   # Model port, Provider, wire types, OpenAI client
 │   ├── session/               # append-only log, cwd, undo, task plan, projection
 │   └── tools/                 # the seven built-in tools, background shells
-├── examples/minimal/          # smallest possible embed of agent.New + Step
 └── ...                        # README, ARCHITECTURE, CHANGELOG, LICENSE, go.mod
 ```
 

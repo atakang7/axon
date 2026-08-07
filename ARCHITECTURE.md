@@ -92,9 +92,6 @@ internal/tools/
   tool_exec.go        ExecTool, BashOutputTool, KillShellTool
   tool_task.go        TaskTool
   bg.go               BackgroundShells registry (servers, watchers)
-
-examples/minimal/
-  main.go             smallest possible embed of agent.New + agent.Step
 ```
 
 ## The turn loop
