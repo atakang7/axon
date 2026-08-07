@@ -119,11 +119,13 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		// Include the first line of the body: a bare status tells you nothing
-		// about which of a dozen things the provider objected to.
-		s := bufio.NewScanner(resp.Body)
-		s.Scan()
-		return nil, fmt.Errorf("API error %s: %s", resp.Status, s.Text())
+		// Include the body: a bare status tells you nothing about which of a
+		// dozen things the provider objected to. Reading only the first line
+		// was worse than useless on the providers that answer with pretty
+		// printed JSON — the message was always "{". Bounded so a provider that
+		// returns an HTML error page cannot flood the log.
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("API error %s: %s", resp.Status, strings.TrimSpace(string(detail)))
 	}
 	return readStream(ctx, resp.Body, req.Stream, cancel)
 }
