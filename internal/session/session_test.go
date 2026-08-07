@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,6 +109,51 @@ func TestParkSubstitutesBreadcrumb(t *testing.T) {
 	}
 	if s.Messages[1].Content != "a very long answer" {
 		t.Fatalf("park overwrote stored content: %q", s.Messages[1].Content)
+	}
+}
+
+// The undo ledger is part of the session, and the session is re-marshalled in
+// full on every save — so an unbounded ledger is paid for on every later tool
+// call. Twenty edits of a 550KB file used to produce a 23MB session file.
+func TestEditLedgerIsBounded(t *testing.T) {
+	s := newAt(t, "s.json")
+	chunk := strings.Repeat("x", 1<<20) // 1MB per edit
+
+	for i := range 40 {
+		s.RecordEdit(fmt.Sprintf("/tmp/f%d.go", i), chunk)
+	}
+
+	total := 0
+	for _, e := range s.Edits {
+		total += len(e.Before)
+	}
+	if total > maxUndoBytes {
+		t.Fatalf("ledger holds %d bytes, over the %d budget", total, maxUndoBytes)
+	}
+	if len(s.Edits) == 0 {
+		t.Fatal("eviction emptied the ledger; the newest edit must survive")
+	}
+
+	// Eviction drops the oldest, so the most recent edit is the one Undo gets.
+	e, ok := s.Undo()
+	if !ok {
+		t.Fatal("nothing to undo after 40 edits")
+	}
+	if e.Path != "/tmp/f39.go" {
+		t.Fatalf("Undo returned %s, want the most recent edit", e.Path)
+	}
+}
+
+// A single edit larger than the whole budget must still be undoable — it is the
+// one a user is most likely to want back.
+func TestOversizedEditSurvivesEviction(t *testing.T) {
+	s := newAt(t, "s.json")
+	s.RecordEdit("/tmp/small.go", "before")
+	s.RecordEdit("/tmp/huge.go", strings.Repeat("y", maxUndoBytes+1))
+
+	e, ok := s.Undo()
+	if !ok || e.Path != "/tmp/huge.go" {
+		t.Fatalf("Undo returned (%v, %v), want the oversized edit", e.Path, ok)
 	}
 }
 

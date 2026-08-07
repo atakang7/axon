@@ -39,6 +39,15 @@ type Edit struct {
 	Path, Before string
 }
 
+// maxUndoBytes bounds the total pre-edit content the ledger retains. Undo is an
+// escape hatch for the last few edits, not a version-control system, and the
+// ledger is serialised into the session file on every save — so an unbounded
+// one is paid for on every subsequent tool call, not just once.
+//
+// Measured before this cap existed: twenty edits of a 550KB file produced a
+// 23MB session file and a 269ms Save, with a Save after every tool result.
+const maxUndoBytes = 8 << 20
+
 // Task is the agent's registered objective for non-trivial work. It lives on
 // the Session so it persists across turns and appears on the dashboard every
 // turn until the work is done. One task at a time; setting a new one overwrites
@@ -222,10 +231,31 @@ func (s *Session) SetCwd(p string) error {
 	return nil
 }
 
+// RecordEdit stores the pre-edit contents of path so the write can be reverted,
+// evicting the oldest entries once the ledger exceeds maxUndoBytes.
+//
+// The most recent edit is never evicted: a single write larger than the whole
+// budget must still be undoable, since it is the one the user is most likely to
+// want back.
 func (s *Session) RecordEdit(path, before string) {
 	s.editsMu.Lock()
 	defer s.editsMu.Unlock()
 	s.Edits = append(s.Edits, Edit{Path: path, Before: before})
+
+	total := 0
+	for _, e := range s.Edits {
+		total += len(e.Before)
+	}
+	drop := 0
+	for drop < len(s.Edits)-1 && total > maxUndoBytes {
+		total -= len(s.Edits[drop].Before)
+		drop++
+	}
+	if drop > 0 {
+		// Re-slicing alone would keep the evicted contents alive through the
+		// backing array, which is the entire thing being reclaimed here.
+		s.Edits = append([]Edit(nil), s.Edits[drop:]...)
+	}
 }
 
 func (s *Session) Undo() (Edit, bool) {
