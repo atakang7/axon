@@ -120,6 +120,7 @@ func LoadOrCreateSession() *Session {
 		if json.Unmarshal(data, &s) == nil {
 			s.path = p
 			s.ensure()
+			s.assignIDs()
 			return &s
 		}
 		backup := fmt.Sprintf("%s.corrupt.%d", p, time.Now().Unix())
@@ -171,6 +172,21 @@ func (s *Session) ensure() {
 			s.Cwd = wd
 		}
 	}
+}
+
+// assignIDs stamps a block ID on every message that lacks one and re-derives
+// the high-water mark. It runs exactly once per session, at load, because that
+// is the only moment a log can arrive with IDs this process did not issue.
+// Append maintains NextBlockID from there, and it is persisted.
+//
+// This used to live in ensure(), which Append, Save, Park and ContextMessages
+// all call — so recording one message re-scanned and re-parsed the entire log,
+// and a single turn cost time quadratic in its own length. IDs are issued at
+// append time; nothing else needs to look for them.
+//
+// System messages are deliberately skipped: they are never parkable, so they
+// need no handle.
+func (s *Session) assignIDs() {
 	max := s.NextBlockID
 	for i := range s.Messages {
 		m := &s.Messages[i]
@@ -190,6 +206,9 @@ func (s *Session) ensure() {
 	s.NextBlockID = max
 }
 
+// Append records one message and issues its block ID. This is the only
+// supported way to grow the log: a Session whose Messages slice is assigned to
+// directly gets no IDs, and its blocks are therefore invisible to the pruner.
 func (s *Session) Append(m llm.Msg) {
 	s.ensure()
 	if m.Role != "system" && m.Content != "" && m.ID == "" {

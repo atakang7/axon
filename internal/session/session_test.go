@@ -112,6 +112,54 @@ func TestParkSubstitutesBreadcrumb(t *testing.T) {
 	}
 }
 
+// Appending one message must cost the same on a long log as on a short one.
+// ensure() used to re-scan and fmt.Sscanf every existing ID on every Append,
+// Save and ContextMessages, which made a single turn quadratic in its own
+// length. Allocation is the tell: a scan of the log allocates per message,
+// a constant-time append does not.
+func TestAppendDoesNotScanTheLog(t *testing.T) {
+	s := newAt(t, "s.json")
+	for range 5000 {
+		s.Append(llm.Msg{Role: "assistant", Content: "a previous block"})
+	}
+
+	perAppend := testing.AllocsPerRun(100, func() {
+		s.Append(llm.Msg{Role: "assistant", Content: "one more"})
+	})
+
+	// Generous: the point is that this is a small constant rather than
+	// something that grows with the 5000 blocks already recorded.
+	if perAppend > 8 {
+		t.Fatalf("Append made %.0f allocations on a 5000-block log; it is scanning the log", perAppend)
+	}
+}
+
+// A log loaded from disk still gets IDs backfilled and its high-water mark
+// re-derived — that work moved out of ensure(), it did not disappear.
+func TestLoadedLogGetsIDsBackfilled(t *testing.T) {
+	s := newAt(t, "s.json")
+	s.Messages = []llm.Msg{
+		{Role: "system", Content: "you are an agent"},
+		{Role: "user", Content: "no id yet"},
+		{Role: "assistant", Content: "already stamped", ID: "m7"},
+	}
+	s.assignIDs()
+
+	if s.Messages[0].ID != "" {
+		t.Fatalf("system message was given an ID: %q", s.Messages[0].ID)
+	}
+	if s.Messages[1].ID == "" {
+		t.Fatal("message loaded without an ID was not backfilled")
+	}
+	if s.NextBlockID < 7 {
+		t.Fatalf("high-water mark %d ignores the existing m7; the next append would collide", s.NextBlockID)
+	}
+	s.Append(llm.Msg{Role: "user", Content: "fresh"})
+	if got := s.Messages[3].ID; got == "m7" {
+		t.Fatalf("new block reused an existing ID: %q", got)
+	}
+}
+
 // The undo ledger is part of the session, and the session is re-marshalled in
 // full on every save — so an unbounded ledger is paid for on every later tool
 // call. Twenty edits of a 550KB file used to produce a 23MB session file.
@@ -163,12 +211,12 @@ func TestParkRefusesReasonlessAndSystem(t *testing.T) {
 	s := newAt(t, "s.json")
 	s.Messages = []llm.Msg{{Role: "system", Content: "you are an agent"}}
 	s.Append(llm.Msg{Role: "user", Content: "hi"})
-	s.ensure()
+	s.assignIDs()
 
 	if err := s.Park(s.Messages[1].ID, "gist", "  "); err == nil {
 		t.Fatal("Park accepted a blank reason")
 	}
-	// The system message is skipped by ensure() and never gets an ID, so it is
+	// The system message is skipped by assignIDs and never gets an ID, so it is
 	// unreachable by ID; assert it survives a park attempt on every ID.
 	for _, m := range s.Messages {
 		_ = s.Park(m.ID, "gist", "test")
