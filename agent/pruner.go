@@ -185,45 +185,12 @@ func parsePrunerResponse(s string) ([]int, error) {
 	return p.Forget, nil
 }
 
-// extractJSONObject finds the outermost {...} in s. Naive brace-matching
-// that ignores braces inside strings. Adequate for our small expected
-// outputs.
+// extractJSONObject finds the outermost {...} in s.
 func extractJSONObject(s string) string {
 	start := strings.IndexByte(s, '{')
-	if start < 0 {
-		return ""
-	}
-	depth := 0
-	inStr := false
-	esc := false
-	for i := start; i < len(s); i++ {
-		c := s[i]
-		if inStr {
-			if esc {
-				esc = false
-				continue
-			}
-			if c == '\\' {
-				esc = true
-				continue
-			}
-			if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		if c == '"' {
-			inStr = true
-			continue
-		}
-		if c == '{' {
-			depth++
-		} else if c == '}' {
-			depth--
-			if depth == 0 {
-				return s[start : i+1]
-			}
-		}
+	end := strings.LastIndexByte(s, '}')
+	if start >= 0 && end >= start {
+		return s[start : end+1]
 	}
 	return ""
 }
