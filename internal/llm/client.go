@@ -157,8 +157,6 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 		body["parallel_tool_calls"] = true
 	}
 
-	body["include_reasoning"] = true
-
 	if c.cfg.ReasoningEffort != "" || c.cfg.ExcludeReasoning {
 		reasoning := map[string]any{}
 		if c.cfg.ReasoningEffort != "" {
@@ -183,9 +181,10 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 // reply accumulates a streamed response. Tool calls arrive as fragments keyed
 // by index and are assembled at the end.
 type reply struct {
-	content  strings.Builder
-	toolArgs map[int]*strings.Builder
-	toolMeta map[int]ToolCall
+	content          strings.Builder
+	reasoningContent strings.Builder
+	toolArgs         map[int]*strings.Builder
+	toolMeta         map[int]ToolCall
 }
 
 // readStream consumes the SSE body until the server closes it, applying an
@@ -264,8 +263,11 @@ func (r *reply) consume(text string, stream Stream) {
 	}
 	delta := chunk.Choices[0].Delta
 
-	if delta.ReasoningContent != "" && stream.Reasoning != nil {
-		stream.Reasoning(delta.ReasoningContent)
+	if delta.ReasoningContent != "" {
+		r.reasoningContent.WriteString(delta.ReasoningContent)
+		if stream.Reasoning != nil {
+			stream.Reasoning(delta.ReasoningContent)
+		}
 	}
 	if delta.Content != "" {
 		r.content.WriteString(delta.Content)
@@ -290,8 +292,13 @@ func (r *reply) consume(text string, stream Stream) {
 // message assembles the finished assistant message, ordering tool calls by the
 // index the provider gave them so the sequence is stable.
 func (r *reply) message() *Msg {
+	finalContent := r.content.String()
+	if r.reasoningContent.Len() > 0 {
+		finalContent = "<think>\n" + r.reasoningContent.String() + "\n</think>\n" + finalContent
+	}
+
 	if len(r.toolMeta) == 0 {
-		return &Msg{Role: "assistant", Content: r.content.String()}
+		return &Msg{Role: "assistant", Content: finalContent}
 	}
 	indices := make([]int, 0, len(r.toolMeta))
 	for i := range r.toolMeta {
@@ -310,5 +317,5 @@ func (r *reply) message() *Msg {
 		}
 		calls = append(calls, tc)
 	}
-	return &Msg{Role: "assistant", Content: r.content.String(), ToolCalls: calls}
+	return &Msg{Role: "assistant", Content: finalContent, ToolCalls: calls}
 }
