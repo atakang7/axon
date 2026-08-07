@@ -230,7 +230,15 @@ and never touch the network. The sharp edges are covered deliberately:
   process-group kills, injected limits, and binary refusal.
 - `agent` — the turn loop against a scripted `Model`: tools run until the model
   stops asking, results are fed back into the next request, only schemas cross
-  to the model, and events bracket the turn. Plus the layering rule itself.
+  to the model, events bracket the turn, and an interrupt actually ends the step.
+
+`agent/architecture_test.go` checks the layering table above. Be clear about
+what it is worth: while every layer imports the one below it, Go's own
+import-cycle detection already rejects an upward import, and that is the real
+guard. The test adds two things the compiler will not catch — a new package
+added outside the documented layering, and a wrong-direction import that is not
+a cycle, which becomes possible the moment any layer stops importing the one
+below it. It is a drift alarm, not the enforcement mechanism.
 
 ```
 go test ./...
