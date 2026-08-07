@@ -15,14 +15,14 @@ cd axon
 go build ./...  # verify it compiles
 ```
 
-The repo currently ships without tests — they were removed during the runtime/CLI split and will be reintroduced against the new API. New behavior changes should land with tests.
+Run `go test -race ./...`. Tests run against real files and real processes in `t.TempDir()`, never mocks of our own code, and never touch the network — the turn loop is exercised against a scripted `Model`. New behaviour changes land with tests.
 
 ## Philosophy
 
 **Minimalism is paramount.** axon is intentionally small and focused. Before adding anything, ask:
 - Is this truly essential to the core experience?
 - Could this be done by the user (or the agent) instead of being built‑in?
-- Does it align with the "terminal coding agent" vision?
+- Is it a *runtime* concern, or a product decision? The runtime reads no config file, shells out to nothing at startup, and adds nothing to the system prompt but the tool catalog. Anything that costs tokens on every call belongs to the embedder.
 
 **No unnecessary abstractions.** Prefer concrete, straightforward code. If you find yourself creating interfaces or factories, reconsider.
 
@@ -38,11 +38,12 @@ The repo currently ships without tests — they were removed during the runtime/
 - Export only what's needed
 
 ### Testing
-- Every change that touches logic should have a test (the suite is being rebuilt; new tests are welcome)
-- Tests should be fast and isolated
+- Every change that touches logic should have a test
+- Tests should be fast and isolated; use `t.TempDir()` and `t.Setenv`
 - Use table‑driven tests for similar cases
-- Mock external dependencies (filesystem, HTTP) when appropriate
-- Run `go build ./...` before submitting; run `go test ./...` once tests exist in the area you touched
+- Prefer real execution over mocks: real files, real processes, real `rg`. Fake only what crosses the network — implement `agent.Model` for that
+- When a test covers a bug fix, verify it fails without the fix before you submit it
+- Run `go build ./... && go vet ./... && go test -race ./...` before submitting
 
 ### Pull requests
 - **One feature/fix per PR** – keep changes focused
@@ -126,13 +127,11 @@ axon/
 │   ├── setup.go               # New, Reset, Undo, Cd, Close — lifecycle
 │   ├── loop.go                # Step and Run — the turn loop
 │   ├── handler.go             # Event, Kind, ToolEvent, PruneInfo, SessionInfo
-│   ├── prompt.go              # buildSystemPrompt (role + catalog + probes + orientation)
-│   ├── probes.go              # startup shell probes
-│   ├── pruner.go              # secondary-LLM pruner
-│   └── exports.go             # DataDir, ConfigDir, ProvidersPath, ... (path helpers)
+│   ├── prompt.go              # buildSystemPrompt (role text + tool catalog)
+│   └── pruner.go              # secondary-LLM pruner
 ├── internal/                  # unreachable from outside the module
-│   ├── config/config.go       # XDG/AXON_* paths, Limits
-│   ├── llm/                   # Provider, Msg, ToolCall, ToolSpec, streaming Client
+│   ├── config/config.go       # session/bg paths, Limits
+│   ├── llm/                   # Model port, Provider, wire types, OpenAI client
 │   ├── session/               # append-only log, cwd, undo, task plan, projection
 │   └── tools/                 # the seven built-in tools, background shells
 ├── examples/minimal/          # smallest possible embed of agent.New + Step

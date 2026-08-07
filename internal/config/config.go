@@ -1,5 +1,10 @@
-// Package config resolves every value axon takes from its environment:
-// on-disk locations and the numeric limits that bound tool output.
+// Package config resolves the two things axon still takes from its
+// environment: where it stores session and background-shell state, and the
+// numeric limits that bound tool output.
+//
+// It no longer resolves providers or prompt content. Choosing a model and
+// writing a system prompt belong to the embedder, so nothing here reads a
+// config file the embedder did not ask for.
 //
 // BOUNDARY RULE: config is the bottom layer. It imports nothing from this
 // module, and it must stay that way — no Provider, no Session, no Tool. If a
@@ -65,17 +70,6 @@ func homeDir() string {
 // Locations — AXON_* override, then XDG, then a conventional default
 // ---------------------------------------------------------------------------
 
-// Dir returns where the runtime looks for providers.json and context.json.
-func Dir() string {
-	if dir := String("AXON_CONFIG_DIR"); dir != "" {
-		return dir
-	}
-	if dir := String("XDG_CONFIG_HOME"); dir != "" {
-		return filepath.Join(dir, "agent")
-	}
-	return filepath.Join(homeDir(), ".config", "agent")
-}
-
 // DataDir returns where the runtime writes session files and background-shell
 // logs.
 func DataDir() string {
@@ -86,22 +80,6 @@ func DataDir() string {
 		return filepath.Join(dir, "agent")
 	}
 	return filepath.Join(homeDir(), ".local", "share", "agent")
-}
-
-// ProvidersPath returns the providers.json the runtime reads at startup.
-func ProvidersPath() string {
-	if path := String("AXON_PROVIDERS_PATH"); path != "" {
-		return path
-	}
-	return filepath.Join(Dir(), "providers.json")
-}
-
-// ProbesPath returns the context.json holding the startup probe list.
-func ProbesPath() string {
-	if path := String("AXON_CONTEXT_PROBES_PATH"); path != "" {
-		return path
-	}
-	return filepath.Join(Dir(), "context.json")
 }
 
 // SessionPath returns the session file for the current working directory.

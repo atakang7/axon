@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -42,12 +41,6 @@ func toolCall(id, name, args string) ToolCall {
 func newTestAgent(t *testing.T, model Model, tools ...Tool) *Agent {
 	t.Helper()
 	dir := t.TempDir()
-
-	probes := filepath.Join(dir, "probes.json")
-	if err := os.WriteFile(probes, []byte("[]"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AXON_CONTEXT_PROBES_PATH", probes)
 	t.Setenv("AXON_SESSION_PATH", filepath.Join(dir, "session.json"))
 
 	ag, err := New(Config{
@@ -163,9 +156,6 @@ func TestStepEmitsEventsInOrder(t *testing.T) {
 
 	var kinds []Kind
 	dir := t.TempDir()
-	probes := filepath.Join(dir, "probes.json")
-	os.WriteFile(probes, []byte("[]"), 0644)
-	t.Setenv("AXON_CONTEXT_PROBES_PATH", probes)
 	t.Setenv("AXON_SESSION_PATH", filepath.Join(dir, "session.json"))
 
 	ag, err := New(Config{

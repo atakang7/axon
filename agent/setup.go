@@ -56,7 +56,7 @@ func New(cfg Config) (*Agent, error) {
 	}
 
 	if len(sess.Messages) == 0 {
-		sess.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(sess, cfg.SystemPrompt)}}
+		sess.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(cfg.SystemPrompt)}}
 	}
 
 	return &Agent{

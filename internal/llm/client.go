@@ -51,6 +51,18 @@ type Stream struct {
 	ToolArgs  func(name, delta string)
 }
 
+// Provider is one endpoint: base URL, model name, credentials, and any
+// provider-specific routing options forwarded verbatim as the request's
+// "provider" field.
+//
+// How an embedder decides which provider to use — a config file, flags, an
+// environment cascade — is the embedder's business. This package only needs
+// the resolved answer.
+type Provider struct {
+	Name, BaseURL, Model, APIKey string
+	Extra                        json.RawMessage
+}
+
 // ToolSpec is a tool as the model sees it: a name, a description, and a JSON
 // schema. It deliberately has no implementation field.
 //

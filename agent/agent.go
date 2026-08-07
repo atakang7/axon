@@ -67,7 +67,7 @@ func (a *Agent) Interrupt() bool {
 }
 
 func (a *Agent) initSessionMessages() {
-	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.session, a.systemPrompt)}}
+	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.systemPrompt)}}
 }
 
 func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {

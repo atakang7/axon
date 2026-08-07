@@ -16,6 +16,11 @@ import (
 // harnesses are others. The runtime makes no assumptions about who is
 // calling — no flags, no signals, no terminal, no os.Exit.
 //
+// The runtime supplies no configuration of its own. It does not read a
+// config file, shell out at startup, or inspect the working directory: an
+// embedder decides which model to talk to and what the agent is, and passes
+// both in. Everything the runtime adds to the prompt is the tool catalog.
+//
 // Everything below the surface lives under internal/: config, llm, session
 // and tools. They are unreachable from outside this module, which is what
 // makes them free to change. The layering is strict and one-directional:
@@ -95,22 +100,9 @@ type (
 // or creates a fresh one. A corrupt file is backed up, never silently lost.
 func LoadOrCreateSession() *Session { return session.LoadOrCreateSession() }
 
-// ErrAmbiguousProvider signals that several (provider, model) pairs are
-// configured and no LLM_PROVIDER selector was given — prompt the user.
-var ErrAmbiguousProvider = llm.ErrAmbiguousProvider
-
 // OpenAI builds a Model for any OpenAI-compatible endpoint. This is the
 // implementation that ships; Config.Model accepts any other.
 func OpenAI(cfg OpenAIConfig) (Model, error) { return llm.NewClient(cfg) }
-
-// LoadProviders reads providers.json. A missing file is not an error.
-func LoadProviders() (map[string]Provider, error) { return llm.LoadProviders() }
-
-// ResolveProvider picks one (provider, model) pair from configuration and the
-// environment, returning ErrAmbiguousProvider when the choice is not unique.
-func ResolveProvider(providers map[string]Provider) (Provider, error) {
-	return llm.ResolveProvider(providers)
-}
 
 // toolSpecs projects tools down to what the model layer is allowed to see:
 // name, description, schema — never Fn. This is the one place the execution

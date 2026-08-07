@@ -2,7 +2,9 @@
 
 **A Go runtime for building LLM agents.**
 
-Axon is a small library that runs the agent loop — streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under pressure, and emitting structured events at every step. Embedders supply a provider, optional tools, and a handler; the runtime drives the loop.
+Axon is a small library that runs the agent loop — streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under pressure, and emitting structured events at every step. Embedders supply a model, a system prompt, optional tools and a handler; the runtime drives the loop.
+
+It has no configuration of its own: no config file, nothing shelled out at startup, nothing added to your prompt but the tool catalog.
 
 This repo is library-only. The terminal coding agent that previously lived at `cmd/axon` has moved to its own project: **[bouton](https://github.com/atakang7/bouton)**.
 
@@ -128,6 +130,10 @@ type Model interface {
 OpenAI-compatible endpoint. Implement the interface yourself to reach a
 different provider, route through a gateway, or hand the loop a deterministic
 fake so it can be driven in tests with no network and no API key.
+
+### What the runtime does not do
+
+It does not resolve providers (no `providers.json`, no `LLM_*` cascade — hand it a `Model`), and it does not enrich your prompt with machine facts or a directory listing. Those are embedder decisions with a per-call token cost, so they belong where you can see them.
 
 ### Pluggable session storage
 

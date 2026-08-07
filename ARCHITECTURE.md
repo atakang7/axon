@@ -61,17 +61,14 @@ agent/
   setup.go            New, Reset, Undo, Cd, Close — construction and lifecycle
   loop.go             Step and Run — the turn loop
   handler.go          Event, Kind, ToolEvent, PruneInfo, SessionInfo
-  prompt.go           buildSystemPrompt (role + tool catalog + probes + orientation)
-  probes.go           startup shell probes spliced into the system prompt
+  prompt.go           buildSystemPrompt (role text + tool catalog)
   pruner.go           secondary LLM that parks old blocks
-  exports.go          DataDir, ConfigDir, ProvidersPath, … (path helpers embedders need)
 
 internal/config/
-  config.go           paths, Limits, LoadLimits
+  config.go           session/bg paths, Limits, LoadLimits
 
 internal/llm/
-  provider.go         Provider, LoadProviders, ResolveProvider
-  client.go           Model, Request, Stream, Msg, ToolCall, ToolSpec; OpenAI Client
+  client.go           Model, Request, Stream, Provider, Msg, ToolCall, ToolSpec; OpenAI Client
 
 internal/session/
   session.go          Session, append-only log, edit history, undo, task plan
@@ -202,6 +199,10 @@ var (
   (tmp + rename). Formatters run after, never during, so `Undo` is byte-exact.
 - **The runtime never writes to stdout.** All observability goes through
   `Config.OnEvent`.
+- **The runtime has no configuration of its own.** It reads no config file,
+  shells out to nothing at startup, and does not inspect the working
+  directory. The embedder chooses the model and writes the system prompt; the
+  only thing the runtime adds to that prompt is the tool catalog.
 - **The model is a port, not a dependency.** `Config.Model` is an interface, so
   the entire turn loop runs against a scripted fake with no network.
 
@@ -257,4 +258,12 @@ go test ./...
   string on every call. It was dropped: it cost latency and tokens on every
   call, and the model's own reasoning trace already serves as the audit log.
 - **No YAML in the runtime.** YAML is a CLI concern. The contract is `Config`.
+- **No provider discovery.** Parsing `providers.json`, resolving an
+  `LLM_*` environment cascade and picking between configured models is the
+  embedder's job. The runtime takes a `Model` that is already resolved.
+- **No prompt enrichment.** Earlier versions shelled out to `pwd`, `whoami`,
+  `uname` and `git status` at startup, and injected a two-level listing of the
+  working directory, into every system prompt. Both taxed every model call with
+  tokens the embedder never asked for and could not remove. An embedder that
+  wants them puts them in `SystemPrompt`, where the cost is visible.
 ```
