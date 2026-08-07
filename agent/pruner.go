@@ -61,8 +61,9 @@ func NewPruner(m Model) *Pruner {
 
 // prunerMaxTokens caps the curator's reply. The answer is one line of JSON; a
 // chatty model that wants to think out loud hits this wall instead of burning
-// tokens on prose nobody reads.
-const prunerMaxTokens = 256
+// tokens on prose nobody reads. Increased to 4096 to accommodate reasoning models
+// that must "think" before they output the final JSON object.
+const prunerMaxTokens = 4096
 
 // ContextTokens estimates what the next request will cost. Character count
 // over four is plenty for a threshold decision; provider-accurate counting
