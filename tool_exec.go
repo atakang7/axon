@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-
 // ---------------------------------------------------------------------------
 // EXEC
 // ---------------------------------------------------------------------------
@@ -28,7 +27,6 @@ type execInput struct {
 	TimeoutSeconds  int    `json:"timeout_seconds"`
 	RunInBackground bool   `json:"run_in_background"`
 }
-
 
 func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, lim Limits) (*execInput, string, error) {
 	var p execInput
@@ -63,7 +61,6 @@ func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, lim Limits) (*
 
 	return &p, resolvedDir, nil
 }
-
 
 func ExecTool(ws Workspace, shells *BackgroundShells, lim Limits) Tool {
 	return Tool{

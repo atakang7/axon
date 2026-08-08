@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-
 // ---------------------------------------------------------------------------
 // SEARCH
 // ---------------------------------------------------------------------------
@@ -20,7 +19,6 @@ const searchDescription = `Search across files.
 To find where a symbol is defined, search for its declaration in the syntax of
 the language it is written in — you know the language, so you can match it
 exactly instead of guessing.`
-
 
 func SearchTool(ws Workspace, lim Limits) Tool {
 	return Tool{
