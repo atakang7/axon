@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  # semantic-release commits `chore(release): [skip ci]` back to main, which
+  # by design does not trigger this workflow. If a release fails partway,
+  # main is then ahead of the last attempt and re-running the old run just
+  # reports "local branch is behind". This is the way back in without
+  # pushing an empty commit.
+  workflow_dispatch:
 
 permissions:
   contents: write
