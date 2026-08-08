@@ -10,8 +10,9 @@ import (
 	"strings"
 )
 
+
 // ---------------------------------------------------------------------------
-// READ — single-file content. Three modes, conscious pick.
+// READ
 // ---------------------------------------------------------------------------
 
 const readDescription = `Read one file, or list a directory.
@@ -29,6 +30,7 @@ type readInput struct {
 	Limit  int    `json:"limit"`
 }
 
+
 func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, string, error) {
 	var p readInput
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -41,8 +43,10 @@ func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, s
 		p.Mode = readSlice
 	}
 	abs := ws.ResolvePath(p.Path)
+
 	return &p, abs, nil
 }
+
 
 func ReadTool(ws Workspace, lim Limits) Tool {
 	limit := lim.ReadLines

@@ -1,67 +1,13 @@
-// Package tools implements the agent's hands and legs: reading and writing
-// files, running commands, searching a tree, and tracking a task plan.
-//
-// BOUNDARY RULE: tools may import session, llm and config. It must never
-// import agent — the runtime depends on the tools, never the reverse.
-//
-// Tools do not receive a *Session. Each one takes the narrowest
-// interface it actually needs (Workspace, Plan), declared here on the
-// consumer side, which Session satisfies implicitly. That is what makes a
-// tool independently testable: a fake Workspace is four lines, and a tool
-// physically cannot reach conversation state that is none of its business.
 package axon
-
-// tools.go — tool surface, capability interfaces, schema helpers.
-//
-// Design contract (see memory: project_axon_tools_design.md, project_axon_tools_spec.md):
-//
-//   1. Single LLM, no subagents. Tools are plain functions.
-//   2. Tools: read, write, exec, search, bash_output, kill_shell, task.
-//   3. Tools take no `reason` field. Earlier builds required a justification
-//      string on every call; it was dropped to cut per-call latency and token
-//      cost. The model's own reasoning trace is the audit log.
-//   4. `mode` is required on write and task (modes take different params and
-//      have no safe default). On read and search, `mode` is optional with a
-//      sensible default (slice, literal) so the cheap common case is one
-//      argument away. Every mode stays reachable; defaults only set the
-//      default door. exec has no mode: one door is not a choice.
-//   5. Tool descriptions teach the cost model in plain terms ("tool-call loops
-//      resend full context"). Reality, not nagging.
-//   6. No tool guesses at the language it is looking at. read/skeleton,
-//      search/trace and exec/verify each shipped a table of keywords, regexes
-//      or build-system markers, and each was silently wrong outside the two
-//      languages it was written against — skeleton returned one line for a
-//      Rust file with four functions and nothing at all for C, while claiming
-//      to be a 10x cost saving. A confident wrong answer is worse than no
-//      answer, and the model already knows what language it is reading: it can
-//      write a regex that fits, or run the build command it can see. The
-//      runtime supplies the primitives (read, search, exec), not the guesses.
-//   7. Output is structured. Exec failures return diagnostics, not raw dumps.
-//   8. No mutation blocklist and no built-in approval prompt today. The LLM
-//      decides what's destructive. Hard caps that DO exist: per-call exec
-//      timeout (capped by AXON_EXEC_MAX_TIMEOUT_SECONDS), tail-line cap
-//      (AXON_EXEC_MAX_TAIL_LINES), output byte caps on exec/search, full-read
-//      size cap (AXON_READ_MAX_BYTES), and binary-file refusal on read. Tool
-//      execution is bound to the turn context so Ctrl-C kills the running
-//      command's process group. A user-facing approval/sandbox layer is a
-//      future addition, not present in this build — do not assume it exists.
-//   9. Atomicity: all writes go through WriteFileAtomic (tmp + rename, mode
-//      preserved), so a write is byte-exact and /undo restores exactly what
-//      was there. The runtime does not format what it writes: bundling a
-//      dispatch table of twenty third-party formatter binaries was unbounded
-//      maintenance debt for a capability the agent already has — it can run
-//      gofmt through exec like anyone else.
 
 import (
 	"fmt"
 	"strings"
 )
 
+
 // ---------------------------------------------------------------------------
 // Capabilities
-//
-// The narrow interfaces tools depend on, declared here because this is the
-// consuming side. *Session satisfies both; so does a four-line fake.
 // ---------------------------------------------------------------------------
 
 // Workspace is the directory a tool operates in, plus the ledger it records

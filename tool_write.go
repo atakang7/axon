@@ -9,8 +9,9 @@ import (
 	"strings"
 )
 
+
 // ---------------------------------------------------------------------------
-// WRITE — five modes. Each mode has a deterministic contract.
+// WRITE
 // ---------------------------------------------------------------------------
 
 const writeDescription = `Write to a file.
@@ -30,15 +31,19 @@ type writeInput struct {
 	EndLine   int    `json:"end_line"`
 }
 
+
 func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput, string, error) {
 	var p writeInput
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
 	}
+
 	if strings.TrimSpace(p.Path) == "" {
 		return nil, "", fmt.Errorf("path is required")
 	}
+
 	abs := ws.ResolvePath(p.Path)
+
 
 	switch p.Mode {
 	case writeSave:

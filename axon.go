@@ -40,12 +40,13 @@ type Model interface {
 type Request struct {
 	// Messages is the conversation as the model should see it.
 	Messages []Msg
+
 	// Tools the model may call. Empty means none.
 	Tools []ToolSpec
+
 	// MaxTokens caps this one reply. Zero means the model's own default.
-	// It is per-request because callers want different budgets: an agent turn
-	// may need thousands of tokens, while the pruner needs one line of JSON.
 	MaxTokens int
+
 	// Stream receives output as it arrives. The zero value discards it.
 	Stream Stream
 }
@@ -65,9 +66,11 @@ type Request struct {
 // arguments to end-of-message rather than streaming them, so a UI watching
 // only Token can look frozen during a perfectly healthy stream.
 type Stream struct {
-	Token     func(text string)
+	Token func(text string)
+
 	Reasoning func(text string)
-	ToolArgs  func(name, delta string)
+
+	ToolArgs func(name, delta string)
 }
 
 // Provider is one endpoint: base URL, model name, credentials, and any
@@ -79,12 +82,16 @@ type Stream struct {
 type Provider struct {
 	// Name labels the provider, e.g. "openai" or "openrouter".
 	Name string
+
 	// BaseURL is the API root. "/v1" is appended when absent. Required.
 	BaseURL string
+
 	// Model is the model identifier the provider expects. Required.
 	Model string
+
 	// APIKey is sent as a bearer token when set.
 	APIKey string
+
 	// Extra is provider-specific routing JSON, passed through untouched.
 	Extra json.RawMessage
 }
@@ -100,25 +107,37 @@ type Provider struct {
 // carries a one-line breadcrumb in place of Content; Content itself is never
 // modified, so the full history survives for audit.
 type Msg struct {
-	Role        string     `json:"role"`
-	Content     string     `json:"content,omitempty"`
-	Reasoning   string     `json:"reasoning,omitempty"`
-	ToolCalls   []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID  string     `json:"tool_call_id,omitempty"`
-	ToolName    string     `json:"tool_name,omitempty"`
-	ID          string     `json:"id,omitempty"`
-	Parked      bool       `json:"parked,omitempty"`
-	ParkSummary string     `json:"park_summary,omitempty"`
-	ParkReason  string     `json:"park_reason,omitempty"`
+	Role string `json:"role"`
+
+	Content string `json:"content,omitempty"`
+
+	Reasoning string `json:"reasoning,omitempty"`
+
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+
+	ToolCallID string `json:"tool_call_id,omitempty"`
+
+	ToolName string `json:"tool_name,omitempty"`
+
+	ID string `json:"id,omitempty"`
+
+	Parked bool `json:"parked,omitempty"`
+
+	ParkSummary string `json:"park_summary,omitempty"`
+
+	ParkReason string `json:"park_reason,omitempty"`
 }
 
 // ToolCall is the model's request to invoke one tool. Arguments is raw JSON
 // as the model emitted it, which is not guaranteed to match the schema.
 type ToolCall struct {
-	ID       string `json:"id,omitempty"`
-	Type     string `json:"type,omitempty"`
+	ID string `json:"id,omitempty"`
+
+	Type string `json:"type,omitempty"`
+
 	Function struct {
-		Name      string `json:"name"`
+		Name string `json:"name"`
+
 		Arguments string `json:"arguments"`
 	} `json:"function"`
 }
@@ -162,14 +181,17 @@ type Tool struct {
 	// bash_output, kill_shell) — a built-in removed via Config.ExcludeBuiltins
 	// frees its name.
 	Name string
+
 	// Description tells the model when to reach for this tool. Optional, but a
 	// tool the model cannot tell apart from the others will not get called.
 	Description string
+
 	// Schema is the JSON Schema for Fn's arguments. Required; use
 	// map[string]any{"type": "object"} for a tool that takes none. It is not
 	// optional because providers disagree about what a null parameter schema
 	// means, and the disagreement surfaces as a rejected request.
 	Schema map[string]any
+
 	// Fn runs the tool. The context is turn-scoped: it is cancelled when the
 	// turn is interrupted, so long-running work should honour it.
 	Fn func(ctx context.Context, args json.RawMessage) (string, error)
@@ -183,7 +205,9 @@ type Tool struct {
 // boundary, so a Model implementation can never reach a tool's behaviour —
 // only its shape.
 type ToolSpec struct {
-	Name        string
+	Name string
+
 	Description string
-	Schema      map[string]any
+
+	Schema map[string]any
 }

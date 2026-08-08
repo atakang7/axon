@@ -14,9 +14,6 @@ import (
 	"time"
 )
 
-// The vocabulary lives in the public root package so embedders can read its
-// documentation; these aliases keep this file readable.
-
 // ---------------------------------------------------------------------------
 // The OpenAI-compatible implementation
 // ---------------------------------------------------------------------------
@@ -27,13 +24,10 @@ type ClientConfig struct {
 	Provider Provider
 
 	// MaxTokens is the default cap when a Request does not set its own.
-	// Zero uses defaultMaxTokens. Lower it for budget-sensitive providers
-	// that reject very large caps.
+	// Zero uses defaultMaxTokens. Lower it for budget-sensitive providers.
 	MaxTokens int
 
-	// ReasoningEffort is forwarded as OpenRouter/OpenAI-style
-	// reasoning.effort ("none", "minimal", "low", …). Use "none" for fast
-	// tool-use runs on models that otherwise think too long before acting.
+	// ReasoningEffort is forwarded as OpenRouter/OpenAI-style reasoning.effort.
 	ReasoningEffort string
 
 	// ExcludeReasoning asks the provider to omit reasoning tokens entirely.
@@ -42,9 +36,7 @@ type ClientConfig struct {
 
 const defaultMaxTokens = 20000
 
-// Client is an OpenAI-compatible streaming Model. It is safe for concurrent
-// use: every request carries its own state, and nothing here is mutated after
-// construction.
+// Client is an OpenAI-compatible streaming Model. Safe for concurrent use.
 type Client struct {
 	http    *http.Client
 	baseURL string
@@ -52,7 +44,6 @@ type Client struct {
 }
 
 // NewClient builds a Model for any OpenAI-compatible endpoint.
-
 func NewClient(cfg ClientConfig) (*Client, error) {
 	url := strings.TrimRight(cfg.Provider.BaseURL, "/")
 	if url == "" {
@@ -68,19 +59,12 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}, nil
 }
 
-// Model reports which model this client talks to. Useful for logging and for
-// the session header.
+// Model reports which model this client talks to.
 func (c *Client) Model() string { return c.cfg.Provider.Model }
 
-// idleTimeout bounds silence mid-stream. Without it a provider that stops
-
-// sending without closing the connection would hold the turn until the HTTP
-// client's own 30-minute timeout.
 const idleTimeout = 20 * time.Second
 
-// Complete sends one request and assembles the reply, invoking req.Stream as
-
-// output arrives.
+// Complete sends one request and assembles the reply, invoking req.Stream as output arrives.
 func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	body, err := c.requestBody(req)
 	if err != nil {
@@ -94,11 +78,8 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
-	// Without Accept: text/event-stream, some OpenAI-compatible routers
-	// (OpenRouter in particular) buffer the whole SSE response server-side and
-	// flush it as one chunk, making `stream: true` behave like a non-streaming
-	// call. Setting it forces true incremental delivery.
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	if key := c.cfg.Provider.APIKey; key != "" {
@@ -110,20 +91,16 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode >= 300 {
-		// Include the body: a bare status tells you nothing about which of a
-		// dozen things the provider objected to. Reading only the first line
-		// was worse than useless on the providers that answer with pretty
-		// printed JSON — the message was always "{". Bounded so a provider that
-		// returns an HTML error page cannot flood the log.
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("API error %s: %s", resp.Status, strings.TrimSpace(string(detail)))
 	}
+
 	return readStream(ctx, resp.Body, req.Stream, cancel)
 }
 
 func (c *Client) requestBody(req Request) ([]byte, error) {
-
 	tools := make([]map[string]any, len(req.Tools))
 	for i, t := range req.Tools {
 		tools[i] = map[string]any{"type": "function", "function": map[string]any{
@@ -145,26 +122,28 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 		"stream":     true,
 		"max_tokens": maxTokens,
 	}
+
 	if len(tools) > 0 {
 		body["tools"] = tools
 		body["parallel_tool_calls"] = true
 	}
 
 	if c.cfg.ReasoningEffort != "" || c.cfg.ExcludeReasoning {
-
 		reasoning := map[string]any{}
 		if c.cfg.ReasoningEffort != "" {
 			reasoning["effort"] = c.cfg.ReasoningEffort
 		}
 		if c.cfg.ExcludeReasoning {
 			reasoning["exclude"] = true
-			body["include_reasoning"] = false // legacy OpenRouter compatibility
+			body["include_reasoning"] = false
 		}
 		body["reasoning"] = reasoning
 	}
+
 	if len(c.cfg.Provider.Extra) > 0 {
 		body["provider"] = c.cfg.Provider.Extra
 	}
+
 	return json.Marshal(body)
 }
 
@@ -172,9 +151,7 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 // SSE
 // ---------------------------------------------------------------------------
 
-// reply accumulates a streamed response. Tool calls arrive as fragments keyed
-
-// by index and are assembled at the end.
+// reply accumulates a streamed response. Tool calls arrive as fragments keyed by index.
 type reply struct {
 	content          strings.Builder
 	reasoningContent strings.Builder
@@ -183,16 +160,7 @@ type reply struct {
 }
 
 // readStream consumes the SSE body until the server closes it, applying an
-
 // idle timeout so a silent provider fails fast instead of hanging the turn.
-// cancel aborts the in-flight request when that happens.
-//
-// The read is synchronous because it is already interruptible: cancelling the
-// request context closes the response body, and a blocked sc.Scan returns with
-// an error the moment that happens. An earlier version pumped lines through a
-// buffered channel from a second goroutine to give the reader a deadline. That
-// bought nothing the transport does not already provide, and cost a goroutine,
-// a channel, a three-way select and a timer-drain dance per completion.
 func readStream(ctx context.Context, body io.Reader, stream Stream, cancel context.CancelFunc) (*Msg, error) {
 	out := &reply{
 		toolArgs: map[int]*strings.Builder{},
@@ -202,8 +170,6 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 
-	// stalled distinguishes our own idle cancellation from the caller's: both
-	// surface as a closed body, and only one of them is the provider's fault.
 	var stalled atomic.Bool
 	idle := time.AfterFunc(idleTimeout, func() {
 		stalled.Store(true)
@@ -219,11 +185,11 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 	if stalled.Load() {
 		return nil, fmt.Errorf("stream stalled: no data for %s (provider went silent mid-response)", idleTimeout)
 	}
+
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	// A cancelled turn can close the body cleanly enough that the scanner just
-	// ends. Report the cancellation rather than a truncated reply.
+
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

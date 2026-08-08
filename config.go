@@ -30,6 +30,7 @@ import (
 	"time"
 )
 
+
 // ---------------------------------------------------------------------------
 // Environment primitives
 // ---------------------------------------------------------------------------
@@ -40,6 +41,7 @@ import (
 func String(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
 }
+
 
 // Int returns key parsed as an integer, or fallback when it is unset,
 // unparseable, or below min. A bad override never breaks startup — it is
@@ -56,6 +58,7 @@ func Int(key string, fallback, min int) int {
 	return n
 }
 
+
 func homeDir() string {
 	if home, _ := os.UserHomeDir(); home != "" {
 		return home
@@ -65,6 +68,7 @@ func homeDir() string {
 	}
 	return "."
 }
+
 
 // ---------------------------------------------------------------------------
 // Locations — AXON_* override, then XDG, then a conventional default
@@ -82,6 +86,7 @@ func DataDir() string {
 	return filepath.Join(homeDir(), ".local", "share", "agent")
 }
 
+
 // SessionPath returns the session file for the current working directory.
 func SessionPath() string {
 	if path := String("AXON_SESSION_PATH"); path != "" {
@@ -89,6 +94,7 @@ func SessionPath() string {
 	}
 	return filepath.Join(DataDir(), "sessions", sessionKeyForCwd()+".json")
 }
+
 
 // BackgroundLogRoot returns the per-process directory under which each shell
 // registry gets its own subdirectory. Keyed by PID because shells never
@@ -102,6 +108,7 @@ func SessionPath() string {
 func BackgroundLogRoot(pid int) string {
 	return filepath.Join(DataDir(), "bg", strconv.Itoa(pid))
 }
+
 
 // sessionKeyForCwd derives a stable per-directory key so each working
 // directory keeps its own session. The directory basename makes the file
@@ -118,6 +125,7 @@ func sessionKeyForCwd() string {
 	sum := sha256.Sum256([]byte(wd))
 	return filepath.Base(wd) + "-" + hex.EncodeToString(sum[:6])
 }
+
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -140,34 +148,45 @@ func sessionKeyForCwd() string {
 type Limits struct {
 	// ReadLines is the default number of lines a slice read returns.
 	ReadLines int
+
 	// ReadMaxBytes caps a full read. Without it a 50MB log would be loaded
 	// into memory and split line-by-line straight into context.
 	ReadMaxBytes int
 
+
 	// ExecTimeout is the default foreground exec timeout.
 	ExecTimeout time.Duration
+
 	// ExecMaxTimeout caps any timeout the model asks for. Without a ceiling
 	// one tool call could hold the turn for hours.
 	ExecMaxTimeout time.Duration
+
 	// ExecOutputBytes caps the output of a single foreground exec.
 	ExecOutputBytes int
+
 	// ExecTailLines is the default number of trailing lines kept from a
 	// command whose output exceeded the cap.
 	ExecTailLines int
+
 	// ExecMaxTailLines caps the tail size the model may request.
 	ExecMaxTailLines int
+
 
 	// BashOutputMaxBytes caps one background-shell poll, so a noisy server
 	// cannot dump megabytes into context per read.
 	BashOutputMaxBytes int
 
+
 	// SearchTimeout bounds a single ripgrep invocation.
 	SearchTimeout time.Duration
+
 	// SearchMaxMatches caps how many matches one search returns.
 	SearchMaxMatches int
+
 	// SearchOutputBytes caps the total byte size of a search result.
 	SearchOutputBytes int
 }
+
 
 // LoadLimits reads every cap from the environment, falling back to defaults
 // chosen so the runtime works with nothing configured at all.
@@ -175,9 +194,11 @@ func LoadLimits() Limits {
 	seconds := func(key string, fallback int) time.Duration {
 		return time.Duration(Int(key, fallback, 1)) * time.Second
 	}
+
 	return Limits{
 		ReadLines:    Int("AXON_READ_LIMIT", 200, 1),
 		ReadMaxBytes: Int("AXON_READ_MAX_BYTES", 2*1024*1024, 1),
+
 
 		ExecTimeout:      seconds("AXON_EXEC_TIMEOUT_SECONDS", 30),
 		ExecMaxTimeout:   seconds("AXON_EXEC_MAX_TIMEOUT_SECONDS", 600),
@@ -185,7 +206,9 @@ func LoadLimits() Limits {
 		ExecTailLines:    Int("AXON_EXEC_TAIL_LINES", 50, 1),
 		ExecMaxTailLines: Int("AXON_EXEC_MAX_TAIL_LINES", 500, 1),
 
+
 		BashOutputMaxBytes: Int("AXON_BASH_OUTPUT_MAX_BYTES", 32*1024, 1),
+
 
 		SearchTimeout:     seconds("AXON_SEARCH_TIMEOUT_SECONDS", 30),
 		SearchMaxMatches:  Int("AXON_SEARCH_LIMIT", 100, 1),

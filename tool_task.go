@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+
 const taskDescription = `Track a multi-step plan. Skip for one-shot work.
   - register: set goal + steps (short imperatives, ~3-7 words each).
   - advance: mark current step done, move to next.
@@ -14,12 +15,14 @@ const taskDescription = `Track a multi-step plan. Skip for one-shot work.
 
 Goal must be phrased as the question the final answer will answer (e.g. "is anything in the blog weak for my career?" — not "review the blog"). Aim for 2-4 steps; more than 4 means you haven't scoped tightly enough — narrow the goal or split into a follow-up.`
 
+
 func TaskTool(plan Plan) Tool {
 	type input struct {
 		Action string   `json:"action"`
 		Goal   string   `json:"goal"`
 		Steps  []string `json:"steps"`
 	}
+
 	return Tool{
 		Name:        toolTask,
 		Description: taskDescription,
@@ -33,6 +36,7 @@ func TaskTool(plan Plan) Tool {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
+
 			cleanSteps := func(in []string) []TaskStep {
 				out := make([]TaskStep, 0, len(in))
 				for _, d := range in {
@@ -44,6 +48,7 @@ func TaskTool(plan Plan) Tool {
 				}
 				return out
 			}
+
 			switch p.Action {
 			case "register":
 				if strings.TrimSpace(p.Goal) == "" {

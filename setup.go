@@ -5,11 +5,6 @@ import (
 	"strings"
 )
 
-// setup.go — construction and lifecycle: New, Reset, Undo, Cd, Close.
-//
-// Everything an Agent owns is created here and released in Close. Nothing is
-// process-global, so two Agents in one process share no mutable state.
-
 // New constructs an Agent. Built-in tools are always present; cfg.Tools
 // are appended.
 func New(cfg Config) (*Agent, error) {
@@ -30,25 +25,29 @@ func New(cfg Config) (*Agent, error) {
 		}
 	}
 
-	// One background-shell registry per Agent, created here and terminated in
-	// Close. This used to be a package global, which meant two Agents in one
-	// process shared shells and either one's Close killed the other's servers.
 	shells := NewBackgroundShells()
-
-	// Caps are resolved once, here, and travel with the agent. No tool reads
-	// the environment at call depth, so two agents in one process can be tuned
-	// independently and a test can vary a cap without touching os.Environ.
 	limits := LoadLimits()
+
+	var mcpClients []*mcpClient
+	for _, mc := range cfg.MCPServers {
+		client, mcpTools, err := startMCP(mc)
+		if err != nil {
+			for _, c := range mcpClients {
+				c.Close()
+			}
+			return nil, fmt.Errorf("agent: mcp start %q: %w", mc.Command, err)
+		}
+		mcpClients = append(mcpClients, client)
+		cfg.Tools = append(cfg.Tools, mcpTools...)
+	}
 
 	toolset := builtinTools(sess, shells, limits, cfg.ExcludeBuiltins)
 	seen := map[string]bool{}
 	for _, t := range toolset {
 		seen[t.Name] = true
 	}
+
 	for _, t := range cfg.Tools {
-		// A tool is checked here rather than where it is called: a nil Fn
-		// discovered mid-turn panics inside the embedder, after the model has
-		// already committed to the call and the user has already paid for it.
 		if missing := missingToolFields(t); missing != "" {
 			return nil, fmt.Errorf("%w: tool %q has no %s", ErrInvalidTool, t.Name, missing)
 		}
@@ -74,6 +73,7 @@ func New(cfg Config) (*Agent, error) {
 		systemPrompt:    cfg.SystemPrompt,
 		customTools:     cfg.Tools,
 		excludeBuiltins: cfg.ExcludeBuiltins,
+		mcpClients:      mcpClients,
 	}, nil
 }
 
@@ -86,11 +86,14 @@ func missingToolFields(t Tool) string {
 	switch {
 	case strings.TrimSpace(t.Name) == "":
 		return "Name"
+
 	case t.Schema == nil:
 		return "Schema"
+
 	case t.Fn == nil:
 		return "Fn"
 	}
+
 	return ""
 }
 
@@ -109,19 +112,23 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 		SearchTool(ws, lim),
 		TaskTool(ws),
 	}
+
 	if len(exclude) == 0 {
 		return all
 	}
+
 	skip := make(map[string]bool, len(exclude))
 	for _, name := range exclude {
 		skip[name] = true
 	}
+
 	kept := all[:0]
 	for _, t := range all {
 		if !skip[t.Name] {
 			kept = append(kept, t)
 		}
 	}
+
 	return kept
 }
 
@@ -129,8 +136,11 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 // Background shells are killed.
 func (a *Agent) Reset() {
 	a.shells.KillAll()
+
 	a.session.Reset()
+
 	a.initSessionMessages()
+
 	a.tools = append(builtinTools(a.session, a.shells, a.limits, a.excludeBuiltins), a.customTools...)
 }
 
@@ -144,19 +154,18 @@ func (a *Agent) Undo() (string, bool) {
 	if !ok {
 		return "", false
 	}
+
 	if err := WriteFileAtomic(e.Path, []byte(e.Before)); err != nil {
 		return "", false
 	}
-	// The log still holds the write tool-call and its success result, so
-	// without this note the model would keep reasoning about contents the file
-	// no longer has -- editing around a change that is no longer there, or
-	// reporting work it did not keep. The log is append-only, so the revert is
-	// recorded rather than erased.
+
 	a.session.Append(Msg{
 		Role:    "system",
 		Content: fmt.Sprintf("[the edit to %s was reverted; the file is back to its previous contents]", e.Path),
 	})
+
 	_ = a.session.Save()
+
 	return e.Path, true
 }
 
@@ -166,7 +175,9 @@ func (a *Agent) Cd(target string) (string, error) {
 	if err := a.session.SetCwd(target); err != nil {
 		return "", err
 	}
+
 	_ = a.session.Save()
+
 	return a.session.Cwd, nil
 }
 
@@ -174,5 +185,9 @@ func (a *Agent) Cd(target string) (string, error) {
 // handles, etc. Idempotent.
 func (a *Agent) Close() error {
 	a.shells.KillAll()
+	for _, c := range a.mcpClients {
+		c.Close()
+	}
+
 	return nil
 }

@@ -13,22 +13,7 @@ import (
 	"time"
 )
 
-// Background processes are how the agent operates servers, watchers, and
-// anything else that should outlive a single foreground exec. Modeled after
-// Claude Code's Bash run_in_background + BashOutput + KillShell trio: each
-// process gets a stable shell ID, output streams to a per-shell log file,
-// and reads return only the bytes added since the last read so the agent
-// does not keep redownloading growing logs at full token cost.
-//
-// State lives in-process (the registry map) and on disk (log files under
-// dataDir/bg//). Shells do not survive a restart. On clean exit and on
-// reset, every live shell is killed; we do not leak dev servers.
-//
-// OWNERSHIP: a BackgroundShells registry belongs to one Agent, which creates
-// it at construction and kills it on Close. It used to be a package-level
-// global, which meant two Agents in the same process shared one registry and
-// either one's Close or Reset terminated the other's servers. Nothing here is
-// ambient any more: if you can reach a shell, someone handed you the registry.
+
 type bgShell struct {
 	ID        string
 	Command   string
@@ -41,46 +26,41 @@ type bgShell struct {
 	logFile *os.File
 	doneCh  chan struct{}
 
+
 	mu       sync.Mutex
-	exitCode int    // valid only after doneCh closed
-	exitNote string // "exited", "killed", "signaled: ..."
+	exitCode int
+	exitNote string
 	finished bool
 
-	readOffset int64 // bytes already returned by bash_output
 
-	// Identity of the log file seen by the previous readNew call.
-	// Offset alone cannot detect replacement when the new file is larger
-	// than the old one, so track device + inode as well.
+	readOffset int64
+
+
 	logDev uint64
 	logIno uint64
 }
+
 
 type BackgroundShells struct {
 	mu     sync.Mutex
 	shells map[string]*bgShell
 	next   int
-	dir    string // log directory owned exclusively by this registry
+	dir    string
 }
 
 // NewBackgroundShells creates an empty registry with its own log directory.
-//
-// The directory is allocated uniquely rather than derived from the PID: shell
-// IDs restart at bash_1 in every registry, so two registries in one process
-// sharing a directory would write both their bash_1 logs to the same file and
-// each would serve the other's output to its agent.
 func NewBackgroundShells() *BackgroundShells {
 	root := BackgroundLogRoot(os.Getpid())
 	if err := os.MkdirAll(root, 0755); err != nil {
-		// Fall back to the system temp dir rather than failing construction:
-		// losing background-shell logging is survivable, refusing to build an
-		// agent is not.
 		root = os.TempDir()
 	}
+
 
 	dir, err := os.MkdirTemp(root, "shells-")
 	if err != nil {
 		dir = root
 	}
+
 
 	return &BackgroundShells{
 		shells: map[string]*bgShell{},
@@ -88,8 +68,8 @@ func NewBackgroundShells() *BackgroundShells {
 	}
 }
 
-// LogDir is the directory this registry writes shell logs to. Exposed for
-// tests asserting that two registries never share storage.
+
+// LogDir is the directory this registry writes shell logs to.
 func (r *BackgroundShells) LogDir() string {
 	return r.dir
 }

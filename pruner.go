@@ -1,23 +1,5 @@
 package axon
 
-// pruner.go — context curator.
-//
-// A small, fast model that runs out-of-band and decides which blocks the main
-// agent no longer needs. The runtime parks what it names: the block is
-// replaced in the model's view by a one-line breadcrumb, while the original
-// stays in the session for human audit. The main agent has no memory tools and
-// does not know any of this is happening.
-//
-// There is exactly one verb. An earlier design had three states — active,
-// parked, forgotten — and a recall path back to the agent. Nothing ever used
-// forget or recall, so they are gone: a block is either active or parked, and
-// parking is one-way as far as the agent is concerned. One verb is also why
-// the prompt and the parser can no longer disagree about what was asked for.
-//
-// The pruner fires only when the context is large enough for curation to pay
-// for itself AND has grown meaningfully since the last pass. Sharp growth is
-// the strongest signal that garbage just arrived.
-
 import (
 	"context"
 	"encoding/json"
@@ -29,10 +11,10 @@ import (
 // PrunerConfig sets the policy for the context curator.
 type PrunerConfig struct {
 	Model        Model
-	FloorTokens  int    // Minimum context size before pruning starts (default 10000)
-	GrowthTokens int    // Tokens since last pass required to fire again (default 5000)
-	SystemPrompt string // Instructions telling the pruner what to do (defaults provided)
-	Reminder     string // Text appended to the user prompt to enforce format (defaults provided)
+	FloorTokens  int
+	GrowthTokens int
+	SystemPrompt string
+	Reminder     string
 }
 
 type Pruner struct {
@@ -52,12 +34,11 @@ const (
 const defaultPrunerReminder = "\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park."
 
 // NewPruner wraps a model — typically a cheap, fast, long-context one.
-// The model may be shared with the agent. The output cap lives on the request,
-// not on the model, so the pruner cannot narrow anyone else's budget.
 func NewPruner(cfg PrunerConfig) *Pruner {
 	if cfg.Model == nil {
 		return nil
 	}
+
 	p := &Pruner{
 		model:        cfg.Model,
 		floor:        cfg.FloorTokens,
@@ -65,6 +46,7 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 		systemPrompt: cfg.SystemPrompt,
 		reminder:     cfg.Reminder,
 	}
+
 	if p.floor == 0 {
 		p.floor = defaultPruneFloor
 	}
@@ -77,6 +59,7 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 	if p.reminder == "" {
 		p.reminder = defaultPrunerReminder
 	}
+
 	return p
 }
 

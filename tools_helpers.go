@@ -9,9 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-// tools_helpers.go — shared helpers used by every tool: atomic writes,
-// binary-file refusal, output capping.
-
 // ---------------------------------------------------------------------------
 // Shared utilities
 // ---------------------------------------------------------------------------
@@ -22,30 +19,33 @@ import (
 // truncated mix. Same-dir tmp matters: cross-filesystem renames degrade to
 // copy+unlink and lose the atomicity guarantee.
 //
-// File mode handling: if the destination already exists, its mode is preserved
-// (executable bits, group-readable scripts, etc.). New files default to 0644.
-// Callers that want the file formatted afterwards run a formatter themselves;
-// the agent can simply call gofmt through exec.
+// File mode handling: if the destination already exists, its mode is preserved.
+// New files default to 0644.
 func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if dir == "" {
 		dir = "."
 	}
+
 	mode := os.FileMode(0644)
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		mode = info.Mode().Perm()
 	}
+
 	tmp, err := os.CreateTemp(dir, ".axon-write-*")
 	if err != nil {
 		return err
 	}
+
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpPath) }
+
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		cleanup()
 		return err
 	}
+
 	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		cleanup()

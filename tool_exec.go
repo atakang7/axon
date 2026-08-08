@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
+
 // ---------------------------------------------------------------------------
-// EXEC — non-interactive shell command. LLM controls tail size.
+// EXEC
 // ---------------------------------------------------------------------------
 
 const execDescription = `Run a shell command. tail_lines is required.
@@ -28,32 +29,41 @@ type execInput struct {
 	RunInBackground bool   `json:"run_in_background"`
 }
 
+
 func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, lim Limits) (*execInput, string, error) {
 	var p execInput
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
 	}
+
 	resolvedDir := ws.Dir()
 	if strings.TrimSpace(p.Dir) != "" {
 		resolvedDir = ws.ResolvePath(p.Dir)
 	}
+
 	if strings.TrimSpace(p.Command) == "" {
 		return nil, "", fmt.Errorf("command is required")
 	}
+
 	if !p.RunInBackground && p.TailLines <= 0 {
 		return nil, "", fmt.Errorf("tail_lines is required and must be > 0")
 	}
+
 	if max := lim.ExecMaxTailLines; p.TailLines > max {
 		p.TailLines = max
 	}
+
 	if p.TimeoutSeconds <= 0 {
 		p.TimeoutSeconds = int(lim.ExecTimeout.Seconds())
 	}
+
 	if max := int(lim.ExecMaxTimeout.Seconds()); p.TimeoutSeconds > max {
 		p.TimeoutSeconds = max
 	}
+
 	return &p, resolvedDir, nil
 }
+
 
 func ExecTool(ws Workspace, shells *BackgroundShells, lim Limits) Tool {
 	return Tool{

@@ -6,13 +6,6 @@ import (
 	"time"
 )
 
-// handler.go — event types.
-//
-// The runtime emits observability events at every meaningful moment in
-// a turn. Embedders consume them by setting Config.OnEvent — a plain
-// function field, not an interface. Composition is one line of closure;
-// no helpers needed.
-
 // Kind discriminates Event payloads. New kinds may be added in minor
 // versions; embedders should treat unknown kinds as no-ops.
 type Kind int
@@ -46,8 +39,7 @@ type Event struct {
 	Turn int
 	Time time.Time
 
-	// Text — used by Token, Reasoning, AssistantEnd, UserInput, Info,
-	// Error.
+	// Text — used by Token, Reasoning, AssistantEnd, UserInput, Info, Error.
 	Text string
 
 	// Tool — used by ToolArgDelta, ToolCall, ToolResult, ToolError.
@@ -72,7 +64,7 @@ type ToolEvent struct {
 	Args      json.RawMessage
 	ArgsDelta string
 	Result    string
-	BlockID   string // the #mN handle stamped on the tool message
+	BlockID   string
 }
 
 // PruneInfo carries metrics from a pruner run.
@@ -96,11 +88,14 @@ func (a *Agent) emit(ctx context.Context, e Event) {
 	if a == nil || a.onEvent == nil {
 		return
 	}
+
 	if e.Time.IsZero() {
 		e.Time = time.Now()
 	}
+
 	if e.Turn == 0 && a.session != nil {
 		e.Turn = a.session.Turn
 	}
+
 	a.onEvent(ctx, e)
 }

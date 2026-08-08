@@ -13,51 +13,38 @@ import (
 	"time"
 )
 
-// agent.go — Agent struct, chat/tool dispatch, retry policy.
-//
-// The public driving loops (Step, Run) live in api.go. This file owns
-// the internal mechanics: streaming a chat completion, retrying
-// retryable errors, executing a single tool call.
-
 type Agent struct {
 	model   Model
 	tools   []Tool
 	session *Session
 	pruner  *Pruner
 
-	// turnCancel, when non-nil, cancels the currently in-flight chat call.
-	// Set at the start of each chat(), cleared after. Embedders call
-	// Interrupt() to fire it (e.g. from a SIGINT handler).
+	// Cancels the currently in-flight chat call; set by chat(), cleared after.
 	turnCancel atomic.Pointer[context.CancelFunc]
 
-	// onEvent is the public event sink. nil means events are discarded.
+	// Public event sink; nil discards events.
 	onEvent func(ctx context.Context, e Event)
 
-	// systemPrompt is the agent's role text, captured at construction so
-	// Reset can rebuild the system message after the session is wiped.
+	// Agent's role text, used by Reset to rebuild system message.
 	systemPrompt string
 
-	// customTools holds the caller-supplied tools (Config.Tools). Reset
-	// preserves these across session wipes; built-ins are rebound.
+	// Caller-supplied tools, preserved by Reset across session wipes.
 	customTools []Tool
 
-	// excludeBuiltins is Config.ExcludeBuiltins, kept so Reset rebinds the
-	// same tool set the agent was constructed with.
+	// Config.ExcludeBuiltins, kept so Reset rebinds the same tool set.
 	excludeBuiltins []string
 
-	// shells is this agent's background-process registry. Owned here rather
-	// than package-global so two agents in one process cannot terminate each
-	// other's servers on Close or Reset.
+	// Background-process registry; per-agent so Close/Reset don't affect others.
 	shells *BackgroundShells
 
-	// limits are the tool caps resolved once at construction. Held here so
-	// Reset can rebind the built-ins without re-reading the environment, and
-	// so two agents in one process can be tuned independently.
+	// Tool limits resolved at construction; let Reset rebind built-ins without re-reading env.
 	limits Limits
+
+	// MCP clients managed by this agent.
+	mcpClients []*mcpClient
 }
 
-// Interrupt cancels the in-flight chat if there is one, returning true.
-// Returns false when no turn is active.
+// Interrupt cancels the in-flight chat call, or false if no turn is active.
 func (a *Agent) Interrupt() bool {
 	cf := a.turnCancel.Load()
 	if cf == nil {
@@ -71,9 +58,11 @@ func (a *Agent) initSessionMessages() {
 	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.systemPrompt, a.tools)}}
 }
 
+
 func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 	const maxAttempts = 10
 	var lastErr error
+
 	for attempt := range maxAttempts {
 		if attempt > 0 {
 			backoff := 1 << attempt
@@ -87,6 +76,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			case <-time.After(time.Duration(backoff) * time.Second):
 			}
 		}
+
 		a.emit(ctx, Event{Kind: KindAPICall})
 		msg, err := a.model.Complete(ctx, Request{
 			Messages: a.session.ContextMessages(),
@@ -103,12 +93,11 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 				},
 			},
 		})
+
 		if err == nil {
 			if msg != nil && strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 {
 				lastErr = fmt.Errorf("empty response from model")
 				a.emit(ctx, Event{Kind: KindError, Err: lastErr})
-				// Reasoning models sometimes emit only thinking tokens.
-				// Retry once, then fail.
 				if attempt >= 1 {
 					return nil, lastErr
 				}
@@ -116,12 +105,14 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			}
 			return msg, nil
 		}
+
 		a.emit(ctx, Event{Kind: KindError, Err: err})
 		lastErr = err
 		if !retryable(err) {
 			return nil, err
 		}
 	}
+
 	return nil, lastErr
 }
 
@@ -130,14 +121,17 @@ func (a *Agent) runTool(ctx context.Context, tc ToolCall) Msg {
 		if t.Name != tc.Function.Name {
 			continue
 		}
+
 		input := json.RawMessage(tc.Function.Arguments)
 		out, err := t.Fn(ctx, input)
 		if err != nil {
 			a.emit(ctx, Event{Kind: KindToolError, Tool: &ToolEvent{ID: tc.ID, Name: tc.Function.Name}, Err: err})
 			return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: err.Error()}
 		}
+
 		return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: out}
 	}
+
 	return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: "tool not found"}
 }
 
@@ -145,28 +139,35 @@ func retryable(err error) bool {
 	if err == nil {
 		return false
 	}
+
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
+
 	var nerr net.Error
 	if errors.As(err, &nerr) && nerr.Timeout() {
 		return true
 	}
+
 	m := err.Error()
 	for _, code := range []string{"API error 429", "API error 500", "API error 502", "API error 503", "API error 504"} {
 		if strings.Contains(m, code) {
 			return true
 		}
 	}
+
 	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
 		return true
 	}
+
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return true
 	}
+
 	return false
 }
