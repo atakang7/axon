@@ -13,18 +13,19 @@ export default defineConfig({
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [
 				{
-					label: 'Start',
+					label: 'Getting Started',
 					items: [
-						{ label: 'Overview', slug: 'start/overview' },
+						{ label: 'What is Axon?', slug: 'start/overview' },
 						{ label: 'Quickstart', slug: 'start/quickstart' },
 					],
 				},
 				{
-					label: 'Configuration',
+					label: 'Core Concepts',
 					items: [
-						{ label: 'Config vs Settings', slug: 'configuration/surfaces' },
-						{ label: 'axon.yaml Reference', slug: 'configuration/yaml' },
-						{ label: 'File Locations', slug: 'configuration/locations' },
+						{ label: 'The Turn Loop', slug: 'concepts/turn-loop' },
+						{ label: 'Context Management', slug: 'concepts/context' },
+						{ label: 'Sessions & Memory', slug: 'concepts/sessions' },
+						{ label: 'Events & UI', slug: 'concepts/events' },
 					],
 				},
 				{
@@ -36,16 +37,15 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Runtime',
+					label: 'Configuration',
 					items: [
-						{ label: 'Turn Loop', slug: 'runtime/turn-loop' },
-						{ label: 'Events', slug: 'runtime/events' },
-						{ label: 'Sessions', slug: 'runtime/sessions' },
-						{ label: 'Context Management', slug: 'runtime/context' },
+						{ label: 'Agent Setup', slug: 'configuration/setup' },
+						{ label: 'Runtime Policies', slug: 'configuration/yaml' },
+						{ label: 'File Locations', slug: 'configuration/locations' },
 					],
 				},
 				{
-					label: 'Internals',
+					label: 'Under the Hood',
 					items: [
 						{ label: 'Architecture', slug: 'internals/architecture' },
 						{ label: 'Security Boundaries', slug: 'internals/security' },
