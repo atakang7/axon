@@ -1,11 +1,9 @@
 ---
-title: MCP servers
-description: Attach stdio Model Context Protocol tools to an agent.
+title: Connect an MCP server
+description: Spawn a stdio MCP server and expose its discovered tools through Axon's normal tool loop.
 ---
 
-Axon can spawn out-of-process MCP servers and expose their discovered **tools** as ordinary Axon tools.
-
-## Configure a server
+## Add a server at construction
 
 ```go
 agent, err := axon.New(axon.Config{
@@ -21,48 +19,51 @@ agent, err := axon.New(axon.Config{
 })
 ```
 
-## Startup sequence
+Axon starts MCP servers during `New`. If startup, initialization, or tool discovery fails, agent construction fails and already-started MCP clients are closed.
 
-For each server, `New`:
+## Current protocol sequence
 
-1. spawns `Command` with `Args`;
-2. opens stdin/stdout pipes;
-3. starts a line-oriented JSON-RPC response loop;
-4. sends `initialize` using protocol version `2024-11-05` and client name `axon`;
-5. sends `notifications/initialized`;
-6. calls `tools/list`;
-7. maps each discovered MCP tool to an Axon `Tool`.
-
-If any server fails startup/handshake/discovery, `New` closes MCP clients it already started and returns an error.
-
-## Tool calls
-
-An MCP tool invocation becomes:
+Axon currently uses stdio, newline-delimited JSON-RPC and performs:
 
 ```text
-tools/call
-  name: <tool name>
-  arguments: <decoded JSON object>
+initialize (protocolVersion 2024-11-05)
+notifications/initialized
+tools/list
 ```
 
-Axon concatenates text entries from the MCP result's `content` array. Non-text content types are currently ignored. An MCP result with `isError: true` becomes a tool error.
+Each discovered MCP tool becomes an ordinary Axon `Tool` with its name, description, `inputSchema`, and an adapter function.
 
-## Current scope: tools only
+## Calling a tool
 
-The implementation does not expose MCP resources, prompts, roots, sampling, or other MCP capability families. `tools/list` / `tools/call` is the supported surface.
+The adapter decodes model arguments to an object and calls MCP `tools/call` with:
 
-## Process and environment
+```json
+{
+  "name": "tool-name",
+  "arguments": {}
+}
+```
 
-The child receives the current process environment. `MCPServer.Env` entries are appended when supplied.
+Text content entries are concatenated. Non-text content types are currently ignored. `isError: true` becomes an Axon tool error and is fed back to the model.
 
-`Agent.Close()` kills each MCP child process. `Agent.Reset()` does not restart or rediscover MCP servers.
+## Current scope is tools only
 
-## Important blocking behavior
+Axon's MCP integration does not currently expose MCP resources, prompts, roots, sampling, or other capability families.
 
-The current MCP request path waits on an internal response channel without a context-aware select or per-call timeout. If a server stays alive but never responds to a JSON-RPC request, that call can block indefinitely.
+## Environment and trust
 
-Treat MCP servers as trusted runtime dependencies and add timeout/isolation behavior inside the server or around the Axon process when that failure mode matters.
+The subprocess inherits the parent process environment. `MCPServer.Env` entries are appended to it.
 
-## Name collisions
+Treat the server as trusted executable code with the process permissions it receives.
 
-MCP tools are appended to the custom-tool list before duplicate validation. A discovered MCP name that collides with a remaining built-in or another discovered/custom tool causes `New` to fail with `ErrDuplicateTool`.
+## Lifecycle
+
+`Agent.Close` kills MCP child processes.
+
+`Agent.Reset` does **not** restart or rediscover them; existing MCP clients/tools remain attached while the session/background-shell state is reset.
+
+## Timeout caveat
+
+The current MCP `call` path waits for a matching response channel without selecting on the tool context or applying a per-call timeout. A server that stays alive but never responds can therefore block that call indefinitely.
+
+If this failure mode matters, put timeout/process supervision around the MCP server or Axon process until the runtime adds bounded MCP request waits.

@@ -1,101 +1,123 @@
 ---
 title: Built-in tools
-description: Exact built-in tool modes, execution behavior, and limits.
+description: Exact model-facing modes and executable behavior for Axon's seven standard tools.
 ---
 
-Axon attaches seven built-ins unless names are listed in `Config.ExcludeBuiltins`.
+Default built-ins:
+
+```text
+read
+write
+exec
+bash_output
+kill_shell
+search
+task
+```
+
+They may be excluded by exact name in `Config.ExcludeBuiltins`.
 
 ## `read`
 
-Reads one file or lists a directory.
+### Input
 
-**Input:** `path` required; `mode`, `offset`, `limit` optional.
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `path` | yes | relative/absolute file or directory |
+| `mode` | no | `slice` (default) or `full` |
+| `offset` | no | 1-based start line for slice |
+| `limit` | no | slice line count |
 
-- `slice` (default): 1-based `offset`, default 1; default line count is `tools.read.lines`.
-- `full`: reads the whole file only when file size is at most `tools.read.max_bytes`.
-- directory path: returns directory entries; mode is ignored.
+Directory paths return directories first (with `/` suffix), then files; mode is ignored.
 
-Slice output prefixes line numbers and truncates an individual displayed line after 8,192 characters. Full output prefixes line numbers and an approximate token-count header.
+Slice defaults offset to 1 and non-positive limit to configured `read.lines`. Each displayed line is capped at 8192 characters.
 
-The tool samples the first 8 KiB and refuses likely binary files based on NUL/control-byte/UTF-8 heuristics.
+Full reads stat the file first and refuse when size exceeds configured `read.max_bytes`. Output includes line numbers and an approximate `len(data)/4` token hint.
+
+Likely binary files are refused based on an 8 KiB sample using NUL/control-byte/UTF-8 heuristics.
 
 ## `write`
 
-**Required:** `path`, `mode`, `content`.
+Required: `path`, `mode`, `content`.
 
-Modes:
+| Mode | Additional fields | Behavior |
+| --- | --- | --- |
+| `save` | — | create parents; create/replace whole file |
+| `replace_string` | `old_str` | require exactly one exact match |
+| `replace_lines` | `start_line`, `end_line` | replace inclusive 1-based range; end clamps to EOF |
+| `insert_at_line` | `start_line` | insert before 1-based position |
 
-| Mode | Behavior |
-| --- | --- |
-| `save` | create parent directories and set the entire file contents |
-| `replace_string` | replace exactly one exact `old_str`; zero or multiple matches fail |
-| `replace_lines` | replace inclusive 1-based line range; end is clamped to EOF |
-| `insert_at_line` | insert before a 1-based line position |
+All mutation modes record pre-edit contents before the atomic write.
 
-Every successful path records pre-edit content for undo. Writes use same-directory temp file + rename, preserve an existing destination's permission bits, and create new files as `0644` before umask effects.
+Atomic writes use a same-directory temp file + rename, preserve existing permission bits, and use 0644 for new destinations before umask effects.
 
-:::note
-The executable write path does **not** run a formatter after the write.
-:::
+**No formatter is executed by the current write path**, despite stale text that may appear in the built-in tool description.
 
 ## `exec`
 
-Runs `sh -lc <command>`.
+### Input
 
-Fields include `command`, `tail_lines`, `expected_outcome`, `dir`, `timeout_seconds`, and `run_in_background`.
+| Field | Required by schema | Runtime behavior |
+| --- | --- | --- |
+| `command` | yes | must be non-blank |
+| `tail_lines` | no in schema | **required > 0 for foreground execution** |
+| `expected_outcome` | no | echoed into result; not evaluated by runtime |
+| `dir` | no | working-directory override resolved through Workspace |
+| `timeout_seconds` | no | defaulted/clamped by exec limits |
+| `run_in_background` | no | when true, spawn and return handle immediately |
 
-Foreground behavior:
+Foreground executes `sh -lc`, stdin `/dev/null`, combined stdout/stderr into one capped buffer, and process group enabled.
 
-- `command` required;
-- `tail_lines > 0` enforced by runtime;
-- timeout defaults to `tools.exec.timeout` and is capped by `max_timeout`;
-- stdout/stderr share one byte-capped buffer;
-- stdin is `/dev/null`;
-- process runs in its own process group;
-- timeout/cancel sends SIGKILL to the group;
-- formatted result reports command, directory, expected string, exit code, truncation, and captured tail.
-
-`expected_outcome` is displayed in the result; Axon does not itself judge whether the output met that expectation.
-
-Background behavior starts the process immediately and returns a `bash_N` shell ID.
+On timeout/cancel Axon SIGKILLs the group. If output-copy cleanup still does not finish within `kill_grace`, the result notes an escaped child may still hold the pipe.
 
 ## `bash_output`
 
-Reads only bytes appended to a background shell log since the previous call.
+Input: `shell_id` required, optional `tail_lines`, optional `max_bytes`.
 
-- optional `tail_lines` trims the new delta;
-- optional `max_bytes` caps the new delta, defaulting to `tools.bash_output.max_bytes`;
-- when backlog exceeds the byte cap, the newest bytes are kept and the read offset advances past dropped bytes;
-- log truncation or file replacement resets reading to the beginning of the new file.
+Returns shell status and only log bytes appended since the previous poll.
+
+If new data exceeds selected `max_bytes`, the newest bytes are returned and the read offset advances past dropped data. File truncation or replacement restarts from the beginning of the new filesystem object.
+
+Positive per-call `max_bytes` is not clamped by the configured default.
 
 ## `kill_shell`
 
-Sends SIGTERM to the background process group, waits `tools.exec.kill_grace`, then sends SIGKILL when needed.
+Input: `shell_id` required.
+
+Sends SIGTERM to the process group, waits configured exec kill grace, then SIGKILLs if needed. Killing an already-finished shell succeeds.
 
 ## `search`
 
-Runs `rg` (ripgrep), so `rg` must exist in `PATH`.
+Input: `query` required.
 
-**Required:** `query`.
+| Field | Meaning |
+| --- | --- |
+| `mode` | `literal` default or `regex` |
+| `path` | root, default `.` |
+| `globs` | repeated ripgrep `-g` filters |
+| `case_sensitive` | false by default → `--ignore-case` |
+| `max_matches` | default from settings when non-positive |
 
-- `mode`: `literal` (default) or `regex`;
-- `path`: defaults to `.`;
-- `globs`: passed as ripgrep `-g` filters;
-- case-insensitive by default;
-- hidden files are included;
-- `.git` is excluded;
-- output and runtime are capped by settings.
+Runs `rg -n --no-heading --color never -g !.git --hidden ...` from Workspace dir.
 
-`max_matches` is implemented with ripgrep `--max-count`, which means the cap applies **per searched file**, even though the field name can read like a global match count.
+Literal mode adds `--fixed-strings`. `max_matches` becomes ripgrep `--max-count` and is therefore per file. Exit status 1 means “no matches,” not error.
 
-Ripgrep exit code 1 (no matches) is treated as a successful empty result.
+Requires `rg` in `PATH`.
 
 ## `task`
 
-Actions:
+Input: `action` required.
 
-- `register`: store goal + non-empty steps;
-- `advance`: mark current step done and move forward;
-- `replan`: replace steps and reset current index to zero; optional non-empty goal replaces the existing goal.
+### `register`
 
-The tool recommends 2–4 short steps but does not enforce a maximum. More than four produces a warning string.
+Requires non-blank `goal` and at least one non-blank step after trimming. Stores a new task at current step 0.
+
+### `advance`
+
+Marks current step done and moves to the next. Returns either next description, `done — answer the user`, or `all steps already complete` depending on state.
+
+### `replan`
+
+Requires at least one non-blank replacement step. Non-empty goal replaces existing goal; empty goal preserves it. Current step resets to zero.
+
+More than four steps emits a warning string but is not rejected.

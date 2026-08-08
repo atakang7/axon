@@ -1,54 +1,44 @@
 ---
 title: Security model
-description: What Axon isolates, what it does not isolate, and what an embedder must trust.
+description: What Axon's internal capability boundaries do—and do not—protect.
 ---
 
-Axon limits tool cost and scopes internal capabilities, but **Axon is not a sandbox**.
+The correct security model for Axon is: **the agent has the operating-system authority of the process you run it in**.
 
-That is the most important security fact in the package.
+Axon contains useful internal capability boundaries and cost controls, but it is not a filesystem sandbox, shell sandbox, network sandbox, or secret-filtering system.
 
-## Filesystem access is not confined to the working directory
+## Working directory is routing, not confinement
 
-`Workspace.ResolvePath` joins relative paths against the session working directory, but absolute paths are returned unchanged. Relative paths containing `..` are also not rejected.
+Built-in file/search/exec operations share a working directory so relative paths have consistent meaning.
 
-The built-in `read`, `write`, and `search` tools therefore use `Cwd` as a convenience base, not as a security boundary.
+Absolute paths are still accepted and traversal is not blocked. The working directory therefore answers “where is relative?” rather than “where is the model allowed to go?”
 
-## `exec` is a real shell
+## Shell execution is real execution
 
-Foreground and background execution use:
+The exec capability runs commands with `sh -lc` under the Axon process identity. Stdin is detached from an interactive terminal and process groups are used for cleanup, but the command otherwise has the machine/container permissions you granted the process.
 
-```text
-sh -lc <model-supplied command>
-```
+If a model must not read a path, connect to a network, or invoke a binary, remove that authority outside Axon.
 
-with the selected working directory. Axon creates a process group so it can terminate process trees, and stdin is `/dev/null`, but the command otherwise runs with the permissions of the Axon process.
+## MCP extends the trust boundary
 
-Do not execute an untrusted agent on a host where those permissions are unacceptable.
+An MCP server is a spawned subprocess. It inherits the process environment plus any configured entries and can expose arbitrary capabilities through its own tools.
 
-## MCP servers are real subprocesses
+Connecting an MCP server is therefore equivalent to adding executable application code to the agent's capability set, not merely adding documentation.
 
-`MCPServer` commands are spawned as child processes. They inherit the process environment; optional `Env` entries are appended to it. MCP tools can do whatever their server implementation permits.
+## Internal least-authority still matters
 
-## Secrets are separated from built-in tool settings
+Axon's built-in tools are constructed with narrower values/interfaces instead of the entire agent or settings tree. In particular, operational tool limits do not carry provider credentials into built-in implementations.
 
-The configuration loader supports `${VAR}` references in provider `api_key` and `base_url`. Provider secrets are resolved before the `Settings` reaches the runtime.
+This reduces accidental coupling and secret exposure inside the runtime, even though it does not isolate the process from the host.
 
-Built-in tools receive flattened `Limits`, not the `Settings` tree, so the built-in implementations have no path to provider credentials through their constructor dependencies.
+Custom tool functions are your code: they may capture any value you choose to give them.
 
-This does **not** constrain caller-supplied custom tool closures: your own `Tool.Fn` can capture anything your application gives it.
+## Limits protect resources, not confidentiality
 
-## Session files are private by mode, shell logs are not a secret store
+Byte, timeout, tail, and match settings help prevent one action from consuming unbounded latency/memory/context. The binary-read heuristic avoids loading obviously useless binary content into model context.
 
-Session JSON is written with mode `0600`. Parent state directories are created with `0755`.
+None of those mechanisms redact secrets or classify sensitive data.
 
-Background shell logs are ordinary files under the configured data directory and are created with the process umask applied. Treat the entire data directory as potentially sensitive because tool output can contain source code, paths, environment-derived output, or command results.
+## Practical deployment rule
 
-## Output limits are cost controls, not content filters
-
-Read/search/exec/background-output caps are designed to bound latency, memory, and context growth. They do not sanitize secrets or malicious content.
-
-The read tool refuses likely binary files to avoid wasting context, but that heuristic is not a data-loss-prevention system.
-
-## Recommended embedding boundary
-
-Run Axon with the **OS/container permissions you are willing to give the model**. If you need filesystem, network, syscall, credential, or process isolation, provide it outside Axon using the host/container/runtime boundary.
+Run Axon inside the smallest host/container identity that is acceptable for the agent. Scope filesystem mounts, credentials, network access, and process privileges there. Then use Axon's tool selection and limits as a second layer for runtime ergonomics and cost control.

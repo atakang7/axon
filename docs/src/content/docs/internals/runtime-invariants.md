@@ -1,58 +1,48 @@
 ---
 title: Runtime invariants
-description: Design properties contributors should preserve when changing Axon.
+description: Properties contributors should preserve unless intentionally redesigning the runtime contract.
 ---
 
-These are not style preferences; they are properties encoded by the current runtime structure.
+## Construction resolves operational policy
 
-## Settings are resolved at construction
+An agent should not depend on repeated ambient config-file reads during execution. `New` resolves defaults and projects limits once so two agents in one process can differ.
 
-`New` applies defaults once and stores the resolved `Settings`, `Limits`, exclusion list, and toolset on the agent. Built-ins do not re-read operational environment variables per call.
+## Model transport does not own execution authority
 
-Preserve this if multiple differently configured agents in one process should remain possible.
+`Model.Complete` receives `ToolSpec`, not executable `Tool.Fn` values. Preserve that separation between model I/O and machine capability.
 
-## Model code cannot reach tool implementations through Request
+## Built-ins receive narrow dependencies
 
-A `Tool` is projected to `ToolSpec` before `Model.Complete`. Provider/client implementations receive schema/description/name, not `Fn`.
+A tool should receive the capability it needs rather than `*Agent` or the full settings tree. Widening those constructor dependencies widens authority and coupling.
 
-That keeps model transport separate from execution capability.
+## Durable history and active context remain separate
 
-## Built-ins receive least runtime capability
+Context pressure should be handled in projection/parking policy, not by casually deleting recorded message content. The durable record and the model working set serve different purposes.
 
-Tools are built against `Workspace`, `Plan`, shell registry, and `Limits`, not `*Agent` or provider settings.
+## Tool protocol pairs remain coherent
 
-Adding a convenient dependency to a tool can accidentally widen its authority. Prefer a smaller interface/value.
+If an assistant tool-call message is removed/collapsed from a provider request, matching tool-result messages must not be left orphaned in that request.
 
-## Stored content and projected context are different things
+## Pruning stays an optimization
 
-Do not prune by deleting message content just to make the next request smaller. The current design preserves original content and changes the model projection in `ContextMessages`.
+A curator outage or malformed decision must not make the user's primary task unavailable. Pruning failure is emitted and the turn continues.
 
-Persisted parking is metadata; recency collapse is a transient view.
+## Ordinary tool failure remains model-visible
 
-## Tool-call protocol pairs must stay coherent
+Domain failures should normally become tool observations so the model can recover. Do not turn every failed command/read/edit into a fatal `Step` error.
 
-When an assistant tool-call message is collapsed, matching tool-result messages are omitted from the projected request. A context optimization must not leave orphaned protocol messages.
+## Per-agent resources remain per-agent
 
-## Pruning is best-effort
+Background shells and MCP processes belong to one agent instance. Lifecycle operations on one agent must not terminate another agent's resources.
 
-The user turn must continue when the curator is unavailable or produces unusable output. `Step` treats pruning failures as emitted errors, not turn failures.
+## Session state is persisted incrementally
 
-## Tool failure is model-visible
+The user message is saved before the first model call; subsequent assistant/tool observations are saved as they are appended. Preserve the crash-recovery value of incremental persistence.
 
-A tool operation error becomes a `role=tool` message so the model can recover. Reserve `Step` errors for failures of the turn/runtime boundary rather than ordinary tool-domain failures.
+## Workspace is not documented as a sandbox without enforcement
 
-## Process resources belong to one Agent
+The current path/execution layer does not confine operations to `Cwd`. Documentation and future refactors must not imply a security guarantee that executable paths do not enforce.
 
-Background shell registries and MCP client lists are instance state. Cleanup should not reach into another agent's resources.
+## Error classification remains stable where exported
 
-## Session history is saved incrementally
-
-The user message is persisted before the first model call. Assistant/tool messages are saved as they are appended. That limits how much state a process crash can lose.
-
-## The working directory is not a sandbox
-
-Path resolution is convenience routing, not isolation. Do not document or refactor it as a security boundary without adding enforcement to the executable paths.
-
-## Public operational errors should stay classifiable
-
-Loader/construction errors wrap exported sentinels where the code currently promises `errors.Is` classification. Preserve that boundary when adding context to error messages.
+Construction/configuration paths wrap exported sentinel errors for `errors.Is` classification. Add human context without breaking that public boundary unless intentionally changing the API.
