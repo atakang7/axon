@@ -24,9 +24,17 @@ import (
 // ---------------------------------------------------------------------------
 
 // sseDelta is one streamed chunk. Exactly the shape client.go's consume parses.
+//
+// Setting ToolName/ToolArgs emits a tool_calls fragment instead of text, which
+// is what lets a test distinguish "the provider sent tool calls" from "the
+// provider sent the tool-call syntax as prose".
 type sseDelta struct {
 	Content   string
 	Reasoning string
+
+	ToolCallID string
+	ToolName   string
+	ToolArgs   string
 }
 
 // prunerProvider is an OpenAI-compatible endpoint that replays a scripted
@@ -70,15 +78,24 @@ func newPrunerProviderFunc(t *testing.T, reply func(call int) []sseDelta) *prune
 		}
 
 		for _, d := range reply(call) {
-			chunk := map[string]any{
-				"choices": []map[string]any{{
-					"delta": map[string]any{
-						"content":           d.Content,
-						"reasoning_content": d.Reasoning,
-					},
-				}},
+			delta := map[string]any{
+				"content":           d.Content,
+				"reasoning_content": d.Reasoning,
 			}
-			raw, _ := json.Marshal(chunk)
+			if d.ToolName != "" || d.ToolArgs != "" {
+				delta["tool_calls"] = []map[string]any{{
+					"index": 0,
+					"id":    d.ToolCallID,
+					"type":  "function",
+					"function": map[string]any{
+						"name":      d.ToolName,
+						"arguments": d.ToolArgs,
+					},
+				}}
+			}
+			raw, _ := json.Marshal(map[string]any{
+				"choices": []map[string]any{{"delta": delta}},
+			})
 			fmt.Fprintf(w, "data: %s\n\n", raw)
 			flusher.Flush()
 		}
