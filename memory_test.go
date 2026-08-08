@@ -15,7 +15,7 @@ func TestContextMessagesTaskBlockIsTrailingAndCacheStable(t *testing.T) {
 	s.Append(Msg{Role: "user", Content: "hello"})
 	s.Append(Msg{Role: "assistant", Content: "hi"})
 
-	noTask := s.ContextMessages()
+	noTask := s.ContextMessages(0)
 	if len(noTask) != 2 {
 		t.Fatalf("with no task registered, got %d messages, want 2 (no trailing block)", len(noTask))
 	}
@@ -23,7 +23,7 @@ func TestContextMessagesTaskBlockIsTrailingAndCacheStable(t *testing.T) {
 	if err := s.RegisterTask("goal", []TaskStep{{Description: "step"}}); err != nil {
 		t.Fatal(err)
 	}
-	withTask := s.ContextMessages()
+	withTask := s.ContextMessages(0)
 	if len(withTask) != 3 {
 		t.Fatalf("with a task registered, got %d messages, want 3", len(withTask))
 	}
@@ -40,7 +40,7 @@ func TestContextMessagesTaskBlockIsTrailingAndCacheStable(t *testing.T) {
 			t.Fatalf("prefix changed once a task was registered at index %d: %+v vs %+v", i, withTask[i], noTask[i])
 		}
 	}
-	again := s.ContextMessages()
+	again := s.ContextMessages(0)
 	for i := 0; i < len(withTask)-1; i++ {
 		if !sameMsg(again[i], withTask[i]) {
 			t.Fatalf("prefix is not stable across calls at index %d", i)
@@ -68,7 +68,7 @@ func TestContextMessagesStripsInternalFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, m := range s.ContextMessages() {
+	for _, m := range s.ContextMessages(0) {
 		if m.ID != "" {
 			t.Fatalf("ContextMessages leaked ID: %+v", m)
 		}
@@ -99,7 +99,7 @@ func TestParkedAssistantMessageLosesToolCallsOnlyInProjection(t *testing.T) {
 		t.Fatalf("Park: %v", err)
 	}
 
-	projected := s.ContextMessages()
+	projected := s.ContextMessages(0)
 	if len(projected[1].ToolCalls) != 0 {
 		t.Fatalf("projection still carries tool_calls: %+v", projected[1].ToolCalls)
 	}

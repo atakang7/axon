@@ -60,7 +60,7 @@ func TestContextMessagesDropsOrphanedToolResults(t *testing.T) {
 		t.Fatalf("Park: %v", err)
 	}
 
-	for _, m := range s.ContextMessages() {
+	for _, m := range s.ContextMessages(0) {
 		if m.Role == "tool" && m.ToolCallID == "call_1" {
 			t.Fatal("orphaned tool result survived into context after its tool_call was parked")
 		}
@@ -89,7 +89,7 @@ func TestParkSubstitutesBreadcrumb(t *testing.T) {
 	if err := s.Park(id, "the answer", "pruner: stale"); err != nil {
 		t.Fatalf("Park: %v", err)
 	}
-	out := s.ContextMessages()
+	out := s.ContextMessages(0)
 	if len(out) != 2 {
 		t.Fatalf("parked block should be replaced, not removed: got %d", len(out))
 	}
@@ -102,7 +102,7 @@ func TestParkSubstitutesBreadcrumb(t *testing.T) {
 	if err := s.Park(id, "revised gist", "pruner: still stale"); err != nil {
 		t.Fatalf("re-Park: %v", err)
 	}
-	if out := s.ContextMessages(); !strings.Contains(out[1].Content, "revised gist") {
+	if out := s.ContextMessages(0); !strings.Contains(out[1].Content, "revised gist") {
 		t.Fatalf("re-park did not refresh the breadcrumb: %q", out[1].Content)
 	}
 	if len(s.Messages) != 2 {
@@ -222,10 +222,10 @@ func TestParkRefusesReasonlessAndSystem(t *testing.T) {
 	for _, m := range s.Messages {
 		_ = s.Park(m.ID, "gist", "test")
 	}
-	if s.ContextMessages()[0].Role != "system" {
+	if s.ContextMessages(0)[0].Role != "system" {
 		t.Fatal("system prompt was removed from context")
 	}
-	if s.ContextMessages()[0].Content != "you are an agent" {
+	if s.ContextMessages(0)[0].Content != "you are an agent" {
 		t.Fatal("system prompt was replaced by a breadcrumb")
 	}
 }

@@ -152,7 +152,7 @@ func TestPruneParksNamedBlocksOnly(t *testing.T) {
 		t.Fatalf("Park mutated stored content: %q", s.Messages[0].Content)
 	}
 
-	ctx := s.ContextMessages()
+	ctx := s.ContextMessages(0)
 	if len(ctx) == 0 || !strings.Contains(ctx[0].Content, "parked") {
 		t.Fatalf("ContextMessages does not show a breadcrumb for the parked block: %+v", ctx)
 	}
@@ -350,7 +350,7 @@ func TestPrunerRequestRendering(t *testing.T) {
 		t.Fatalf("seed park: %v", err)
 	}
 
-	req := prunerRequest(s, defaultPrunerReminder)
+	req := prunerRequest(s, 0, defaultPrunerReminder)
 
 	if strings.Contains(req, "system messages are never parkable") {
 		t.Fatal("prunerRequest included a system message")
@@ -372,7 +372,7 @@ func TestPrunerRequestRendering(t *testing.T) {
 		t.Fatalf("RegisterTask: %v", err)
 	}
 	s2.Append(Msg{Role: "user", Content: strings.Repeat("y", 2500)})
-	req2 := prunerRequest(s2, defaultPrunerReminder)
+	req2 := prunerRequest(s2, 0, defaultPrunerReminder)
 	if !strings.Contains(req2, "...[truncated, 2500 chars total]") {
 		t.Fatalf("prunerRequest did not truncate an over-cap block: %q", req2)
 	}
@@ -501,5 +501,75 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 	}
 	if !sawPruneSkipped {
 		t.Fatal("no KindError 'prune skipped' event emitted for the failed prune pass")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Prune modes
+// ---------------------------------------------------------------------------
+
+// Each mode must produce its own instruction — otherwise the knob is wired
+// to nothing and a config change silently does nothing.
+func TestPruneModeInjectsDistinctInstruction(t *testing.T) {
+	seen := map[string]PruneMode{}
+	for _, mode := range PruneModes {
+		p := prunerSystemPrompt(mode)
+		if prior, dup := seen[p]; dup {
+			t.Fatalf("modes %q and %q produce an identical prompt", prior, mode)
+		}
+		seen[p] = mode
+	}
+}
+
+// The safety rules and the answer format are invariants: a mode moves the
+// threshold for "still needed", never what may be parked or how to reply.
+// An unknown mode must still be a working prompt, not a broken one.
+func TestPruneModeKeepsInvariants(t *testing.T) {
+	invariants := []string{
+		`{"park":[3,7,9]}`,
+		"Never park, in any mode:",
+		"- a user message",
+		"- the most recent assistant message",
+		"- a block holding an unresolved error or a failing test",
+		"- a block naming a file the agent has edited or is editing",
+		"Parking is one-way",
+	}
+
+	for _, mode := range append(append([]PruneMode{}, PruneModes...), PruneMode("nonsense")) {
+		p := prunerSystemPrompt(mode)
+		for _, want := range invariants {
+			if !strings.Contains(p, want) {
+				t.Errorf("mode %q dropped invariant %q", mode, want)
+			}
+		}
+		if !strings.Contains(p, "MODE:") {
+			t.Errorf("mode %q injected no mode instruction", mode)
+		}
+	}
+}
+
+// An unset mode must land on moderate rather than an empty string, which
+// would inject nothing and leave the curator with no threshold at all.
+func TestPrunerDefaultsToModerate(t *testing.T) {
+	p := NewPruner(PrunerConfig{Model: &scriptedModel{}})
+	if p.mode != PruneModerate {
+		t.Fatalf("zero-value PrunerSettings gave mode %q, want %q", p.mode, PruneModerate)
+	}
+}
+
+// SetPruneMode must reach the live Pruner, and must refuse a bad value
+// rather than applying it.
+func TestSetPruneMode(t *testing.T) {
+	p := NewPruner(PrunerConfig{Model: &scriptedModel{}})
+	a := &Agent{pruner: p, settings: DefaultSettings()}
+
+	a.SetPruneMode(PruneExtreme)
+	if p.mode != PruneExtreme || a.settings.Pruner.Mode != PruneExtreme {
+		t.Fatalf("SetPruneMode(extreme): pruner=%q settings=%q", p.mode, a.settings.Pruner.Mode)
+	}
+
+	a.SetPruneMode(PruneMode("aggressive-ish"))
+	if p.mode != PruneExtreme {
+		t.Fatalf("SetPruneMode applied an invalid mode: %q", p.mode)
 	}
 }

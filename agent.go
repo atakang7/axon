@@ -64,6 +64,20 @@ func (a *Agent) SetPrunerModel(m Model) {
 	}
 }
 
+// SetPruneMode changes how aggressively the curator parks, mid-session. An
+// invalid mode is ignored rather than applied, so a bad value cannot quietly
+// change pruning behaviour; Load rejects one from a config file outright.
+func (a *Agent) SetPruneMode(mode PruneMode) {
+	if !mode.Valid() {
+		return
+	}
+
+	a.settings.Pruner.Mode = mode
+	if a.pruner != nil {
+		a.pruner.mode = mode
+	}
+}
+
 // Interrupt cancels the in-flight chat call, or false if no turn is active.
 func (a *Agent) Interrupt() bool {
 	cf := a.turnCancel.Load()
@@ -99,7 +113,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 
 		a.emit(ctx, Event{Kind: KindAPICall})
 		msg, err := a.model.Complete(ctx, Request{
-			Messages: a.session.ContextMessages(),
+			Messages: a.session.ContextMessages(a.settings.Pruner.WindowBlocks),
 			Tools:    toolSpecs(tools),
 			Stream: Stream{
 				Token: func(t string) {

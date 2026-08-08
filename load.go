@@ -154,7 +154,23 @@ func (r Settings) validate(configPath string) error {
 		return fmt.Errorf("%w: retry.max_attempts must be at least 1 (%s)", ErrInvalidConfig, configPath)
 	}
 
+	// Caught here rather than at prune time: a typo'd mode would otherwise
+	// silently fall back to the default and quietly not do what was asked,
+	// hours into a session.
+	if m := r.Pruner.Mode; m != "" && !m.Valid() {
+		return fmt.Errorf("%w: pruner.mode %q is not one of %s (%s)",
+			ErrInvalidConfig, m, joinModes(), configPath)
+	}
+
 	return nil
+}
+
+func joinModes() string {
+	names := make([]string, 0, len(PruneModes))
+	for _, m := range PruneModes {
+		names = append(names, string(m))
+	}
+	return join(names)
 }
 
 // resolveSecrets replaces every ${VAR} in the provider section with its value

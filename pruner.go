@@ -26,6 +26,8 @@ type PrunerConfig struct {
 
 type Pruner struct {
 	model     Model
+	mode      PruneMode
+	window    int
 	floor     int
 	growth    int
 	maxTokens int
@@ -44,6 +46,10 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 	s := cfg.Settings
 	d := DefaultSettings().Pruner
 
+	if s.Mode == "" {
+		s.Mode = d.Mode
+	}
+	fillInt(&s.WindowBlocks, d.WindowBlocks)
 	fillInt(&s.FloorTokens, d.FloorTokens)
 	fillInt(&s.GrowthTokens, d.GrowthTokens)
 	fillInt(&s.MaxTokens, d.MaxTokens)
@@ -51,6 +57,8 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 
 	return &Pruner{
 		model:     cfg.Model,
+		mode:      s.Mode,
+		window:    s.WindowBlocks,
 		floor:     s.FloorTokens,
 		growth:    s.GrowthTokens,
 		maxTokens: s.MaxTokens,
@@ -61,9 +69,18 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 // ContextTokens estimates what the next request will cost. Character count
 // over four is plenty for a threshold decision; provider-accurate counting
 // would cost a round trip to answer a question we only need roughly right.
+//
+// It applies the same window a nil-safe caller would get from settings
+// directly, so ShouldFire's thresholds are compared against what the model
+// will actually be sent, not the size of the full unwindowed log.
 func (p *Pruner) ContextTokens(s *Session) int {
+	window := 0
+	if p != nil {
+		window = p.window
+	}
+
 	n := 0
-	for _, m := range s.ContextMessages() {
+	for _, m := range s.ContextMessages(window) {
 		n += len(m.Content)
 		for _, tc := range m.ToolCalls {
 			n += len(tc.Function.Arguments) + len(tc.Function.Name)
@@ -113,8 +130,8 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 
 	reply, err := p.model.Complete(callCtx, Request{
 		Messages: []Msg{
-			{Role: "system", Content: prunerSystemPrompt},
-			{Role: "user", Content: prunerRequest(s, defaultPrunerReminder)},
+			{Role: "system", Content: prunerSystemPrompt(p.mode)},
+			{Role: "user", Content: prunerRequest(s, p.window, defaultPrunerReminder)},
 		},
 		MaxTokens: p.maxTokens,
 	})
@@ -235,7 +252,12 @@ func gist(s *Session, id string) string {
 // prunerRequest renders the task and the active log, each block labelled with
 // the ID the pruner will name it by. Already-parked blocks are omitted: they
 // are not in the model's context any more, so they are not up for decision.
-func prunerRequest(s *Session, reminder string) string {
+//
+// Blocks still inside the recency window are omitted too — the window has
+// already handled them for free, and showing the curator the whole log
+// would make every judgment call cost tokens on blocks nobody was ever
+// going to ask it about.
+func prunerRequest(s *Session, windowBlocks int, reminder string) string {
 	var b strings.Builder
 
 	b.WriteString("# TASK\n")
@@ -245,10 +267,15 @@ func prunerRequest(s *Session, reminder string) string {
 		b.WriteString("(none registered)")
 	}
 
+	cut := windowCutoff(s, windowBlocks)
+
 	b.WriteString("\n\n# LOG\n")
 	for _, m := range s.Messages {
 		if m.Role == "system" || m.ID == "" || m.Parked {
 			continue
+		}
+		if windowBlocks > 0 && !cut[m.ID] {
+			continue // inside the free window already; not up for curator judgment
 		}
 		label := m.Role
 		if m.ToolName != "" {
@@ -271,24 +298,70 @@ func prunerRequest(s *Session, reminder string) string {
 	return b.String()
 }
 
-const prunerSystemPrompt = `You keep an agent's working memory small.
+// prunerSystemPrompt builds the curator's instructions for one mode.
+//
+// The mode section is injected rather than branched on at read time so there
+// is exactly one prompt, with one hole in it. The invariant sections — the
+// answer format and the never-park list — are outside the hole on purpose:
+// a mode may move the threshold for "still needed", never the safety rules.
+func prunerSystemPrompt(mode PruneMode) string {
+	return fmt.Sprintf(prunerPromptTemplate, modeInstruction(mode))
+}
 
-You are shown the agent's task and a numbered log of what has happened. Decide
-which blocks it no longer needs in order to finish that task.
+// modeInstruction is the one paragraph that differs per mode. An unknown
+// mode takes moderate — validate() rejects those at load time, so reaching
+// here with one means an embedder set the field directly, and a working
+// default beats a panic mid-turn.
+func modeInstruction(mode PruneMode) string {
+	switch mode {
+	case PruneLow:
+		return `MODE: LOW. Keep almost everything. Park a block only when it is
+unambiguously dead weight — a superseded file read, a search whose answer is
+already written down elsewhere, output the agent has visibly finished with.
+If you find yourself building an argument for why a block could be parked,
+that block stays. Answering {"park":[]} is the expected outcome here.`
+
+	case PruneExtreme:
+		return `MODE: EXTREME. Context is the binding constraint. Park every block
+that is not actively carrying the current direction forward. A block earns its
+place by being something the agent still needs in front of it — not by being
+interesting, not by being recent-ish, not by being potentially relevant later.
+"The agent could conceivably want this again" is not a reason to keep it; the
+agent can re-read a file. Work down the log and park unless you can name what
+the block is still doing.`
+
+	default:
+		return `MODE: MODERATE. Park what is clearly no longer in play: file reads
+the agent has moved past, exploration that led nowhere, tool output whose
+conclusion is already captured in later blocks. Keep anything still plausibly
+load-bearing for where the agent is headed. When a block is genuinely
+borderline, keep it.`
+	}
+}
+
+const prunerPromptTemplate = `You keep an agent's working memory small.
+
+You are shown the agent's task and a numbered log of what has happened. The
+most recent part of the conversation is not shown to you — it's kept
+automatically, for free, so you never need to protect it and its absence
+here is not a sign anything is wrong. Everything you do see is already old
+enough to be a real candidate. Decide which of it the agent no longer needs
+in order to finish the task.
+
+%s
 
 Answer with one JSON object and nothing that matters after it:
 
 {"park":[3,7,9]}
 
 Block ids are the integers in the labels (m7 is 7). {"park":[]} means keep
-everything, and is a normal, common answer.
+everything, and is always an available answer.
 
-Never park:
+Never park, in any mode:
 - a user message
 - the most recent assistant message
 - a block holding an unresolved error or a failing test
 - a block naming a file the agent has edited or is editing
 - a block the agent will need to quote when it answers
 
-Parking is one-way: the agent cannot get a parked block back. When a block is
-merely probably useless, keep it.`
+Parking is one-way: the agent cannot get a parked block back.`
