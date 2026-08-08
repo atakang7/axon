@@ -1,70 +1,33 @@
 ---
 title: Axon
-description: The execution runtime for tool-using LLM agents in Go.
+description: A Go runtime for tool-using LLM agents.
 template: splash
 hero:
-  tagline: A small execution runtime for agents. Your application owns the product; Axon owns the loop underneath it.
+  title: Axon
+  tagline: A Go runtime for tool-using LLM agents. Owns the execution machinery — turns, tools, sessions, context pressure, retries, streaming, background processes, MCP, and events — while your application owns the product.
   actions:
     - text: Quickstart
       link: /axon/start/quickstart/
       icon: right-arrow
-      variant: primary
-    - text: Understand the runtime
-      link: /axon/concepts/runtime-model/
-      icon: open-book
-    - text: Configuration
-      link: /axon/configuration/
-      icon: setting
+    - text: GitHub
+      link: https://github.com/atakang7/axon
+      variant: minimal
+      icon: github
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-Axon is a Go library for the part of an agent application that is easy to underestimate: **turn execution**. It coordinates a model, tools, durable working state, bounded shell/file operations, context pressure, retries, streaming, and lifecycle events.
-
 <CardGrid>
-  <Card title="Build a mental model" icon="open-book">
-    Concept pages exist only when they teach a reusable decision rule: what a turn really is, where authority lives, how state differs from context, or how process lifetime changes execution.
+  <Card title="Configuration" icon="setting">
+    Two deliberate surfaces: `Config` wires an agent, `Settings` holds operational policy. [Learn more →](/axon/configuration/surfaces/)
   </Card>
-  <Card title="Configure precisely" icon="setting">
-    Configuration pages are lookup manuals. They document every operational knob, default, unit, override, precedence rule, and where the setting is actually consumed.
+  <Card title="Built-in Tools" icon="puzzle">
+    Seven tools ship with every agent: read, write, exec, search, task, bash_output, kill_shell. [See all →](/axon/tools/builtins/)
   </Card>
-  <Card title="Solve a task" icon="right-arrow">
-    How-to guides are procedural: connect a provider, implement a model, add or replace a tool, attach MCP, manage sessions, and wire observability.
+  <Card title="Context Management" icon="seti:db">
+    Recency window (free) + pruner (paid). Context grows, parking keeps it bounded. [How it works →](/axon/runtime/context/)
   </Card>
-  <Card title="Look something up" icon="document">
-    Reference pages are intentionally exhaustive and boring: public API contracts, built-in tool behavior, events, errors, and session structures.
+  <Card title="Events" icon="rocket">
+    Every runtime action emits an `Event`. Build any UI — TUI, web, logs. [Event reference →](/axon/runtime/events/)
   </Card>
 </CardGrid>
-
-## Axon in one picture
-
-```text
-                    your application
-        UX · model choice · system prompt · policy
-                         │
-                         ▼
-                   ┌───────────┐
-user input ───────▶│   Axon    │───────▶ final assistant text
-                   │  runtime  │
-                   └─────┬─────┘
-                         │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-       session          model          tools
-    durable state    reasoning I/O   capabilities
-          │              │              │
-          ├─ context     ├─ stream      ├─ files/search
-          ├─ task        ├─ retries     ├─ shell/background
-          └─ edits       └─ tool calls  └─ custom/MCP
-```
-
-The key boundary is simple: **the model proposes actions; the runtime owns execution and state**.
-
-## Pick the right manual
-
-- New to Axon → [Overview](/axon/start/overview/) then [Quickstart](/axon/start/quickstart/).
-- Designing an integration → [The runtime model](/axon/concepts/runtime-model/).
-- Editing `axon.yaml` → [Configuration model](/axon/configuration/).
-- Adding capabilities → [Tools as capabilities](/axon/concepts/tools-and-capabilities/) and [Add a custom tool](/axon/guides/custom-tool/).
-- Debugging exact behavior → [Reference](/axon/reference/agent/) or [Troubleshooting](/axon/troubleshooting/runtime/).
-- Contributing to Axon → [Internals](/axon/internals/architecture/).

@@ -16,6 +16,9 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 	a.session.Turn++
 	a.emit(ctx, Event{Kind: KindTurnStart})
+	if a.session.Turn == 1 && a.session.Title == "" {
+		a.session.Title = deriveTitle(userInput)
+	}
 	a.session.Append(Msg{Role: "user", Content: userInput})
 	if err := a.session.Save(); err != nil {
 		return StepResult{}, fmt.Errorf("agent: save session: %w", err)
@@ -26,7 +29,18 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	var calls []ToolCall
 	var assistantText string
 
-	for {
+	for iteration := 1; ; iteration++ {
+		// Checked before the model call, not after, so the cap is a bound on
+		// requests actually issued rather than one-past.
+		if a.maxIterations > 0 && iteration > a.maxIterations {
+			a.emit(ctx, Event{Kind: KindTurnEnd})
+			return StepResult{
+				Assistant: assistantText,
+				ToolCalls: calls,
+				Turn:      a.session.Turn,
+			}, fmt.Errorf("%w: %d", ErrMaxIterations, a.maxIterations)
+		}
+
 		if a.pruner.ShouldFire(a.session) {
 			before := a.pruner.ContextTokens(a.session)
 			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})

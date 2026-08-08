@@ -24,6 +24,7 @@ const (
 	KindToolCall     // tool call resolved with full args
 	KindToolResult   // tool returned successfully
 	KindToolError    // tool returned an error
+	KindUsage        // token accounting for a completed API call
 	KindTurnEnd
 	KindPruneStart
 	KindPruneEnd
@@ -47,6 +48,7 @@ var kindNames = [...]string{
 	KindToolCall:     "tool_call",
 	KindToolResult:   "tool_result",
 	KindToolError:    "tool_error",
+	KindUsage:        "usage",
 	KindTurnEnd:      "turn_end",
 	KindPruneStart:   "prune_start",
 	KindPruneEnd:     "prune_end",
@@ -81,6 +83,9 @@ type Event struct {
 	// Prune — used by PruneStart, PruneEnd.
 	Prune *PruneInfo
 
+	// Usage — used by KindUsage.
+	Usage *UsageInfo
+
 	// Err — used by Error and ToolError.
 	Err error
 
@@ -110,6 +115,12 @@ type PruneInfo struct {
 	// parked everything it legitimately could — but a persistent stream of
 	// them means the curator is naming ids it was never shown.
 	Rejected []string
+}
+
+// UsageInfo carries token accounting for a single completed API call.
+type UsageInfo struct {
+	PromptTokens     int
+	CompletionTokens int
 }
 
 // SessionInfo carries session-start/end metadata.

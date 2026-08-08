@@ -1,56 +1,29 @@
 :root {
-  --sl-color-accent-low: #e8f0fe;
-  --sl-color-accent: #0b57d0;
-  --sl-color-accent-high: #063b8f;
-  --sl-content-width: 52rem;
+  --sl-color-accent-low: #1a1a2e;
+  --sl-color-accent: #4fc3f7;
+  --sl-color-accent-high: #e0f7fa;
+  --sl-color-white: #f5f5f5;
+  --sl-color-gray-1: #e0e0e0;
+  --sl-color-gray-2: #b0b0b0;
+  --sl-color-gray-3: #808080;
+  --sl-color-gray-4: #404040;
+  --sl-color-gray-5: #2a2a2a;
+  --sl-color-gray-6: #1a1a1a;
+  --sl-color-black: #0d0d0d;
+  --sl-font: 'Inter', system-ui, -apple-system, sans-serif;
+  --sl-text-code: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
-:root[data-theme='dark'] {
-  --sl-color-accent-low: #102a4c;
-  --sl-color-accent: #8ab4f8;
-  --sl-color-accent-high: #d2e3fc;
-}
-
-.hero {
-  padding-block: clamp(3rem, 8vw, 7rem);
-}
-
-.hero .copy > h1 {
-  letter-spacing: -0.045em;
-}
-
-.hero .tagline {
-  max-width: 46rem;
-  line-height: 1.6;
-}
-
-.card {
-  border-radius: 1rem;
-  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
-}
-
-.card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 28px rgb(0 0 0 / 8%);
-}
-
-.sl-markdown-content h2 {
-  margin-top: 2.6rem;
-  letter-spacing: -0.02em;
-}
-
-.sl-markdown-content table {
-  font-size: 0.94rem;
-}
-
-.sl-markdown-content code:not(pre code) {
-  border-radius: 0.35rem;
-  padding: 0.08rem 0.28rem;
-}
-
-.runtime-callout {
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 1rem;
-  padding: 1rem 1.15rem;
-  background: var(--sl-color-gray-7);
+:root[data-theme='light'] {
+  --sl-color-accent-low: #e0f7fa;
+  --sl-color-accent: #0288d1;
+  --sl-color-accent-high: #01579b;
+  --sl-color-white: #1a1a1a;
+  --sl-color-gray-1: #404040;
+  --sl-color-gray-2: #808080;
+  --sl-color-gray-3: #b0b0b0;
+  --sl-color-gray-4: #d0d0d0;
+  --sl-color-gray-5: #e8e8e8;
+  --sl-color-gray-6: #f5f5f5;
+  --sl-color-black: #ffffff;
 }

@@ -3,6 +3,7 @@ package axon
 import (
 	"context"
 	"errors"
+	"path/filepath"
 )
 
 // api.go — public library API for embedding axon in Go programs.
@@ -30,6 +31,7 @@ var (
 	ErrDuplicateTool  = errors.New("agent: duplicate tool name")
 	ErrInvalidTool    = errors.New("agent: invalid tool")
 	ErrInterrupted    = errors.New("agent: turn interrupted")
+	ErrMaxIterations  = errors.New("agent: max iterations reached")
 )
 
 // Config is the contract for constructing an Agent. Model and SystemPrompt are required.
@@ -53,6 +55,15 @@ type Config struct {
 	MCPServers []MCPServer
 
 	Settings Settings
+
+	// MaxIterations bounds how many model calls one Step may make before the
+	// loop gives up and returns ErrMaxIterations. Zero means unbounded, which
+	// is the right default interactively — a human is watching and can
+	// interrupt. Unattended embedders (batch jobs, benchmark harnesses) should
+	// always set it: without a bound, a model that keeps calling tools without
+	// ever answering will spend the caller's budget until the process is
+	// killed by something else.
+	MaxIterations int
 }
 
 // InputFunc supplies user input to Run. Returns (line, true) per turn, (_, false) when exhausted.
@@ -74,4 +85,11 @@ func (a *Agent) SessionPath() string {
 		return ""
 	}
 	return a.session.Path()
+}
+// SessionsDir returns the directory holding this agent's session files, or
+// the default location when the agent was constructed without an explicit one.
+// Intended for embedders that list sessions for a switcher alongside
+// ListSessions.
+func (a *Agent) SessionsDir() string {
+	return filepath.Join(a.settings.Session.dataDir(), "sessions")
 }

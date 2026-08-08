@@ -1,65 +1,64 @@
 ---
 title: Overview
-description: What Axon is, where it sits, and what it deliberately leaves to your application.
+description: What Axon is and why it exists.
 ---
 
-Axon is an **agent execution runtime**. It is not a chatbot framework, CLI, workflow product, or provider SDK collection.
+Every agent needs the same plumbing: call a model → parse tool calls → execute tools → feed results back → repeat until done. Then add retries, streaming, context management, session persistence, background processes, and suddenly the "thin wrapper" is 3000 lines of infrastructure.
 
-A tool-using model by itself can only produce two things: text and requests to call tools. A useful agent also needs a place to keep state, a disciplined way to execute those requests, a way to feed observations back to the model, limits around expensive operations, and lifecycle control when work runs for minutes instead of milliseconds. Axon is that layer.
+Axon is that infrastructure, extracted into one Go package with one rule: **the runtime never decides what to build — only how to run it.**
 
-## The boundary
+```
+┌──────────────────────────────────────────┐
+│              Your Application            │
+│  (system prompt, product logic, UI/TUI)  │
+└──────────────────┬───────────────────────┘
+                   │ axon.New(Config{...})
+                   ▼
+┌──────────────────────────────────────────┐
+│                  Axon                    │
+│  turn loop · tools · sessions · pruner  │
+│  retries · streaming · events · MCP     │
+└──────────────────┬───────────────────────┘
+                   │ Model.Complete()
+                   ▼
+┌──────────────────────────────────────────┐
+│         OpenAI-compatible API            │
+│   (OpenRouter, Ollama, any /v1 endpoint) │
+└──────────────────────────────────────────┘
+```
 
-Your application decides **what the agent is for**:
+## What Axon owns
 
-- which model to use;
-- what system prompt defines its role;
-- which tools it should have;
-- how users interact with it;
-- which provider/model is selected;
-- what telemetry should be recorded;
-- what host/container permissions the process receives.
+| Concern | Axon handles it |
+|---------|----------------|
+| Turn loop | Call model → execute tools → feed back → repeat |
+| Built-in tools | read, write, exec, search, task, bash_output, kill_shell |
+| Streaming | SSE parsing, idle timeout, token-by-token delivery |
+| Retries | Exponential backoff, status-code policy, transport auto-retry |
+| Sessions | Per-directory persistence, edit tracking, undo |
+| Context pressure | Recency window + pruner (cheap secondary model) |
+| Background processes | Spawn, poll, kill with process-group management |
+| MCP | Subprocess JSON-RPC lifecycle + tool discovery |
+| Events | Structured event stream for any UI |
 
-Axon decides **how one agent instance runs**:
+## What you own
 
-- how turns repeat model → tool → model;
-- how the conversation and workspace state persist;
-- how old context is projected under pressure;
-- how built-in tools read, write, search, and execute;
-- how long-running commands are owned and polled;
-- how retries, interruption, and cleanup behave;
-- which runtime events are emitted.
+- System prompt (the agent's role)
+- Which model to use
+- Product logic around the agent
+- UI / TUI / API layer
+- Custom tools
 
-This division is why Axon is useful as a library: the application remains opinionated; the runtime remains reusable.
+## The `Model` interface
 
-## The three contracts
+One method. That's the entire contract.
 
-You can understand nearly the whole public surface as three contracts:
+```go
+type Model interface {
+    Complete(ctx context.Context, req Request) (*Msg, error)
+}
+```
 
-**Model** — takes messages and tool descriptions, returns assistant text and/or tool calls.
+Implement it to reach a provider that isn't OpenAI-compatible, to route through your own gateway, or to supply a deterministic fake for tests.
 
-**Tool** — exposes a name, description, JSON Schema, and executable function.
-
-**Agent** — owns the loop that repeatedly passes observations between the model and those tools while maintaining a session.
-
-Everything else supports those contracts: settings control operational policy, sessions carry durable state, events expose execution, and the pruner manages context pressure.
-
-## Configuration is not one thing
-
-Axon deliberately separates two concerns that are often collapsed into a single config object:
-
-- **Agent wiring (`axon.Config`)** answers “what objects make up this agent instance?”
-- **Operational settings (`axon.Settings`, optionally loaded from `axon.yaml`)** answer “what policies and limits should those objects use?”
-
-`axon.New` consumes both, but it does **not** load files or choose a provider for you. This distinction is central to the configuration manual.
-
-## What Axon does not promise
-
-Axon's working directory is not a filesystem sandbox. Shell execution is real shell execution. MCP servers are real subprocesses. Tool output limits are cost/latency controls, not data-loss-prevention filters.
-
-If the model must be isolated from the machine, enforce that with the OS, container, VM, credentials, and network boundary around the Axon process.
-
-## Where to go next
-
-- Want to run something now? [Quickstart](/axon/start/quickstart/).
-- Want the mental model first? [The runtime model](/axon/concepts/runtime-model/).
-- Want to edit configuration? [Configuration model](/axon/configuration/).
+`axon.OpenAI()` returns the implementation that ships — an SSE streaming client for any OpenAI-compatible endpoint.
