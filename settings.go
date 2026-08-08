@@ -278,8 +278,13 @@ type PrunerSettings struct {
 	// before another one fires.
 	GrowthTokens int `yaml:"growth_tokens"`
 
-	// MaxTokens caps the curator's reply. Its answer is one line of JSON; a
-	// chatty model hits this wall instead of burning tokens on prose.
+	// MaxTokens caps the curator's reply.
+	//
+	// The answer itself is one line of JSON, but providers that bill reasoning
+	// against this cap — OpenRouter does — will cut a reasoning model off
+	// mid-thought and return empty content. The cap has to cover the thinking
+	// as well as the answer, so it is sized for a reasoning curator rather
+	// than for the JSON.
 	MaxTokens int `yaml:"max_tokens"`
 
 	// Timeout bounds one curator call.
@@ -343,7 +348,7 @@ func DefaultSettings() Settings {
 			WindowBlocks: 30,
 			FloorTokens:  10000,
 			GrowthTokens: 5000,
-			MaxTokens:    4096,
+			MaxTokens:    16000,
 			Timeout:      Duration(60 * time.Second),
 		},
 	}

@@ -37,6 +37,35 @@ type Pruner struct {
 
 const defaultPrunerReminder = "\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park."
 
+// parkListSchema constrains the curator's reply to the one shape parkList
+// reads, forwarded as the request's response_format.
+//
+// Without it a reasoning model routinely answers entirely in reasoning tokens
+// and emits nothing in content, which arrives here as "empty response" and is
+// indistinguishable from a dead provider. A strict schema forces the final
+// answer into content. parkList still tolerates prose around the object,
+// because a provider that ignores response_format must not become a hard
+// failure — the constraint is an improvement, not a new requirement.
+const parkListSchema = `{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "park_list",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "park": {
+          "type": "array",
+          "items": {"type": "integer"},
+          "description": "Block ids to park. The integer in m7 is 7."
+        }
+      },
+      "required": ["park"],
+      "additionalProperties": false
+    }
+  }
+}`
+
 // NewPruner wraps a model — typically a cheap, fast, long-context one.
 func NewPruner(cfg PrunerConfig) *Pruner {
 	if cfg.Model == nil {
@@ -133,7 +162,8 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 			{Role: "system", Content: prunerSystemPrompt(p.mode)},
 			{Role: "user", Content: prunerRequest(s, p.window, defaultPrunerReminder)},
 		},
-		MaxTokens: p.maxTokens,
+		MaxTokens:      p.maxTokens,
+		ResponseFormat: json.RawMessage(parkListSchema),
 	})
 	if err != nil {
 		p.lastFire = before

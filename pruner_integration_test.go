@@ -662,6 +662,118 @@ func TestIntegrationCuratorReplyCapReachesTheWire(t *testing.T) {
 	}
 }
 
+// The default cap has to cover a reasoning model's thinking, not just the one
+// line of JSON it finally emits — providers bill reasoning against it, so a
+// cap sized for the answer is itself a cause of empty content.
+func TestIntegrationDefaultCuratorCapCoversReasoning(t *testing.T) {
+	s := explorationSession(t, 12, 3000)
+
+	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[]}`})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	got, _ := provider.requests[0]["max_tokens"].(float64)
+	if int(got) != DefaultSettings().Pruner.MaxTokens {
+		t.Fatalf("default max_tokens on the wire = %d, want %d",
+			int(got), DefaultSettings().Pruner.MaxTokens)
+	}
+	if got < 8000 {
+		t.Fatalf("default curator cap is %d — too small to hold a reasoning "+
+			"model's thinking plus its answer", int(got))
+	}
+	t.Logf("curator cap on the wire: %d tokens", int(got))
+}
+
+// The curator request must carry a strict JSON schema. This is what makes a
+// reasoning model emit its answer as content instead of leaving it in
+// reasoning tokens, which is the empty-response failure reproduced above.
+func TestIntegrationCuratorRequestCarriesStrictSchema(t *testing.T) {
+	s := explorationSession(t, 12, 3000)
+
+	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[3]}`})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	rf, ok := provider.requests[0]["response_format"].(map[string]any)
+	if !ok {
+		t.Fatal("curator request carried no response_format — a reasoning model " +
+			"is free to answer entirely in reasoning tokens")
+	}
+	if rf["type"] != "json_schema" {
+		t.Fatalf("response_format type = %v, want json_schema", rf["type"])
+	}
+
+	js, ok := rf["json_schema"].(map[string]any)
+	if !ok {
+		t.Fatal("response_format has no json_schema object")
+	}
+	if js["strict"] != true {
+		t.Errorf("json_schema.strict = %v, want true — a non-strict schema is a "+
+			"hint, not a constraint", js["strict"])
+	}
+
+	// The schema must describe exactly what parkList reads back, or the
+	// constraint guarantees a shape the runtime then fails to parse.
+	schema, _ := js["schema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	park, _ := props["park"].(map[string]any)
+	if park == nil {
+		t.Fatal("schema does not declare a park property")
+	}
+	if park["type"] != "array" {
+		t.Errorf("park type = %v, want array", park["type"])
+	}
+	if items, _ := park["items"].(map[string]any); items["type"] != "integer" {
+		t.Errorf("park items = %v, want integer", items)
+	}
+	if schema["additionalProperties"] != false {
+		t.Error("schema allows additional properties; strict mode requires false")
+	}
+}
+
+// A reply that satisfies the schema exactly — no prose, no fences, which is
+// what a constrained model actually returns — must parse and park.
+func TestIntegrationSchemaConstrainedReplyParks(t *testing.T) {
+	s := explorationSession(t, 12, 3000)
+
+	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[3,5,7]}`})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if got := parkedIDs(s); len(got) != 3 {
+		t.Fatalf("parked %v, want 3 blocks", got)
+	}
+}
+
+// A provider that ignores response_format entirely must keep working. The
+// schema is an improvement on top of the prose-tolerant parser, never a new
+// requirement — plenty of OpenRouter models do not support it.
+func TestIntegrationUnconstrainedProviderStillParses(t *testing.T) {
+	s := explorationSession(t, 12, 3000)
+
+	provider := newPrunerProvider(t,
+		sseDelta{Content: "Sure! Here's what I'd park:\n\n```json\n"},
+		sseDelta{Content: `{"park":[3,5]}`},
+		sseDelta{Content: "\n```\nLet me know if you want more parked."},
+	)
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if got := parkedIDs(s); len(got) != 2 {
+		t.Fatalf("parked %v, want 2 blocks", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // I6: transport failures stay recoverable
 // ---------------------------------------------------------------------------
