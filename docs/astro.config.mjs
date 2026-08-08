@@ -54,7 +54,7 @@ export default defineConfig({
         {
           label: 'Configuration',
           items: [
-            { label: 'Configuration model', slug: 'configuration/index' },
+            { label: 'Configuration model', slug: 'configuration' },
             { label: 'Providers', slug: 'configuration/providers' },
             { label: 'Model requests', slug: 'configuration/model' },
             { label: 'Retry policy', slug: 'configuration/retry' },
