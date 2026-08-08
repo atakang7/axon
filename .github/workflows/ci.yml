@@ -4,22 +4,48 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Callable so release.yml can run this exact gate as a prerequisite rather
+  # than keeping a second copy of it. There is one definition of "green".
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  gate:
+    name: build / vet / fmt / test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
       - run: go build ./...
+
       - run: go vet ./...
-      - run: go test ./...
+
+      # gofmt exits 0 whether or not it found anything, so a bare `gofmt -l`
+      # can never fail a build. The file list is the failure signal.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # -race is the point of running tests in CI at all: this package is
+      # concurrent (background shells, turn cancellation) and a data race is
+      # exactly the class of bug that passes locally and fails in production.
+      - run: go test -race ./...
 
   commitlint:
     name: Conventional Commits
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4

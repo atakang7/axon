@@ -14,8 +14,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The gate is a prerequisite, not a parallel workflow. Both this and CI
+  # trigger on push to main, so without this dependency a commit that fails
+  # tests still cuts a release — the two workflows would simply race.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
   release:
     name: semantic-release
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
