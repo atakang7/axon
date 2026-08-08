@@ -272,7 +272,7 @@ import (
     "context"
     "log"
     
-    "github.com/atakang7/axon"
+    "github.com/atakang7/axon/v2"
 )
 
 func main() {

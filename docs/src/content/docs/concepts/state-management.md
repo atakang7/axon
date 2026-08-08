@@ -286,7 +286,7 @@ package main
 import (
     "context"
     "fmt"
-    "github.com/atakang7/axon"
+    "github.com/atakang7/axon/v2"
 )
 
 func main() {

@@ -8,7 +8,7 @@ Integrating Axon requires setting up your configuration, allocating a provider c
 ## Installation
 
 ```bash
-go get github.com/atakang7/axon
+go get github.com/atakang7/axon/v2
 ```
 
 ## The Minimal Implementation
@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/atakang7/axon"
+	"github.com/atakang7/axon/v2"
 )
 
 func main() {

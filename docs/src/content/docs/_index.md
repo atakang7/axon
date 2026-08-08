@@ -54,7 +54,7 @@ Axon is a deterministic Go runtime for orchestrating Large Language Model (LLM) 
 
 ### Installation
 ```bash
-go get github.com/atakang7/axon
+go get github.com/atakang7/axon/v2
 ```
 
 ### Minimal Example
@@ -64,7 +64,7 @@ package main
 import (
     "context"
     "log"
-    "github.com/atakang7/axon"
+    "github.com/atakang7/axon/v2"
 )
 
 func main() {
@@ -195,4 +195,4 @@ docs/
 
 *Last updated: $(date)*
 *Documentation version: 2.0*
-*Axon version: $(go list -m github.com/atakang7/axon)*
+*Axon version: $(go list -m github.com/atakang7/axon/v2)*
