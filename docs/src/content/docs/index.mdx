@@ -1,32 +1,15 @@
 ---
-title: Axon Reference
-description: Go Runtime API and Implementation Reference
+title: Axon Runtime
+description: A deterministic Go runtime for LLM agent orchestration.
 template: splash
 hero:
-  tagline: Implementation reference for the Axon agent runtime.
+  tagline: A deterministic Go runtime for LLM agent orchestration.
   actions:
-    - text: Initialize the Loop
-      link: /overview/quick-start/
+    - text: Read the Design Doc
+      link: /overview/introduction/
       icon: right-arrow
     - text: Source Code
       link: https://github.com/atakang7/axon
       icon: external
       variant: minimal
 ---
-
-import { Card, CardGrid } from '@astrojs/starlight/components';
-
-<CardGrid stagger>
-	<Card title="Initialize" icon="setting">
-		Load settings, allocate the provider, and construct the agent instance.
-	</Card>
-	<Card title="Implement Tools" icon="document">
-		Write strictly typed capability handlers and register them to the loop.
-	</Card>
-	<Card title="Manage State" icon="add-document">
-		Access the append-only session projection for undos and audits.
-	</Card>
-	<Card title="Consume Events" icon="open-book">
-		Write telemetry callbacks to trace token streams and execution frames.
-	</Card>
-</CardGrid>

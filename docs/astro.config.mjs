@@ -14,17 +14,18 @@ export default defineConfig({
 				{
 					label: 'Overview',
 					items: [
-						{ label: 'Introduction', slug: 'overview/introduction' },
-						{ label: 'Quick Start', slug: 'overview/quick-start' },
-						{ label: 'Reference Implementation', slug: 'overview/showcase' },
+						{ label: 'Introduction & Design', slug: 'overview/introduction' },
+						{ label: 'Getting Started', slug: 'overview/getting-started' },
+						{ label: 'Life of a Turn', slug: 'overview/life-of-a-turn' },
 					],
 				},
 				{
-					label: 'Core Components',
+					label: 'Guides',
 					items: [
-						{ label: 'Configuration', slug: 'core/configuration' },
-						{ label: 'Tools', slug: 'core/tools' },
-						{ label: 'Events & Observability', slug: 'core/events' },
+						{ label: 'Defining Tools', slug: 'guides/defining-tools' },
+						{ label: 'Configuration & State', slug: 'guides/configuration-and-state' },
+						{ label: 'Telemetry & Events', slug: 'guides/telemetry-and-events' },
+						{ label: 'Cortex (Reference TUI)', slug: 'guides/cortex-reference' },
 					],
 				},
 			],

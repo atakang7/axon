@@ -1,34 +1,30 @@
 ---
-title: Architecture Model
-description: System boundaries and invariants.
+title: Introduction & Design
+description: Core mental models and design philosophy of the Axon runtime.
 ---
 
-Implement Axon as an orchestrator for a single model API connection. It manages tool dispatches, memory persistence, and context pruning.
+Axon is a deterministic Go runtime for orchestrating Large Language Model (LLM) agents. 
 
-## Invariants
+Unlike Python-based frameworks that optimize for rapid prototyping via dynamic typing and unbounded agent-to-agent communication, Axon is designed as a foundational backend library. It provides strict concurrency guarantees, explicit state management, and robust observability for production environments.
 
-1. **Monolithic Model Allocation.** You supply one primary model for inference and one secondary model for context pruning. Axon does not manage parallel sub-agents.
-2. **Turn-Scoped Execution.** Wrap every `Step` call in a finite `context.Context`. This context bounds the HTTP request and all tool subprocesses spawned during the turn.
-3. **Stateless Settings.** Load `axon.Config` exactly once at startup. Settings are immutable during runtime.
-4. **Append-Only Memory.** Session state is an immutable event log. Implement `/undo` or state truncations strictly via projection, not mutation.
+## The Mental Model
 
-## API Surface
+At its core, an LLM agent is a while-loop executing a non-deterministic state machine. The model observes state, plans an action, executes a tool, and observes the result.
 
-Interact with the runtime exclusively through the `axon.Agent` interface:
+Axon manages this loop on your behalf. You provide the model client, the system prompt, and the tool definitions. Axon handles the execution loop, token stream multiplexing, tool dispatching, and context window pruning.
 
-```go
-// Block until a turn completes, returning the assistant response.
-ag.Step(ctx context.Context, input string) (string, error)
+## Core Guarantees
 
-// Block and loop continuously against an input provider.
-ag.Run(ctx context.Context, inputFn func() (string, error))
+If you are building atop Axon, you can rely on the following invariants:
 
-// Halt the active Step or Run loop immediately.
-ag.Interrupt() bool
+1. **Deterministic State Mutation (Append-Only):**
+   Axon's session memory is strictly append-only. The conversation state is a projection of a linear event log. This guarantees that operations like `/undo` are byte-exact rollbacks, and every user session yields a perfect audit trail.
 
-// Flush the session and rebuild the root system prompt.
-ag.Reset()
+2. **Turn-Scoped Concurrency:**
+   A single user turn (`ag.Step`) runs under a single `context.Context`. If the user cancels the request or a timeout is reached, the context cancellation propagates synchronously to the HTTP stream and all concurrent tool execution subprocesses.
 
-// Return the current immutable state projection.
-ag.Session() *axon.Session
-```
+3. **Stateless Configuration:**
+   Agent settings are loaded once at instantiation and never mutated. This allows you to safely multiplex hundreds of structurally divergent agents (e.g., varying temperatures, varying tools) within a single OS process without race conditions or shared state bleed.
+
+4. **Monolithic Orchestration:**
+   Axon intentionally omits multi-agent delegation (where sub-agents chat with sub-agents). Multi-agent patterns historically suffer from cascading latency and catastrophic error loops. Instead, Axon manages context scale using a secondary *pruner model* that asynchronously parks stale memory.
