@@ -218,7 +218,7 @@ func TestNewSeedsSystemPromptOnlyOnce(t *testing.T) {
 		if len(a.Session().Messages) != 1 {
 			t.Fatalf("fresh session has %d messages, want 1", len(a.Session().Messages))
 		}
-		want := buildSystemPrompt(cfg.SystemPrompt)
+		want := buildSystemPrompt(cfg.SystemPrompt, a.tools)
 		if got := a.Session().Messages[0].Content; got != want {
 			t.Fatalf("system message = %q, want %q", got, want)
 		}
@@ -329,7 +329,7 @@ func TestResetRebuildsSystemPromptToolsAndShells(t *testing.T) {
 	if len(a.Session().Messages) != 1 {
 		t.Fatalf("Reset left %d messages, want 1 (system)", len(a.Session().Messages))
 	}
-	want := buildSystemPrompt(cfg.SystemPrompt)
+	want := buildSystemPrompt(cfg.SystemPrompt, a.tools)
 	if got := a.Session().Messages[0].Content; got != want {
 		t.Fatalf("system message after Reset = %q, want %q", got, want)
 	}

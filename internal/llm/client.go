@@ -293,12 +293,10 @@ func (r *reply) consume(text string, stream Stream) {
 // index the provider gave them so the sequence is stable.
 func (r *reply) message() *Msg {
 	finalContent := r.content.String()
-	if r.reasoningContent.Len() > 0 {
-		finalContent = "<think>\n" + r.reasoningContent.String() + "\n</think>\n" + finalContent
-	}
+	finalReasoning := r.reasoningContent.String()
 
 	if len(r.toolMeta) == 0 {
-		return &Msg{Role: "assistant", Content: finalContent}
+		return &Msg{Role: "assistant", Content: finalContent, Reasoning: finalReasoning}
 	}
 	indices := make([]int, 0, len(r.toolMeta))
 	for i := range r.toolMeta {
@@ -317,5 +315,5 @@ func (r *reply) message() *Msg {
 		}
 		calls = append(calls, tc)
 	}
-	return &Msg{Role: "assistant", Content: finalContent, ToolCalls: calls}
+	return &Msg{Role: "assistant", Content: finalContent, Reasoning: finalReasoning, ToolCalls: calls}
 }
