@@ -40,6 +40,17 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Align latest release tag with main history
+        run: |
+          latest_tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | head -n1)"
+          [ -n "$latest_tag" ] || exit 0
+
+          latest_version="${latest_tag#v}"
+          release_commit="$(git log --format='%H' --grep="^chore(release): ${latest_version} " -n1)"
+          [ -n "$release_commit" ] || exit 0
+
+          git tag -f "$latest_tag" "$release_commit"
+
       - name: Run semantic-release
         id: semantic
         uses: cycjimmy/semantic-release-action@v4
