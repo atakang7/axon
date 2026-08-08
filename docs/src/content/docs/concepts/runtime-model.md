@@ -1,62 +1,105 @@
 ---
 title: The runtime model
-description: The conceptual model behind Axon's turn loop and ownership boundaries.
+description: The execution model that predicts how turns, failures, tools, state, and telemetry behave.
 ---
 
-An Axon agent is best understood as a **stateful observation loop**.
-
-The model never directly edits a file, starts a server, or searches a repository. It emits a structured request for a named capability. The runtime executes that capability, records what happened, turns the result into another observation, and asks the model what to do next.
+Axon is easiest to reason about as a **stateful observation loop**:
 
 ```text
-intent ──▶ model ──▶ proposed action ──▶ runtime/tool ──▶ observation
-  ▲                                                       │
-  └───────────────────────────────────────────────────────┘
+user intent
+    │
+    ▼
+  model ── proposes action ──▶ tool/runtime
+    ▲                            │
+    └──── receives observation ──┘
 ```
 
-The loop ends when the model produces assistant output without another tool request.
+The model decides what should happen next. The runtime decides what actually happens on the machine, records the result, and turns that result into the model's next observation.
 
-## A turn is larger than a model request
+That single loop explains most of Axon's behavior.
 
-This is the first distinction to internalize.
+## A turn is not a model request
 
-A **model request** is one inference call.
+One user input creates one **turn**. A turn may contain many model requests:
 
-A **turn** starts with one user input and may contain a chain of model requests and tool executions before it settles on a final answer.
+```text
+user
+  ↓
+model request #1
+  ↓ tool call
+execution
+  ↓ tool result
+model request #2
+  ↓ tool call
+execution
+  ↓ tool result
+model request #3
+  ↓
+final assistant text
+```
 
-That difference affects everything around Axon: UI progress, cancellation, cost accounting, tracing, persistence, and testing should usually be organized around the turn rather than assuming one user message equals one API call.
+This distinction matters operationally. Measure user latency, cancellation, tracing, and task success at the **turn** level; measure tokens, provider failures, and retries at the **model-request** level.
 
-## The model is a decision engine, not the executor
+If you treat them as the same thing, agent telemetry becomes misleading very quickly.
 
-The model sees descriptions of tools. It does not receive their Go functions. This creates a clean separation:
+## There are three planes
 
-- the **model plane** decides what action would move the task forward;
-- the **execution plane** decides what actually happens on the machine;
-- the **session** carries observations between them.
+A useful way to separate responsibilities is:
 
-A custom model can therefore be swapped without rewriting tools, and a custom tool can be added without teaching the model transport layer how to execute it.
+### Decision plane — `Model`
 
-## State is part of the runtime
+The model receives the current context plus tool contracts and returns text and/or structured tool calls. It has no executable Go function and no direct filesystem/process handle.
 
-Agentic work is not just chat history. During a coding task the runtime also needs a working directory, a task plan, edit history, block identifiers, and live background-process ownership.
+### Execution plane — tools
 
-Axon groups the durable part of that working state into a session. The next model request is then built as a **projection** of session history rather than a blind replay of every byte ever observed.
+Tools hold real authority: files, shells, services, MCP processes, or application APIs. A tool call is only a proposal until this plane executes it.
 
-That projection boundary is what makes context management possible without treating deletion as memory management.
+### State plane — `Session`
 
-## Failure is usually another observation
+The session carries observations between model requests and across process restarts. Axon projects model-visible context from that durable state instead of replaying the entire history blindly.
 
-Ordinary tool failures are fed back to the model as tool results. This is intentional: “file not found”, a failing test, or a rejected replacement is often information the agent can use to recover.
+This separation is why you can swap a model without rewriting tools, replace a tool without changing the model transport, and reduce old context without deleting the historical record.
 
-Failures of the runtime boundary—construction errors, unrecoverable model errors, session-save failure at the beginning of a turn, parent cancellation—are different. Those escape the loop as Go errors.
+## Most tool failures are useful observations
 
-## Runtime policy is frozen into an agent
+A missing file, failed command, or rejected edit is usually information about the world, not a reason to abort the entire turn.
 
-Operational settings are resolved when an agent is constructed. Tools receive their limits; the agent receives retry/context policy; the session location is resolved. Axon does not repeatedly reload `axon.yaml` while a turn is executing.
+Axon therefore converts ordinary tool errors into tool-result observations and lets the model recover.
 
-That means one process can host differently configured agents without a mutable global configuration plane.
+The practical consequence for tool authors is important: **error quality affects agent quality**. `"replacement matched 3 locations"` gives the next model call something actionable; `"operation failed"` does not.
 
-## A useful design test
+Errors that mean the loop itself cannot continue—construction failure, unrecoverable model failure, parent cancellation, or the initial session-save failure—escape as Go errors instead.
 
-When deciding whether something belongs in Axon, ask: **is this execution machinery common to many agent products, or product policy specific to one application?**
+## Events observe execution; they do not define it
 
-The former belongs in the runtime. The latter belongs in the embedder.
+Axon emits runtime events around the loop so UIs and telemetry do not need to infer execution from assistant text.
+
+Keep two categories separate:
+
+- **streaming events** (`token`, `reasoning`, `tool_arg_delta`) describe work in progress;
+- **resolved events** (`tool_call`, `tool_result`, `assistant_end`, `turn_end`) describe completed runtime boundaries.
+
+Use streaming events for presentation. Use resolved events for audit/tracing decisions.
+
+The callback is synchronous, so an observer that blocks can slow the runtime. Persistence is separate: events are a live observation surface, not the session's source of truth.
+
+For implementation patterns, see [Build observability](/axon/guides/observability/) and [Events reference](/axon/reference/events/).
+
+## Runtime policy is fixed at construction
+
+`Agent.New` receives already-selected objects plus settings. It does not continuously reload configuration, auto-select a provider, or mutate an arbitrary `Model` later.
+
+That gives an agent instance a stable operational policy for its lifetime and allows multiple agents in one process to use different models, limits, context policy, and sessions.
+
+## What this model lets you predict
+
+Once you internalize the loop, several design decisions become straightforward:
+
+- Want provider-independent execution? Put provider logic behind `Model`.
+- Want the model to perform a new action? Add a capability/tool, not a branch inside the loop.
+- Want failures the model can recover from? Return precise tool observations.
+- Want durable progress? Put it in session state, not only transient events.
+- Want to reduce context cost? Change the projection of durable history rather than deleting history.
+- Want safe machine access? Restrict the execution plane with OS/container authority; the model plane is not a sandbox.
+
+That is the core Axon mental model. The rest of the documentation should refine one of those decisions, not invent another architecture.
