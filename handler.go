@@ -3,6 +3,7 @@ package axon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -30,6 +31,38 @@ const (
 	KindError
 	KindSessionEnd
 )
+
+// kindNames backs Kind.String. Indexed by Kind so the switch that would
+// otherwise drift out of sync with the const block above cannot exist.
+var kindNames = [...]string{
+	KindUnknown:      "unknown",
+	KindSessionStart: "session_start",
+	KindUserInput:    "user_input",
+	KindTurnStart:    "turn_start",
+	KindAPICall:      "api_call",
+	KindToken:        "token",
+	KindReasoning:    "reasoning",
+	KindAssistantEnd: "assistant_end",
+	KindToolArgDelta: "tool_arg_delta",
+	KindToolCall:     "tool_call",
+	KindToolResult:   "tool_result",
+	KindToolError:    "tool_error",
+	KindTurnEnd:      "turn_end",
+	KindPruneStart:   "prune_start",
+	KindPruneEnd:     "prune_end",
+	KindInfo:         "info",
+	KindError:        "error",
+	KindSessionEnd:   "session_end",
+}
+
+// String names a Kind for logs and traces. An out-of-range value (there
+// should never be one) prints as its number rather than panicking.
+func (k Kind) String() string {
+	if int(k) < 0 || int(k) >= len(kindNames) {
+		return fmt.Sprintf("kind(%d)", int(k))
+	}
+	return kindNames[k]
+}
 
 // Event is the unit the runtime emits. Only the fields relevant to Kind
 // are populated; consumers should switch on Kind and read the matching

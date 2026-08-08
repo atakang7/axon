@@ -5,6 +5,30 @@ description: Contracts and concurrency for custom capabilities.
 
 Tools are the capability boundary between the Axon runtime and your infrastructure. 
 
+```mermaid
+graph LR
+    classDef secure fill:#991B1B,stroke:#7F1D1D,stroke-width:2px,color:#fff;
+    classDef runtime fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff;
+    
+    subgraph Axon Step Lifecycle
+        State[(Session State)]:::runtime
+        Stream[Network Stream]:::runtime
+        Dispatch{Tool Dispatcher}:::runtime
+    end
+    
+    subgraph Isolated Capability Closure
+        Func(fn(ctx, args)):::secure
+        DB[(External Database)]:::secure
+    end
+    
+    Dispatch ==>|JSON Args + ctx| Func
+    Func ==>|Network I/O| DB
+    DB -.->|Raw Data| Func
+    Func ==>|String/Error Result| Dispatch
+    
+    State -.-x|NO ACCESS| Func
+```
+
 ## The Tool Contract
 
 A valid `axon.Tool` must define a JSON Schema outlining its required arguments, and a Go closure `Fn` to execute the logic.
@@ -53,15 +77,3 @@ var ReadDBTool = axon.Tool{
 Tools in Axon are capability-based. A tool's `Fn` receives only what it needs: the request context and the parsed arguments. 
 
 Tools **do not** receive a reference to the `Agent`, the `Session`, or global configuration. This isolation guarantees that a compromised or hallucinated tool dispatch cannot mutate the agent's internal memory projection or extract API keys.
-
-## Tool Registration
-
-To attach custom tools, pass them in the `axon.Config` array during initialization.
-
-```go
-ag, err := axon.New(axon.Config{
-	Model:        model, 
-	SystemPrompt: "...", 
-	Tools:        []axon.Tool{ReadDBTool},
-})
-```

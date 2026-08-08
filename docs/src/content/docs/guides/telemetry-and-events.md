@@ -5,6 +5,19 @@ description: Subscribing to the runtime execution frames.
 
 Axon is fundamentally a background orchestrator. To surface its behavior to a UI, a log aggregator, or a metrics pipeline, you must implement the `OnEvent` hook.
 
+```mermaid
+graph LR
+    classDef event fill:#8B5CF6,stroke:#5B21B6,stroke-width:2px,color:#fff;
+    classDef sink fill:#3B82F6,stroke:#1D4ED8,stroke-width:2px,color:#fff;
+
+    Stream[Internal Loop] -->|Dispatches Event| Handler{Config.OnEvent}:::event
+    
+    Handler -->|KindToken| UI[UI Chat Bubble]:::sink
+    Handler -->|KindToolCall| Spin[Loading Spinner]:::sink
+    Handler -->|KindPruneStart| Warn[Context Warning]:::sink
+    Handler -->|KindError| Log[Log Aggregator]:::sink
+```
+
 ## The Event Loop
 
 `Config.OnEvent` receives a synchronous callback for every state transition in the `ag.Step` loop. 

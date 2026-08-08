@@ -15,6 +15,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	}
 
 	a.session.Turn++
+	a.emit(ctx, Event{Kind: KindTurnStart})
 	a.session.Append(Msg{Role: "user", Content: userInput})
 	if err := a.session.Save(); err != nil {
 		return StepResult{}, fmt.Errorf("agent: save session: %w", err)

@@ -1,6 +1,7 @@
 package axon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -77,7 +78,7 @@ func New(cfg Config) (*Agent, error) {
 		})
 	}
 
-	return &Agent{
+	a := &Agent{
 		model:           cfg.Model,
 		tools:           toolset,
 		session:         sess,
@@ -90,7 +91,20 @@ func New(cfg Config) (*Agent, error) {
 		excludeBuiltins: cfg.ExcludeBuiltins,
 		mcpClients:      mcpClients,
 		settings:        settings,
-	}, nil
+	}
+
+	// Model and Provider are left blank: Model is an interface an embedder can
+	// implement with anything, so the runtime has no generic way to ask one
+	// what it is. The embedder already knows — cortex, for instance, names it
+	// in its own config — and can log that alongside this event itself.
+	a.emit(context.Background(), Event{Kind: KindSessionStart, Session: &SessionInfo{
+		ID:       sess.ID,
+		Cwd:      sess.Cwd,
+		Path:     sess.Path(),
+		PrunerOn: pruner != nil,
+	}})
+
+	return a, nil
 }
 
 // missingToolFields names the first required field a tool leaves unset, or ""
@@ -200,6 +214,13 @@ func (a *Agent) Cd(target string) (string, error) {
 // Close releases resources held by the agent: background shells, file
 // handles, etc. Idempotent.
 func (a *Agent) Close() error {
+	a.emit(context.Background(), Event{Kind: KindSessionEnd, Session: &SessionInfo{
+		ID:       a.session.ID,
+		Cwd:      a.session.Cwd,
+		Path:     a.session.Path(),
+		PrunerOn: a.pruner != nil,
+	}})
+
 	a.shells.KillAll()
 	for _, c := range a.mcpClients {
 		c.Close()

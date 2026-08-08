@@ -527,7 +527,7 @@ func TestEventBracketingForToolUsingTurn(t *testing.T) {
 
 	kinds := log.kinds()
 	want := []Kind{
-		KindUserInput, KindAPICall, KindToken, KindReasoning,
+		KindSessionStart, KindTurnStart, KindUserInput, KindAPICall, KindToken, KindReasoning,
 		KindToolCall, KindToolResult,
 		KindAPICall, KindAssistantEnd, KindTurnEnd,
 	}
@@ -540,6 +540,10 @@ func TestEventBracketingForToolUsingTurn(t *testing.T) {
 		}
 	}
 	for _, e := range log.all() {
+		// KindSessionStart fires from New, before any turn exists.
+		if e.Kind == KindSessionStart {
+			continue
+		}
 		if e.Turn != 1 {
 			t.Fatalf("event %v has Turn=%d, want 1", e.Kind, e.Turn)
 		}
@@ -1028,6 +1032,39 @@ func TestRunReturnsContextError(t *testing.T) {
 
 // emit with a nil OnEvent must be a cheap no-op — the hot path for every
 // embedder that does not care about observability.
+// New emits KindSessionStart with the session's identity before anything
+// else happens, and Close emits KindSessionEnd — so an embedder building a
+// trace of the whole run, not just its turns, has clean bookends to key off.
+func TestSessionLifecycleEventsBracketTheRun(t *testing.T) {
+	var log eventLog
+	cfg := noToolsConfig(t)
+	cfg.OnEvent = log.record
+
+	a, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	all := log.all()
+	if len(all) != 1 || all[0].Kind != KindSessionStart {
+		t.Fatalf("events after New = %v, want exactly one KindSessionStart", log.kinds())
+	}
+	start := all[0].Session
+	if start == nil || start.ID == "" || start.Path == "" {
+		t.Fatalf("KindSessionStart.Session = %+v, want ID and Path populated", start)
+	}
+
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	kinds := log.kinds()
+	last := kinds[len(kinds)-1]
+	if last != KindSessionEnd {
+		t.Fatalf("last event after Close = %v, want KindSessionEnd", last)
+	}
+}
+
 func TestEmitWithNilOnEventIsNoOp(t *testing.T) {
 	cfg := noToolsConfig(t)
 	a, err := New(cfg)
@@ -1052,12 +1089,13 @@ func TestEmitFillsZeroTime(t *testing.T) {
 	}
 	defer a.Close()
 
+	before := len(log.all())
 	a.emit(context.Background(), Event{Kind: KindInfo})
 	all := log.all()
-	if len(all) != 1 {
-		t.Fatalf("got %d events, want 1", len(all))
+	if len(all) != before+1 {
+		t.Fatalf("got %d events, want %d", len(all), before+1)
 	}
-	if all[0].Time.IsZero() {
+	if last := all[len(all)-1]; last.Time.IsZero() {
 		t.Fatal("emit left Event.Time zero")
 	}
 }

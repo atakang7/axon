@@ -5,6 +5,21 @@ description: Managing environments, secrets, and session projections.
 
 Axon enforces a strict decoupling of structural configuration (which is safe to version control) and secret material (which is environment-bound).
 
+```mermaid
+graph TD
+    classDef file fill:#F59E0B,stroke:#B45309,stroke-width:2px,color:#fff;
+    classDef mem fill:#10B981,stroke:#047857,stroke-width:2px,color:#fff;
+    
+    YAML[axon.yaml<br/>Topology & Limits]:::file
+    ENV[.env<br/>Secrets & Keys]:::file
+    
+    YAML --> Parse{axon.Load}
+    ENV --> Parse
+    
+    Parse --> Config[axon.Config]:::mem
+    Config --> Agent((Agent Instance)):::mem
+```
+
 ## Configuration Topology
 
 The runtime expects two distinct files:

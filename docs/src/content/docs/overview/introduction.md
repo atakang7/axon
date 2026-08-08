@@ -11,6 +11,28 @@ Unlike Python-based frameworks that optimize for rapid prototyping via dynamic t
 
 At its core, an LLM agent is a while-loop executing a non-deterministic state machine. The model observes state, plans an action, executes a tool, and observes the result.
 
+```mermaid
+graph TD
+    classDef primary fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff;
+    classDef secondary fill:#059669,stroke:#064E3B,stroke-width:2px,color:#fff;
+    classDef state fill:#4B5563,stroke:#1F2937,stroke-width:2px,color:#fff;
+    
+    subgraph Axon Runtime Orchestration
+        direction TB
+        State[(Append-Only Memory)]:::state
+        Main[Main Inference LLM]:::primary
+        Tools((Capability Tools)):::secondary
+        Pruner[Context Pruner LLM]:::primary
+        
+        State -->|Flush Context| Main
+        Main -->|Dispatch JSON| Tools
+        Tools -->|stdout/stderr| State
+        
+        State -.->|Token Pressure| Pruner
+        Pruner -.->|Compress| State
+    end
+```
+
 Axon manages this loop on your behalf. You provide the model client, the system prompt, and the tool definitions. Axon handles the execution loop, token stream multiplexing, tool dispatching, and context window pruning.
 
 ## Core Guarantees
