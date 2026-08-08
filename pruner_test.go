@@ -468,7 +468,7 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 		SystemPrompt:    "you are a test agent",
 		ExcludeBuiltins: allBuiltins,
 		Session:         sess,
-		Pruner:          NewPruner(PrunerConfig{Model: prunerModel}),
+		Pruner:          prunerModel,
 	}
 	var log eventLog
 	cfg.OnEvent = log.record

@@ -69,13 +69,21 @@ func New(cfg Config) (*Agent, error) {
 		sess.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(cfg.SystemPrompt, toolset)}}
 	}
 
+	var pruner *Pruner
+	if cfg.Pruner != nil {
+		pruner = NewPruner(PrunerConfig{
+			Model:    cfg.Pruner,
+			Settings: settings.Pruner,
+		})
+	}
+
 	return &Agent{
 		model:           cfg.Model,
 		tools:           toolset,
 		session:         sess,
 		shells:          shells,
 		limits:          limits,
-		pruner:          cfg.Pruner,
+		pruner:          pruner,
 		onEvent:         cfg.OnEvent,
 		systemPrompt:    cfg.SystemPrompt,
 		customTools:     cfg.Tools,

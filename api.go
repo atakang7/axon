@@ -42,7 +42,7 @@ type Config struct {
 
 	ExcludeBuiltins []string
 
-	Pruner *Pruner
+	Pruner Model
 
 	Cwd string
 
