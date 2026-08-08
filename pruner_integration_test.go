@@ -856,7 +856,166 @@ func TestIntegrationStalledProviderLeavesSessionIntact(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// I7: against a live provider
+// I7: why the curator names ids that cannot be parked
+//
+// Production reported "named 1 unusable block(s): m40" against a 14.1k
+// context. There are exactly four ways a named id lands in Rejected, and the
+// question these tests answer is which of them a curator can actually reach
+// given what it is shown.
+// ---------------------------------------------------------------------------
+
+// Cause 1: the id is protected (latest user or latest assistant).
+//
+// The curator is never shown a protected block — windowCutoff refuses to cut
+// them and prunerRequest only renders what was cut — so reaching this means
+// naming an id that was not in the log.
+func TestIntegrationRejectionCauseProtected(t *testing.T) {
+	s := explorationSession(t, 12, 3000)
+
+	protected := protectedIDs(s)
+	if len(protected) != 2 {
+		t.Fatalf("expected 2 protected blocks, got %v", protected)
+	}
+
+	var target string
+	for id := range protected {
+		target = id
+		break
+	}
+
+	provider := newPrunerProvider(t, sseDelta{
+		Content: fmt.Sprintf(`{"park":[%s]}`, strings.TrimPrefix(target, "m")),
+	})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune returned an error for a rejected id: %v", err)
+	}
+
+	prompt := provider.curatorPrompt(t, 0)
+	if strings.Contains(prompt, "["+target+" |") {
+		t.Fatalf("%s was rendered in the curator's log; it should be hidden", target)
+	}
+	if got := p.Rejected(); len(got) != 1 || got[0] != target {
+		t.Fatalf("Rejected() = %v, want [%s]", got, target)
+	}
+	t.Logf("protected id %s was NOT in the curator's log — naming it means the "+
+		"model invented it", target)
+}
+
+// Cause 2: the id does not exist at all.
+func TestIntegrationRejectionCauseUnknownID(t *testing.T) {
+	s := explorationSession(t, 12, 3000)
+
+	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[9999]}`})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if got := p.Rejected(); len(got) != 1 || got[0] != "m9999" {
+		t.Fatalf("Rejected() = %v, want [m9999]", got)
+	}
+}
+
+// Cause 3: an id that is only ever mentioned INSIDE another block's content.
+//
+// loop.go prefixes every tool result with "[#mN]\n", so ids appear in the
+// prose the curator reads, not just in the labels it is meant to name. A model
+// that harvests ids from content rather than from labels will name blocks that
+// are in the window — and therefore not parkable candidates — which is the
+// most plausible route to the observed single rejection.
+func TestIntegrationRejectionCauseIDQuotedInsideContent(t *testing.T) {
+	s := explorationSession(t, 12, 3000)
+
+	prompt := ""
+	provider := newPrunerProviderFunc(t, func(int) []sseDelta {
+		return []sseDelta{{Content: `{"park":[]}`}}
+	})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	prompt = provider.curatorPrompt(t, 0)
+
+	// Collect the ids the curator may legitimately name (label form) and the
+	// ids that merely appear inside content (the "[#mN]" tool-result prefix).
+	labelled := map[string]bool{}
+	for _, m := range s.Messages {
+		if m.ID != "" && strings.Contains(prompt, "["+m.ID+" |") {
+			labelled[m.ID] = true
+		}
+	}
+
+	var quotedOnly []string
+	for _, m := range s.Messages {
+		if m.ID == "" || labelled[m.ID] {
+			continue
+		}
+		if strings.Contains(prompt, "[#"+m.ID+"]") {
+			quotedOnly = append(quotedOnly, m.ID)
+		}
+	}
+
+	t.Logf("curator log: %d labelled ids, %d ids that appear only inside "+
+		"content as a [#mN] prefix", len(labelled), len(quotedOnly))
+
+	if len(quotedOnly) == 0 {
+		t.Skip("no id is quoted inside content without also being labelled")
+	}
+
+	// Naming one of those is a rejection, and the model had it in front of it.
+	target := quotedOnly[0]
+	s2 := explorationSession(t, 12, 3000)
+	provider2 := newPrunerProvider(t, sseDelta{
+		Content: fmt.Sprintf(`{"park":[%s]}`, strings.TrimPrefix(target, "m")),
+	})
+	p2 := livePruner(t, provider2, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
+	if _, err := p2.Prune(context.Background(), s2); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	t.Logf("REPRODUCED SHAPE: id %s is visible to the curator only as a "+
+		"[#%s] prefix inside another block, and naming it yields %v",
+		target, target, p2.Rejected())
+}
+
+// Cause 4: a rejection must never cost the blocks that were parkable. This is
+// the production symptom — "named 1 unusable block(s): m40" — reproduced end
+// to end on the current code, where it is no longer an error and the other
+// nine blocks are parked.
+func TestIntegrationSingleRejectionDoesNotCostThePass(t *testing.T) {
+	s := explorationSession(t, 20, 3000)
+
+	// Nine real candidates plus one invented id, the shape production hit.
+	provider := newPrunerProvider(t, sseDelta{
+		Content: `{"park":[3,5,7,9,11,13,15,17,19,9999]}`,
+	})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 0, FloorTokens: 1, GrowthTokens: 1})
+
+	before := p.ContextTokens(s)
+	after, err := p.Prune(context.Background(), s)
+	if err != nil {
+		t.Fatalf("a single invented id made the whole pass an error: %v", err)
+	}
+
+	parked := parkedIDs(s)
+	if len(parked) != 9 {
+		t.Fatalf("parked %d blocks (%v), want 9", len(parked), parked)
+	}
+	if after >= before {
+		t.Fatalf("context did not shrink: %d -> %d", before, after)
+	}
+	if got := p.Rejected(); len(got) != 1 || got[0] != "m9999" {
+		t.Fatalf("Rejected() = %v, want [m9999]", got)
+	}
+
+	t.Logf("9 blocks parked, %d -> %d tokens, 1 id rejected — reported as "+
+		"success with a detail, not as a failed prune", before, after)
+}
+
+// ---------------------------------------------------------------------------
+// I8: against a live provider
 // ---------------------------------------------------------------------------
 
 // Run with the curator you actually configured to see what it returns for a
