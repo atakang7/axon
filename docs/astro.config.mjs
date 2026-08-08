@@ -16,6 +16,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Introduction', slug: 'overview/introduction' },
 						{ label: 'Quick Start', slug: 'overview/quick-start' },
+						{ label: 'Reference Implementation', slug: 'overview/showcase' },
 					],
 				},
 				{
