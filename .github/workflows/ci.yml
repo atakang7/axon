@@ -26,8 +26,6 @@ jobs:
 
       - run: go vet ./...
 
-      # gofmt exits 0 whether or not it found anything, so a bare `gofmt -l`
-      # can never fail a build. The file list is the failure signal.
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)
@@ -37,10 +35,24 @@ jobs:
             exit 1
           fi
 
-      # -race is the point of running tests in CI at all: this package is
-      # concurrent (background shells, turn cancellation) and a data race is
-      # exactly the class of bug that passes locally and fails in production.
       - run: go test -race ./...
+
+  docs:
+    name: docs / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+      - run: npm run build
 
   commitlint:
     name: Conventional Commits

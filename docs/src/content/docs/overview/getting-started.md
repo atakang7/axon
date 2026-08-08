@@ -1,64 +1,125 @@
 ---
-title: Getting Started
-description: Bootstrap the Axon runtime.
+title: Getting started
+description: Create a model, construct an agent, and run a turn.
 ---
 
-Integrating Axon requires setting up your configuration, allocating a provider client, and initializing the `Agent` struct.
-
-## Installation
+## Install
 
 ```bash
 go get github.com/atakang7/axon/v2
 ```
 
-## The Minimal Implementation
+Axon requires Go `1.26.2` according to the module declaration.
 
-The following demonstrates the canonical initialization sequence for an Axon agent. 
+## Option A: construct everything directly
+
+This path requires no Axon config files.
 
 ```go
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
+    "context"
+    "fmt"
+    "log"
+    "os"
 
-	"github.com/atakang7/axon/v2"
+    axon "github.com/atakang7/axon/v2"
 )
 
 func main() {
-	// 1. Load configuration (Settings + Secrets).
-	settings, err := axon.Load()
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
-	}
+    model, err := axon.OpenAI(axon.ClientConfig{
+        Provider: axon.Provider{
+            Name:    "provider",
+            BaseURL: "https://example.com/v1",
+            Model:   "<model-id>",
+            APIKey:  os.Getenv("MODEL_API_KEY"),
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
 
-	// 2. Allocate the provider client.
-	model, err := settings.NewClient("openrouter", "deepseek/deepseek-v3.2")
-	if err != nil {
-		log.Fatalf("Failed to initialize model client: %v", err)
-	}
+    agent, err := axon.New(axon.Config{
+        Model:        model,
+        SystemPrompt: "You are a careful coding agent.",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer agent.Close()
 
-	// 3. Construct the Agent runtime.
-	ag, err := axon.New(axon.Config{
-		Model:        model,
-		SystemPrompt: "You are an expert systems engineer. Use tools efficiently.",
-		Settings:     settings,
-	})
-	if err != nil {
-		log.Fatalf("Failed to construct agent: %v", err)
-	}
-	defer ag.Close()
+    result, err := agent.Step(context.Background(), "List the files here.")
+    if err != nil {
+        log.Fatal(err)
+    }
 
-	// 4. Dispatch a turn.
-	ctx := context.Background()
-	response, err := ag.Step(ctx, "Analyze the system environment and list active processes.")
-	if err != nil {
-		log.Fatalf("Agent step failed: %v", err)
-	}
-
-	fmt.Println("Final Response:", response)
+    fmt.Println(result.Assistant)
 }
 ```
 
-By default, `axon.New` attaches a standard library of tools (read, write, exec, search, task) allowing the agent to interact with the host environment immediately.
+With zero-valued `Settings`, `New` applies `DefaultSettings()`.
+
+## Option B: load Axon's configuration
+
+`Load()` reads the standard `axon.yaml` and `.env` locations, resolves secrets, applies defaults, validates the result, and returns ready-to-use `Settings`.
+
+```go
+settings, err := axon.Load()
+if err != nil {
+    log.Fatal(err)
+}
+
+model, err := settings.NewClient("openrouter", "<model-id>")
+if err != nil {
+    log.Fatal(err)
+}
+
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "You are a careful coding agent.",
+    Settings:     settings,
+})
+```
+
+A minimal configuration looks like this:
+
+```yaml
+providers:
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    models:
+      <model-id>: {}
+```
+
+And the credentials file contains:
+
+```dotenv
+OPENROUTER_API_KEY=...
+```
+
+:::caution
+`Load()` currently requires the credentials file to exist because it reads `.env` before the YAML file, even if your configuration ultimately uses no secret. Construct `Settings` directly when you do not want that file contract.
+:::
+
+## Add a pruner only when you want one
+
+Context windowing works without a secondary model. Model-assisted parking is enabled only when `Config.Pruner` is non-nil.
+
+```go
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    Pruner:       cheapModel,
+    SystemPrompt: "You are a coding agent.",
+    Settings:     settings,
+})
+```
+
+## Close the agent
+
+Call `Close()` when the owning application is finished. It emits `session_end`, kills live background shells, and kills spawned MCP processes.
+
+## Next
+
+Read [Life of a turn](/axon/overview/life-of-a-turn/) before building UI around `Step`: it explains exactly when persistence, pruning, events, tools, retries, and interruption happen.

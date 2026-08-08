@@ -1,52 +1,60 @@
 ---
-title: Introduction & Design
-description: Core mental models and design philosophy of the Axon runtime.
+title: What is Axon?
+description: The scope and design of the Axon runtime.
 ---
 
-Axon is a deterministic Go runtime for orchestrating Large Language Model (LLM) agents. 
+Axon is the runtime between **an application that wants an agent** and **a model that can call tools**.
 
-Unlike Python-based frameworks that optimize for rapid prototyping via dynamic typing and unbounded agent-to-agent communication, Axon is designed as a foundational backend library. It provides strict concurrency guarantees, explicit state management, and robust observability for production environments.
+It is intentionally not a complete agent product. There is no CLI entrypoint, UI, provider picker, project workflow, or opinionated user experience in the package. An embedder owns those choices.
 
-## The Mental Model
+## What Axon owns
 
-At its core, an LLM agent is a while-loop executing a non-deterministic state machine. The model observes state, plans an action, executes a tool, and observes the result.
+Axon implements the parts that become repetitive and correctness-sensitive in every tool-using agent:
 
-```mermaid
-graph TD
-    classDef primary fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff;
-    classDef secondary fill:#059669,stroke:#064E3B,stroke-width:2px,color:#fff;
-    classDef state fill:#4B5563,stroke:#1F2937,stroke-width:2px,color:#fff;
-    
-    subgraph Axon Runtime Orchestration
-        direction TB
-        State[(Append-Only Memory)]:::state
-        Main[Main Inference LLM]:::primary
-        Tools((Capability Tools)):::secondary
-        Pruner[Context Pruner LLM]:::primary
-        
-        State -->|Flush Context| Main
-        Main -->|Dispatch JSON| Tools
-        Tools -->|stdout/stderr| State
-        
-        State -.->|Token Pressure| Pruner
-        Pruner -.->|Compress| State
-    end
+- iterative model → tool → model execution;
+- OpenAI-compatible streamed chat completions;
+- retries for configured HTTP statuses and transient transport failures;
+- built-in read/write/search/exec/background/task tools;
+- custom tools through a small `Tool` contract;
+- MCP tool discovery over a spawned stdio server;
+- on-disk sessions and edit history;
+- working-directory changes and undo;
+- free recency-window context collapse plus optional model-assisted pruning;
+- structured synchronous runtime events;
+- interruption and cleanup of process resources.
+
+## What the embedder owns
+
+The application still decides:
+
+- which `Model` implementation to use;
+- the system prompt;
+- which provider/model is selected from configuration;
+- whether a pruner model is enabled;
+- which custom or MCP tools exist;
+- which built-ins are excluded;
+- what the event stream is used for;
+- the user interaction model around `Step`, `Run`, `Reset`, `Undo`, and `Cd`.
+
+## Library-first by design
+
+Configuration loading is **opt-in**. `New` does not read `axon.yaml` or `.env`. It receives a resolved `Config`, applies defaults to `Config.Settings`, and freezes those settings into that agent instance.
+
+That has two useful consequences:
+
+1. two agents in one process can use different settings;
+2. tests or embedders can construct everything directly without arranging global files.
+
+`Load()` is a convenience path when you do want Axon's YAML + credentials-file convention.
+
+## One protocol ships, one interface is required
+
+Axon ships a client for OpenAI-style streamed chat completions. Anything that does not speak that protocol can still be used by implementing the single-method `Model` interface:
+
+```go
+type Model interface {
+    Complete(ctx context.Context, req Request) (*Msg, error)
+}
 ```
 
-Axon manages this loop on your behalf. You provide the model client, the system prompt, and the tool definitions. Axon handles the execution loop, token stream multiplexing, tool dispatching, and context window pruning.
-
-## Core Guarantees
-
-If you are building atop Axon, you can rely on the following invariants:
-
-1. **Deterministic State Mutation (Append-Only):**
-   Axon's session memory is strictly append-only. The conversation state is a projection of a linear event log. This guarantees that operations like `/undo` are byte-exact rollbacks, and every user session yields a perfect audit trail.
-
-2. **Turn-Scoped Concurrency:**
-   A single user turn (`ag.Step`) runs under a single `context.Context`. If the user cancels the request or a timeout is reached, the context cancellation propagates synchronously to the HTTP stream and all concurrent tool execution subprocesses.
-
-3. **Stateless Configuration:**
-   Agent settings are loaded once at instantiation and never mutated. This allows you to safely multiplex hundreds of structurally divergent agents (e.g., varying temperatures, varying tools) within a single OS process without race conditions or shared state bleed.
-
-4. **Monolithic Orchestration:**
-   Axon intentionally omits multi-agent delegation (where sub-agents chat with sub-agents). Multi-agent patterns historically suffer from cascading latency and catastrophic error loops. Instead, Axon manages context scale using a secondary *pruner model* that asynchronously parks stale memory.
+That boundary is the core of the package: the runtime knows how to drive a model, not how every model provider in existence works.
