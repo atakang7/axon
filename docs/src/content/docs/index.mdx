@@ -1,33 +1,44 @@
 ---
-title: Axon
-description: A Go runtime for tool-using LLM agents.
+title: Axon Go Runtime
+description: A minimalist, production-ready Go runtime for tool-using LLM agents.
 template: splash
 hero:
-  title: Axon
-  tagline: A Go runtime for tool-using LLM agents. Owns the execution machinery — turns, tools, sessions, context pressure, retries, streaming, background processes, MCP, and events — while your application owns the product.
+  title: Build Agents. Not Infrastructure.
+  tagline: Axon owns the execution machinery — turns, tools, sessions, context pressure, retries, streaming, and background processes. You own the product.
   actions:
-    - text: Quickstart
+    - text: Read the Quickstart
       link: /axon/start/quickstart/
       icon: right-arrow
-    - text: GitHub
+      variant: primary
+    - text: View on GitHub
       link: https://github.com/atakang7/axon
-      variant: minimal
       icon: github
+      variant: secondary
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-<CardGrid>
-  <Card title="Configuration" icon="setting">
-    Two deliberate surfaces: `Config` wires an agent, `Settings` holds operational policy. [Learn more →](/axon/configuration/surfaces/)
+## Where to go next?
+
+<CardGrid stagger>
+  <Card title="Learn the Core Concepts" icon="open-book">
+    Understand how Axon manages the [Turn Loop](/axon/concepts/turn-loop/), handles [Context Pressure](/axon/concepts/context/), and emits [Events](/axon/concepts/events/) for your UI.
   </Card>
-  <Card title="Built-in Tools" icon="puzzle">
-    Seven tools ship with every agent: read, write, exec, search, task, bash_output, kill_shell. [See all →](/axon/tools/builtins/)
+  <Card title="Add Capabilities" icon="puzzle">
+    Equip your agent with the 7 [Built-in Tools](/axon/tools/builtins/), write [Custom Tools](/axon/tools/custom/) in pure Go, or connect to [MCP Servers](/axon/tools/mcp/).
   </Card>
-  <Card title="Context Management" icon="seti:db">
-    Recency window (free) + pruner (paid). Context grows, parking keeps it bounded. [How it works →](/axon/runtime/context/)
+  <Card title="Configure Everything" icon="setting">
+    Learn the difference between [Agent Setup](/axon/configuration/setup/) and [Runtime Policies](/axon/configuration/yaml/), and how to manage [File Locations](/axon/configuration/locations/).
   </Card>
-  <Card title="Events" icon="rocket">
-    Every runtime action emits an `Event`. Build any UI — TUI, web, logs. [Event reference →](/axon/runtime/events/)
+  <Card title="Explore Internals" icon="magnifier">
+    Dive deep into Axon's [Architecture](/axon/internals/architecture/), [Security Boundaries](/axon/internals/security/), and automatic [Retry Logic](/axon/internals/retries/).
   </Card>
 </CardGrid>
+
+---
+
+<LinkCard
+  title="Need a full terminal agent?"
+  description="Check out Bouton, the official terminal client powered by Axon."
+  href="https://github.com/atakang7/bouton"
+/>
