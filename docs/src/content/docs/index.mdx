@@ -1,63 +1,70 @@
 ---
 title: Axon
-description: A small Go runtime for tool-using LLM agents.
+description: The execution runtime for tool-using LLM agents in Go.
 template: splash
 hero:
-  tagline: Build the product around the agent. Let Axon own the runtime underneath it.
+  tagline: A small execution runtime for agents. Your application owns the product; Axon owns the loop underneath it.
   actions:
-    - text: Get started
-      link: /axon/overview/getting-started/
+    - text: Quickstart
+      link: /axon/start/quickstart/
       icon: right-arrow
       variant: primary
-    - text: Architecture
-      link: /axon/overview/architecture/
+    - text: Understand the runtime
+      link: /axon/concepts/runtime-model/
       icon: open-book
-    - text: GitHub
-      link: https://github.com/atakang7/axon
-      icon: external
+    - text: Configuration
+      link: /axon/configuration/
+      icon: setting
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-Axon is a **Go library for the execution layer of an LLM agent**. It takes a model, a system prompt, optional custom/MCP tools, and operational settings; then it drives model calls until the model stops asking for tools.
+Axon is a Go library for the part of an agent application that is easy to underestimate: **turn execution**. It coordinates a model, tools, durable working state, bounded shell/file operations, context pressure, retries, streaming, and lifecycle events.
 
 <CardGrid>
-  <Card title="Deterministic turn loop">
-    User input, model call, tool calls, tool results, follow-up model calls, final text. The loop is explicit and inspectable.
+  <Card title="Learn the model" icon="open-book">
+    Start with the concepts manual. It explains what a turn, tool, session, context window, task, and background process mean in Axon without walking source files.
   </Card>
-  <Card title="Bounded built-ins">
-    File, search, shell, background-process, and task tools are built in with explicit time/output/context limits.
+  <Card title="Configure precisely" icon="setting">
+    The configuration manual separates application wiring from operational settings, then documents every YAML section, default, unit, override, and precedence rule.
   </Card>
-  <Card title="Persistent working state">
-    Sessions keep the conversation, working directory, task plan, edit history, block IDs, and turn counter on disk.
+  <Card title="Solve a task" icon="right-arrow">
+    The how-to guides are procedural: connect a provider, implement a model, add or replace a tool, attach MCP, manage sessions, and wire observability.
   </Card>
-  <Card title="Context projection">
-    The historical log is preserved while old blocks can be collapsed into breadcrumbs and optionally parked by a secondary model.
+  <Card title="Look something up" icon="document">
+    Reference pages are intentionally exhaustive and boring: public API contracts, built-in tool behavior, events, errors, and session structures.
   </Card>
 </CardGrid>
 
-## The shortest useful mental model
+## Axon in one picture
 
 ```text
-Your application
-  ├─ chooses/configures a Model
-  ├─ supplies a system prompt
-  ├─ optionally supplies custom tools / MCP servers
-  └─ calls Agent.Step or Agent.Run
-             │
-             ▼
-          Axon runtime
-  session → context projection → model → tools → model → ... → final answer
-             │                    │
-             ├─ events            ├─ retries / streaming
-             ├─ pruning           └─ OpenAI-compatible client (optional)
-             └─ persistence
+                    your application
+        UX · model choice · system prompt · policy
+                         │
+                         ▼
+                   ┌───────────┐
+user input ───────▶│   Axon    │───────▶ final assistant text
+                   │  runtime  │
+                   └─────┬─────┘
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+       session          model          tools
+    durable state    reasoning I/O   capabilities
+          │              │              │
+          ├─ context     ├─ stream      ├─ files/search
+          ├─ task        ├─ retries     ├─ shell/background
+          └─ edits       └─ tool calls  └─ custom/MCP
 ```
 
-## Choose your path
+The key boundary is simple: **the model proposes actions; the runtime owns execution and state**.
 
-- **Embedding Axon now?** Start with [Getting started](/axon/overview/getting-started/).
-- **Evaluating the design?** Read [Architecture](/axon/overview/architecture/) and [Life of a turn](/axon/overview/life-of-a-turn/).
-- **Operating it safely?** Read [Configuration](/axon/reference/configuration/) and the [Security model](/axon/concepts/security-model/).
-- **Extending it?** Read [Custom tools](/axon/guides/defining-tools/), [MCP servers](/axon/guides/mcp/), and the [Agent API](/axon/reference/agent-api/).
-- **Working on Axon itself?** Use the [Source map](/axon/internals/source-map/) and [Runtime invariants](/axon/internals/runtime-invariants/).
+## Pick the right manual
+
+- New to Axon → [Overview](/axon/start/overview/) then [Quickstart](/axon/start/quickstart/).
+- Designing an integration → [The runtime model](/axon/concepts/runtime-model/).
+- Editing `axon.yaml` → [Configuration model](/axon/configuration/).
+- Adding capabilities → [Tools as capabilities](/axon/concepts/tools-and-capabilities/) and [Add a custom tool](/axon/guides/custom-tool/).
+- Debugging exact behavior → [Reference](/axon/reference/agent/) or [Troubleshooting](/axon/troubleshooting/runtime/).
+- Contributing to Axon → [Internals](/axon/internals/architecture/).

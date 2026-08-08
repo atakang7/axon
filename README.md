@@ -1,20 +1,23 @@
 # Axon
 
-**Axon is a small Go runtime for building tool-using LLM agents.** It owns the turn loop, tool dispatch, session persistence, context projection/pruning, background processes, MCP tool discovery, retries, streaming, and structured runtime events.
-
-Axon is a library, not a CLI or an opinionated application shell. You provide the model and system prompt; Axon provides the runtime.
+**A Go runtime for tool-using LLM agents.** Axon owns the execution machinery—turns, tools, sessions, context pressure, retries, streaming, background processes, MCP tool discovery, and runtime events—while your application owns the product around it.
 
 ```bash
 go get github.com/atakang7/axon/v2
 ```
 
-```go
-settings, err := axon.Load()
-if err != nil {
-    log.Fatal(err)
-}
+**[Documentation](https://atakang7.github.io/axon/)** · [Configuration](https://atakang7.github.io/axon/configuration/) · [API reference](https://atakang7.github.io/axon/reference/agent/)
 
-model, err := settings.NewClient("openrouter", "<model-id>")
+## Minimal shape
+
+```go
+model, err := axon.OpenAI(axon.ClientConfig{
+    Provider: axon.Provider{
+        BaseURL: "https://example.com/v1",
+        Model:   "<model-id>",
+        APIKey:  os.Getenv("MODEL_API_KEY"),
+    },
+})
 if err != nil {
     log.Fatal(err)
 }
@@ -22,7 +25,6 @@ if err != nil {
 agent, err := axon.New(axon.Config{
     Model:        model,
     SystemPrompt: "You are a careful coding agent.",
-    Settings:     settings,
 })
 if err != nil {
     log.Fatal(err)
@@ -36,11 +38,16 @@ if err != nil {
 fmt.Println(result.Assistant)
 ```
 
-## Documentation
+## Configuration
 
-**[Read the Axon documentation →](https://atakang7.github.io/axon/)**
+Axon has two different configuration surfaces:
 
-The documentation is organized around the runtime as implemented: architecture, turn lifecycle, configuration, models/providers, sessions, context pruning, built-in tools, MCP, events, security boundaries, and a source-level code map.
+- **`axon.Config`** wires an agent instance: model, system prompt, tools, pruner model, session, working directory, MCP servers, and event callback.
+- **`axon.Settings` / `axon.yaml`** holds operational policy: providers, request behavior, retries, tool limits, context policy, and state locations.
+
+They are deliberately separate. `axon.New` never loads `axon.yaml` automatically.
+
+See the **[configuration manual](https://atakang7.github.io/axon/configuration/)** for precedence, defaults, every field, and a complete example.
 
 ## License
 
