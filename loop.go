@@ -27,8 +27,10 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 	for {
 		if a.pruner.ShouldFire(a.session) {
-			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: a.pruner.ContextTokens(a.session)}})
-			before, after, err := a.pruner.Prune(ctx, a.session)
+			before := a.pruner.ContextTokens(a.session)
+			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
+
+			after, err := a.pruner.Prune(ctx, a.session)
 			if err != nil {
 				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
 			} else {

@@ -47,6 +47,23 @@ type Agent struct {
 	settings Settings
 }
 
+// SetModel changes the model this agent talks to.
+func (a *Agent) SetModel(m Model) {
+	a.model = m
+}
+
+// SetPrunerModel changes the model the pruner uses. If the pruner was not initialized, it initializes it.
+func (a *Agent) SetPrunerModel(m Model) {
+	if a.pruner == nil {
+		a.pruner = NewPruner(PrunerConfig{
+			Model:    m,
+			Settings: a.settings.Pruner,
+		})
+	} else {
+		a.pruner.model = m
+	}
+}
+
 // Interrupt cancels the in-flight chat call, or false if no turn is active.
 func (a *Agent) Interrupt() bool {
 	cf := a.turnCancel.Load()

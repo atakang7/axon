@@ -31,10 +31,12 @@ func TestNilPrunerIsSafe(t *testing.T) {
 	if p.ShouldFire(s) {
 		t.Fatal("nil Pruner.ShouldFire returned true")
 	}
-	before, after, err := p.Prune(context.Background(), s)
-	if err != nil || before != 0 || after != 0 {
-		t.Fatalf("nil Pruner.Prune = (%d, %d, %v), want (0, 0, nil)", before, after, err)
+
+	after, err := p.Prune(context.Background(), s)
+	if err != nil || after != 0 {
+		t.Fatalf("nil Pruner.Prune = (%d, %v), want (0, nil)", after, err)
 	}
+
 	// ContextTokens touches no receiver state, so it works even on nil.
 	if tok := p.ContextTokens(s); tok < 0 {
 		t.Fatalf("nil Pruner.ContextTokens = %d", tok)
@@ -131,12 +133,12 @@ func TestPruneParksNamedBlocksOnly(t *testing.T) {
 		return &Msg{Role: "assistant", Content: `{"park":[1]}`}, nil
 	}}})
 
-	before, after, err := p.Prune(context.Background(), s)
+	after, err := p.Prune(context.Background(), s)
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
-	if before == 0 || after == 0 {
-		t.Fatalf("Prune before/after = %d/%d, want nonzero", before, after)
+	if after == 0 {
+		t.Fatalf("Prune after = %d, want nonzero", after)
 	}
 
 	for _, m := range s.Messages {
@@ -215,7 +217,7 @@ func TestPruneNamingUnknownIDStillParksValid(t *testing.T) {
 		return &Msg{Role: "assistant", Content: `{"park":[1,99]}`}, nil
 	}}})
 
-	_, _, err := p.Prune(context.Background(), s)
+	_, err := p.Prune(context.Background(), s)
 	if err == nil {
 		t.Fatal("Prune did not report the unusable id")
 	}
@@ -242,7 +244,7 @@ func TestPruneRepeatParkOfAlreadyParkedBlockIsAccepted(t *testing.T) {
 	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
 		return &Msg{Role: "assistant", Content: `{"park":[1]}`}, nil
 	}}})
-	_, _, err := p.Prune(context.Background(), s)
+	_, err := p.Prune(context.Background(), s)
 	if err != nil {
 		t.Fatalf("re-parking an already-parked block should not be rejected: %v", err)
 	}
@@ -272,7 +274,7 @@ func TestPruneFailureModesLeaveSessionUntouched(t *testing.T) {
 			s.Append(Msg{Role: "user", Content: "untouched"})
 			p := NewPruner(PrunerConfig{Model: tc.model})
 
-			_, _, err := p.Prune(context.Background(), s)
+			_, err := p.Prune(context.Background(), s)
 			if err == nil {
 				t.Fatal("Prune did not report the failure")
 			}
@@ -305,7 +307,7 @@ func TestPruneSetsRequestCapWithoutMutatingSharedModel(t *testing.T) {
 	s.Append(Msg{Role: "user", Content: "hello"})
 	p := NewPruner(PrunerConfig{Model: model})
 
-	if _, _, err := p.Prune(context.Background(), s); err != nil {
+	if _, err := p.Prune(context.Background(), s); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
 
@@ -431,7 +433,7 @@ func TestPruneUpdatesLastFireToPostPruneSize(t *testing.T) {
 	}}})
 
 	beforeTokens := p.ContextTokens(s)
-	if _, _, err := p.Prune(context.Background(), s); err != nil {
+	if _, err := p.Prune(context.Background(), s); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
 	afterTokens := p.ContextTokens(s)

@@ -58,7 +58,6 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 	}
 }
 
-
 // ContextTokens estimates what the next request will cost. Character count
 // over four is plenty for a threshold decision; provider-accurate counting
 // would cost a round trip to answer a question we only need roughly right.
@@ -89,16 +88,17 @@ func (p *Pruner) ShouldFire(s *Session) bool {
 }
 
 // Prune runs one curator pass and parks whatever the model names, returning
-// the projected context size before and after.
+// the projected context size after pruning.
 //
 // Any failure — network, parse, model nonsense — returns an error with the
 // session untouched. Pruning is an optimisation: the turn continues without
 // it rather than failing.
-func (p *Pruner) Prune(ctx context.Context, s *Session) (before, after int, err error) {
+func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 	if p == nil {
-		return 0, 0, nil
+		return 0, nil
 	}
-	before = p.ContextTokens(s)
+
+	before := p.ContextTokens(s)
 
 	// Correctness matters more than latency here, so the budget is generous.
 	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
@@ -112,20 +112,18 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (before, after int, err 
 		MaxTokens: p.maxTokens,
 	})
 	if err != nil {
-		return before, before, fmt.Errorf("pruner: %w", err)
+		return before, fmt.Errorf("pruner: %w", err)
 	}
+
 	if reply == nil || strings.TrimSpace(reply.Content) == "" {
-		return before, before, fmt.Errorf("pruner: empty response")
+		return before, fmt.Errorf("pruner: empty response")
 	}
 
 	ids, err := parkList(reply.Content)
 	if err != nil {
-		return before, before, fmt.Errorf("pruner: %w", err)
+		return before, fmt.Errorf("pruner: %w", err)
 	}
-	// A model that names a block that does not exist, or one already parked,
-	// is a bad answer rather than a broken session: park what is valid and
-	// report the rest instead of discarding the whole pass. Silently ignoring
-	// them would hide a pruner that had started hallucinating ids entirely.
+
 	var rejected []string
 	for _, id := range ids {
 		block := fmt.Sprintf("m%d", id)
@@ -133,16 +131,19 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (before, after int, err 
 			rejected = append(rejected, block)
 		}
 	}
+
 	if err := s.Save(); err != nil {
-		return before, before, err
+		return before, err
 	}
 
 	p.lastFire = p.ContextTokens(s)
+
 	if len(rejected) > 0 {
-		return before, p.lastFire, fmt.Errorf("pruner: named %d unusable block(s): %s",
+		return p.lastFire, fmt.Errorf("pruner: named %d unusable block(s): %s",
 			len(rejected), strings.Join(rejected, ", "))
 	}
-	return before, p.lastFire, nil
+
+	return p.lastFire, nil
 }
 
 // parkList pulls {"park":[...]} out of the reply, tolerating any prose the
