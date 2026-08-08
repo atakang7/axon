@@ -46,9 +46,20 @@ jobs:
         with:
           semantic_version: 23
           extra_plugins: |
-            @semantic-release/changelog@6
-            @semantic-release/exec@6
-            @semantic-release/git@10
             conventional-changelog-conventionalcommits@7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # semantic-release only determines the version and tags/publishes the
+      # release; it no longer writes release notes. GitHub's own generator
+      # (categorized PR list, contributors, compare link) fills the body
+      # instead, so there is one changelog source of truth — the release
+      # page — and nothing needs to be committed back to main.
+      - name: Fill release notes from GitHub's auto-generated notes
+        if: steps.semantic.outputs.new_release_published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.semantic.outputs.new_release_git_tag }}
+        run: |
+          notes=$(gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name="$TAG" --jq .body)
+          gh release edit "$TAG" --notes "$notes"
