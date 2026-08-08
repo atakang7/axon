@@ -3,6 +3,7 @@ package axon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -205,8 +206,10 @@ func TestParkList(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // A model that names an unknown id alongside a valid one must still park the
-// valid one, and report the rejects in the error rather than discarding the
-// entire pass — an unusable id should not cost the whole curation cycle.
+// valid one and report success — the pass did its job. The unusable id is
+// reported through Rejected, not as an error: a curator that invents one id
+// out of ten has not failed, and calling that "pruning failed" told operators
+// a pass had been skipped when it had actually just parked nine blocks.
 func TestPruneNamingUnknownIDStillParksValid(t *testing.T) {
 	s := newPrunerSession(t)
 	s.Append(Msg{Role: "user", Content: "valid block"})      // m1
@@ -219,18 +222,52 @@ func TestPruneNamingUnknownIDStillParksValid(t *testing.T) {
 		return &Msg{Role: "assistant", Content: `{"park":[1,99]}`}, nil
 	}}})
 
-	_, err := p.Prune(context.Background(), s)
-	if err == nil {
-		t.Fatal("Prune did not report the unusable id")
-	}
-	if !strings.Contains(err.Error(), "m99") {
-		t.Fatalf("error does not name the rejected block: %v", err)
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune reported failure for a pass that parked a block: %v", err)
 	}
 	if !s.Messages[0].Parked {
 		t.Fatal("the valid id was not parked despite the other id being rejected")
 	}
 	if s.Messages[1].Parked {
 		t.Fatal("an id nobody named got parked")
+	}
+
+	rejected := p.Rejected()
+	if len(rejected) != 1 || rejected[0] != "m99" {
+		t.Fatalf("Rejected() = %v, want [m99]", rejected)
+	}
+	if again := p.Rejected(); again != nil {
+		t.Fatalf("Rejected() did not clear: %v", again)
+	}
+}
+
+// A curator naming only protected blocks — what production saw as
+// "pruning failed: named 2 unusable block(s): m102, m104" — is a pass that
+// parked nothing, but it is still not an error. Nothing went wrong; the model
+// simply had no usable suggestion.
+func TestPruneNamingOnlyProtectedBlocksIsNotAnError(t *testing.T) {
+	s := newPrunerSession(t)
+	s.Append(Msg{Role: "user", Content: "old user"})
+	s.Append(Msg{Role: "assistant", Content: "old assistant"})
+	s.Append(Msg{Role: "user", Content: "most recent user"})      // protected
+	s.Append(Msg{Role: "assistant", Content: "most recent asst"}) // protected
+
+	protectedUser := s.Messages[2].ID
+	protectedAsst := s.Messages[3].ID
+
+	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
+		return &Msg{Role: "assistant", Content: fmt.Sprintf(`{"park":[%s,%s]}`,
+			strings.TrimPrefix(protectedUser, "m"), strings.TrimPrefix(protectedAsst, "m"))}, nil
+	}}})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune reported an error for a pass that simply parked nothing: %v", err)
+	}
+	if len(parkedIDs(s)) != 0 {
+		t.Fatalf("a protected block was parked: %v", parkedIDs(s))
+	}
+	if got := p.Rejected(); len(got) != 2 {
+		t.Fatalf("Rejected() = %v, want both protected ids", got)
 	}
 }
 

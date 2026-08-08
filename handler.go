@@ -104,6 +104,12 @@ type ToolEvent struct {
 type PruneInfo struct {
 	Before int
 	After  int
+
+	// Rejected lists block ids the curator named that could not be parked:
+	// protected, already parked, or invented. Not a failure — the pass still
+	// parked everything it legitimately could — but a persistent stream of
+	// them means the curator is naming ids it was never shown.
+	Rejected []string
 }
 
 // SessionInfo carries session-start/end metadata.

@@ -35,7 +35,11 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			if err != nil {
 				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
 			} else {
-				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
+				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{
+					Before:   before,
+					After:    after,
+					Rejected: a.pruner.Rejected(),
+				}})
 			}
 		}
 

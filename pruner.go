@@ -33,6 +33,7 @@ type Pruner struct {
 	maxTokens int
 	timeout   time.Duration
 	lastFire  int
+	rejected  []string
 }
 
 const defaultPrunerReminder = "\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park."
@@ -183,15 +184,14 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 
 	protected := protectedIDs(s)
 
-	var rejected []string
 	for _, id := range ids {
 		block := fmt.Sprintf("m%d", id)
 		if protected[block] {
-			rejected = append(rejected, block)
+			p.rejected = append(p.rejected, block)
 			continue
 		}
 		if err := s.Park(block, gist(s, block), "pruner: not needed to continue"); err != nil {
-			rejected = append(rejected, block)
+			p.rejected = append(p.rejected, block)
 		}
 	}
 
@@ -201,12 +201,27 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 
 	p.lastFire = p.ContextTokens(s)
 
-	if len(rejected) > 0 {
-		return p.lastFire, fmt.Errorf("pruner: named %d unusable block(s): %s",
-			len(rejected), strings.Join(rejected, ", "))
-	}
-
+	// Blocks the curator named but could not have — protected, already gone,
+	// or invented outright — are not a failure of this pass. The blocks that
+	// were parkable were parked, and reporting that as an error told the
+	// operator "pruning failed" about a pass that had just done its job.
+	// The count is carried on the pruner for the caller to surface instead.
 	return p.lastFire, nil
+}
+
+// Rejected returns the block ids the curator named that could not be parked,
+// accumulated across passes, and clears the record.
+//
+// A steady trickle here means the curator is naming ids it was never shown —
+// the prompt forbids it, but a cheap model does it anyway, and each one is a
+// block that stayed in context when the curator believed it had been removed.
+func (p *Pruner) Rejected() []string {
+	if p == nil || len(p.rejected) == 0 {
+		return nil
+	}
+	out := p.rejected
+	p.rejected = nil
+	return out
 }
 
 // protectedIDs returns the block IDs the curator must never park: the most
@@ -386,6 +401,12 @@ Answer with one JSON object and nothing that matters after it:
 
 Block ids are the integers in the labels (m7 is 7). {"park":[]} means keep
 everything, and is always an available answer.
+
+Only name ids that appear in a [mN | ...] label in the LOG above. An id you
+did not see there does not exist — the runtime rejects it and the whole pass
+is wasted. Do not guess at ids, do not continue a numeric sequence, and do
+not name an id because you expect a block to be there. If the LOG is empty,
+answer {"park":[]}.
 
 Never park, in any mode:
 - a user message
