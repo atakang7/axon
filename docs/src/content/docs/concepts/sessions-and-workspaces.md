@@ -1,49 +1,83 @@
 ---
 title: Sessions & workspaces
-description: Durable agent state, project affinity, edit history, and the workspace boundary.
+description: How Axon separates durable history, working state, project location, and recovery state.
 ---
 
-A session is Axon's **durable working record for one agent thread**. It is more than a chat transcript.
+A session is best understood as an **agent checkpoint**, not a chat transcript.
 
-A session carries:
+It stores the minimum durable state Axon needs to resume the same line of work:
 
-- conversation messages;
-- the current working directory;
-- a turn counter;
-- stable block identifiers used by context management;
-- a task plan when one exists;
-- pre-edit file contents used by undo.
+```text
+conversation history
+workspace location
+turn + block identity
+current task plan
+edit recovery data
+```
 
-This lets an agent process stop and resume without reducing its state to “whatever messages fit in memory.”
+Those pieces solve different problems, and keeping them together gives a restarted agent enough continuity to continue rather than merely remember what was said.
 
-## Project affinity comes from the process directory
+## Session identity and workspace location are different
 
-When no session path is pinned, Axon derives a stable filename from the process current working directory. Two different projects therefore get different default session files, including two same-named directories at different absolute paths.
+When no path is pinned, Axon chooses a stable session file from the **process working directory at construction time**.
 
-There is a subtle distinction between **session identity** and **tool working directory**: `Config.Cwd` changes where tools operate after the session has already been selected. It does not change which default session file was chosen.
+`Config.Cwd` is applied later and controls where relative tool paths and shell commands operate.
 
-If you need exact storage placement, pin the session path instead of relying on this derivation.
+So these are separate questions:
 
-## The workspace is a base directory, not a jail
+- **Which conversation/checkpoint am I resuming?** → session path.
+- **Where should tools operate right now?** → session `Cwd`.
 
-Relative tool paths are resolved against the session working directory. Absolute paths remain absolute, and traversal components are not rejected.
+This matters for embedders that open one stored session while intentionally pointing tools at another directory, and for tests that need deterministic state placement.
 
-So the workspace gives tools a shared notion of “here”; it does not confine them to “here.” Security isolation must be enforced around the process.
+If session identity must be explicit, pin the path rather than relying on cwd-derived naming.
 
-## History and working context are different
+## A workspace gives location, not confinement
 
-Session messages are the durable record from which Axon derives the next model-visible context. Old content can be collapsed in that projection without deleting the original recorded content.
+Relative file/search/exec paths resolve against the session working directory. Absolute paths stay absolute and traversal is not blocked.
 
-That separation is fundamental: persistence answers “what happened?” while context answers “what does the model need in front of it now?”
+That makes `Cwd` a routing primitive: it establishes what `./foo` means. It is **not** an authorization primitive defining what the model may access.
 
-## Edits create a lightweight recovery path
+If the agent must be confined, enforce that at the process/container/VM boundary.
 
-Built-in writes record the previous file contents before mutation. `Undo` uses the most recent record to restore those bytes and tells the model the revert happened.
+## Durable history is not model working memory
 
-This is intentionally a small local edit ledger, not version control. It does not replace Git, transactions across multiple files, or semantic rollback.
+The session retains historical message content. The model sees a **projection** built from that history.
 
-A newly created file records an empty prior value, so undoing its creation currently writes an empty file rather than deleting the path.
+That distinction lets Axon collapse or park old blocks to reduce request context without making persistence itself lossy.
 
-## Session ownership is explicit
+Use the two layers for different questions:
 
-You may supply your own `*Session` to `Config`. Axon reuses that same pointer rather than copying it. This is the hook for applications that want to own session construction or integrate other storage/lifecycle logic around the runtime.
+- Session history: *what happened?*
+- Context projection: *what must the model see now to continue?*
+
+See [Context lifecycle](/axon/concepts/context-lifecycle/) for the projection model.
+
+## Task state is a durable hint, not a workflow engine
+
+The session may hold one goal plus ordered task steps. That state is rendered back into model context so a multi-step objective remains explicit even as ordinary history ages out.
+
+Axon does not execute steps, schedule them, or guarantee the model follows them. Registering or advancing a task only changes durable guidance presented to the model.
+
+The useful rule is simple: use task state when **losing the current objective would make recovery expensive**. A one-shot question does not need it; a repository migration or multi-stage investigation often does.
+
+This is why task state belongs conceptually with the session rather than deserving a separate workflow abstraction.
+
+## Edit history is recovery state, not version control
+
+Built-in writes record previous file contents. `Undo` restores the most recent recorded bytes and appends a note so the model's understanding follows the filesystem change.
+
+That gives the agent a cheap one-step recovery mechanism for its own edits, but it is intentionally weaker than Git or a transaction system:
+
+- recovery is local and ordered;
+- the ledger has a size budget;
+- there is no multi-file atomic rollback;
+- undoing creation of a new file currently leaves an empty file rather than deleting it.
+
+Use Git for project history. Treat Axon's edit ledger as runtime recovery from the immediately preceding mutation.
+
+## Applications can own session lifecycle
+
+Supplying `Config.Session` gives Axon the exact `*Session` pointer rather than a copy. That lets an embedder decide when and how a session object is created, selected, or wrapped by higher-level application lifecycle logic.
+
+The practical boundary is: **Axon owns mutations to the active runtime session; the embedder may own how that session is chosen and exposed.**
