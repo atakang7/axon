@@ -9,89 +9,41 @@ github.com/atakang7/bouton      ← reference coding agent built on the runtime 
 
 The runtime knows nothing about terminals, flags, signals, YAML, or `os.Exit`. All terminal-shaped concerns live in [bouton](https://github.com/atakang7/bouton).
 
-## Layering
+## Monolithic Engine
 
-This is the single most important rule in the repository.
+This repository is intentionally designed as a single, flat package (`package axon`). 
 
-```
-axon  ←  config  ←  llm  ←  session  ←  tools  ←  agent
-```
+It is a monolithic agent runtime, not a toolkit of generic pieces. There are no `internal/` packages, no complex dependency graphs, and no type aliases. 
 
-**A package may import anything to its left, and nothing to its right.** The
-arrows are dependencies, so `agent` sees everything and `axon` sees nothing.
+The philosophy is simple: **It's an agent, just use it with your config.**
+You define the behavior via a `SystemPrompt`, add your custom tools as plugins via `Config.Tools`, and call `axon.New()`. 
 
-The rule is enforced by the Go compiler, not by review: each layer is its own
-package, and an import in the wrong direction is a build error. Every layer
-states its own boundary rule in its package comment.
-
-| Layer | Package | Owns | May import |
-|---|---|---|---|
-| 0 | `axon` (root) | the public vocabulary: `Model`, `Request`, `Stream`, `Provider`, `Msg`, `ToolCall`, `Tool`, `ToolSpec` | nothing |
-| 1 | `internal/config` | XDG/`AXON_*` paths, `Limits` | nothing |
-| 2 | `internal/llm` | `Model` port, `Provider`, `Msg`, `ToolCall`, `ToolSpec`, OpenAI `Client` | config |
-| 3 | `internal/session` | append-only log, cwd, edit history, task plan | config, llm |
-| 4 | `internal/tools` | the seven built-in tools, background shells | config, llm, session |
-| 5 | `agent` | `Agent`, the turn loop, events, prompt, pruner | all of the above |
-
-Everything below `agent` lives under `internal/` — except the root package
-`axon`, which is public on purpose. The types an embedder constructs must be
-documentable, and `go doc` on an alias into an internal package prints the
-alias and stops: a caller could not discover that a `Tool` has a `Name`, a
-`Schema` or an `Fn`. Behaviour stays internal; vocabulary is public.
-
-The rest is unreachable from
-outside this module. That is deliberate: those packages are free to change
-because nothing external can depend on them. The stable surface is `agent`.
-
-Two boundaries are worth calling out, because they are what keep the graph a
-DAG rather than a ball of mutual references:
-
-- **`llm` does not know what a `Tool` is.** It takes `ToolSpec` — name,
-  description, schema — and never sees a tool's `Fn`. `agent.toolSpecs`
-  projects `Tool` down to `ToolSpec` at the one crossing point, as an
-  allowlist. The model layer therefore cannot reach the execution layer.
-- **`tools` does not receive a `*Session`.** Each tool takes the narrowest
-  interface it needs, declared in `internal/tools/tools.go` on the consuming
-  side and satisfied implicitly by `Session`:
-  - `Workspace` — `Dir`, `ResolvePath`, `RecordEdit`
-  - `Plan` — `RegisterTask`, `AdvanceTask`, `ReplanTask` (write-only)
-
-  A tool cannot read conversation state, and a fake `Workspace` for a test is
-  six lines.
+The engine natively shares state (like `Session`, `Model`, and `Msg`) across all its internal files.
 
 ## Layout
 
 ```
-axon.go               Model, Request, Stream, Provider, Msg, ToolCall, Tool, ToolSpec
-
-agent/
-  api.go              Config, New, Step, Run, Reset, Undo, Cd, Close; re-exported types
-  agent.go            Agent struct, chat/retry, runTool
-  setup.go            New, Reset, Undo, Cd, Close — construction and lifecycle
-  loop.go             Step and Run — the turn loop
-  handler.go          Event, Kind, ToolEvent, PruneInfo, SessionInfo
-  prompt.go           buildSystemPrompt (role text + tool catalog)
-  pruner.go           secondary LLM that parks old blocks
-
-internal/config/
-  config.go           session/bg paths, Limits, LoadLimits
-
-internal/llm/
-  client.go           Model, Request, Stream, Provider, Msg, ToolCall, ToolSpec; OpenAI Client
-
-internal/session/
-  session.go          Session, append-only log, edit history, undo, task plan
-  memory.go           ContextMessages projection; Park
-
-internal/tools/
-  tools.go            Tool, Workspace, Plan, Catalog, schema helpers
-  tools_helpers.go    WriteFileAtomic, binary refusal, output capping
-  tool_read.go        ReadTool (slice/full, directory listing)
-  tool_write.go       WriteTool (save/replace_string/replace_lines/insert_at_line)
-  tool_search.go      SearchTool (literal/regex)
-  tool_exec.go        ExecTool, BashOutputTool, KillShellTool
-  tool_task.go        TaskTool
-  bg.go               BackgroundShells registry (servers, watchers)
+axon/
+  axon.go               Model, Request, Stream, Provider, Msg, ToolCall, Tool, ToolSpec
+  agent.go              Agent struct, chat/retry, runTool
+  api.go                Config, New, Step, Run, Reset, Undo, Cd, Close
+  setup.go              New, Reset, Undo, Cd, Close — construction and lifecycle
+  loop.go               Step and Run — the turn loop
+  handler.go            Event, Kind, ToolEvent, PruneInfo, SessionInfo
+  prompt.go             buildSystemPrompt (role text + tool catalog)
+  pruner.go             secondary LLM that parks old blocks
+  config.go             session/bg paths, Limits, LoadLimits
+  client.go             OpenAI Client implementation
+  session.go            Session, append-only log, edit history, undo, task plan
+  memory.go             ContextMessages projection; Park
+  tools.go              Tool, Workspace, Plan, Catalog, schema helpers
+  tools_helpers.go      WriteFileAtomic, binary refusal, output capping
+  tool_read.go          ReadTool (slice/full, directory listing)
+  tool_write.go         WriteTool (save/replace_string/replace_lines/insert_at_line)
+  tool_search.go        SearchTool (literal/regex)
+  tool_exec.go          ExecTool, BashOutputTool, KillShellTool
+  tool_task.go          TaskTool
+  bg.go                 BackgroundShells registry (servers, watchers)
 ```
 
 ## The turn loop

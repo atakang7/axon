@@ -37,6 +37,7 @@ type Edit struct {
 }
 
 // maxUndoBytes bounds the total pre-edit content the ledger retains. Undo is an
+
 // escape hatch for the last few edits, not a version-control system, and the
 // ledger is serialised into the session file on every save — so an unbounded
 // one is paid for on every subsequent tool call, not just once.
@@ -46,6 +47,7 @@ type Edit struct {
 const maxUndoBytes = 8 << 20
 
 // Task is the agent's registered objective for non-trivial work. It lives on
+
 // the Session so it persists across turns and appears on the dashboard every
 // turn until the work is done. One task at a time; setting a new one overwrites
 // the old. Nil means no task is registered (one-shot or not yet scoped).
@@ -63,6 +65,7 @@ type TaskStep struct {
 }
 
 type Session struct {
+
 	ID          string    `json:"id"`
 	StartedAt   time.Time `json:"started_at"`
 	Cwd         string    `json:"cwd,omitempty"`
@@ -172,6 +175,7 @@ func (s *Session) ensure() {
 }
 
 // assignIDs stamps a block ID on every message that lacks one and re-derives
+
 // the high-water mark. It runs exactly once per session, at load, because that
 // is the only moment a log can arrive with IDs this process did not issue.
 // Append maintains NextBlockID from there, and it is persisted.
@@ -204,6 +208,7 @@ func (s *Session) assignIDs() {
 }
 
 // Append records one message and issues its block ID. This is the only
+
 // supported way to grow the log: a Session whose Messages slice is assigned to
 // directly gets no IDs, and its blocks are therefore invisible to the pruner.
 func (s *Session) Append(m Msg) {
@@ -216,11 +221,13 @@ func (s *Session) Append(m Msg) {
 }
 
 // Dir returns the absolute working directory. It exists as a method, and not
+
 // only as the Cwd field, so consumers can depend on a narrow interface
 // (Workspace) rather than on this struct.
 func (s *Session) Dir() string { return s.Cwd }
 
 func (s *Session) ResolvePath(p string) string {
+
 	if filepath.IsAbs(p) {
 		return p
 	}
@@ -232,6 +239,7 @@ func (s *Session) ResolvePath(p string) string {
 }
 
 func (s *Session) SetCwd(p string) error {
+
 	abs := p
 	if !filepath.IsAbs(abs) {
 		abs = s.ResolvePath(p)
@@ -248,6 +256,7 @@ func (s *Session) SetCwd(p string) error {
 }
 
 // RecordEdit stores the pre-edit contents of path so the write can be reverted,
+
 // evicting the oldest entries once the ledger exceeds maxUndoBytes.
 //
 // The most recent edit is never evicted: a single write larger than the whole

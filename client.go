@@ -52,6 +52,7 @@ type Client struct {
 }
 
 // NewClient builds a Model for any OpenAI-compatible endpoint.
+
 func NewClient(cfg ClientConfig) (*Client, error) {
 	url := strings.TrimRight(cfg.Provider.BaseURL, "/")
 	if url == "" {
@@ -72,11 +73,13 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 func (c *Client) Model() string { return c.cfg.Provider.Model }
 
 // idleTimeout bounds silence mid-stream. Without it a provider that stops
+
 // sending without closing the connection would hold the turn until the HTTP
 // client's own 30-minute timeout.
 const idleTimeout = 20 * time.Second
 
 // Complete sends one request and assembles the reply, invoking req.Stream as
+
 // output arrives.
 func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	body, err := c.requestBody(req)
@@ -120,6 +123,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 }
 
 func (c *Client) requestBody(req Request) ([]byte, error) {
+
 	tools := make([]map[string]any, len(req.Tools))
 	for i, t := range req.Tools {
 		tools[i] = map[string]any{"type": "function", "function": map[string]any{
@@ -147,6 +151,7 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 	}
 
 	if c.cfg.ReasoningEffort != "" || c.cfg.ExcludeReasoning {
+
 		reasoning := map[string]any{}
 		if c.cfg.ReasoningEffort != "" {
 			reasoning["effort"] = c.cfg.ReasoningEffort
@@ -168,6 +173,7 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 // reply accumulates a streamed response. Tool calls arrive as fragments keyed
+
 // by index and are assembled at the end.
 type reply struct {
 	content          strings.Builder
@@ -177,6 +183,7 @@ type reply struct {
 }
 
 // readStream consumes the SSE body until the server closes it, applying an
+
 // idle timeout so a silent provider fails fast instead of hanging the turn.
 // cancel aborts the in-flight request when that happens.
 //
@@ -224,6 +231,7 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 }
 
 // consume applies one SSE line. Anything unparseable is skipped: a malformed
+
 // keep-alive or comment must not abort an otherwise healthy stream.
 func (r *reply) consume(text string, stream Stream) {
 	data := strings.TrimPrefix(text, "data: ")
@@ -253,18 +261,23 @@ func (r *reply) consume(text string, stream Stream) {
 	delta := chunk.Choices[0].Delta
 
 	if delta.ReasoningContent != "" {
+
 		r.reasoningContent.WriteString(delta.ReasoningContent)
 		if stream.Reasoning != nil {
 			stream.Reasoning(delta.ReasoningContent)
 		}
 	}
+
 	if delta.Content != "" {
+
 		r.content.WriteString(delta.Content)
 		if stream.Token != nil {
 			stream.Token(delta.Content)
 		}
 	}
+
 	for _, tc := range delta.ToolCalls {
+
 		if _, seen := r.toolMeta[tc.Index]; !seen {
 			meta := ToolCall{ID: tc.ID, Type: tc.Type}
 			meta.Function.Name = tc.Function.Name
@@ -279,6 +292,7 @@ func (r *reply) consume(text string, stream Stream) {
 }
 
 // message assembles the finished assistant message, ordering tool calls by the
+
 // index the provider gave them so the sequence is stable.
 func (r *reply) message() *Msg {
 	finalContent := r.content.String()
@@ -287,13 +301,16 @@ func (r *reply) message() *Msg {
 	if len(r.toolMeta) == 0 {
 		return &Msg{Role: "assistant", Content: finalContent, Reasoning: finalReasoning}
 	}
+
 	indices := make([]int, 0, len(r.toolMeta))
+
 	for i := range r.toolMeta {
 		indices = append(indices, i)
 	}
 	sort.Ints(indices)
 
 	calls := make([]ToolCall, 0, len(indices))
+
 	for _, i := range indices {
 		tc := r.toolMeta[i]
 		tc.Function.Arguments = r.toolArgs[i].String()

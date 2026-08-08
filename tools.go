@@ -96,8 +96,6 @@ type Plan interface {
 // Tool surface — public types and constants
 // ---------------------------------------------------------------------------
 
-
-
 const (
 	toolRead       = "read"
 	toolWrite      = "write"
@@ -155,6 +153,7 @@ func Catalog() string {
 type props = map[string]map[string]any
 
 func obj(typ string, p props, required []string) map[string]any {
+
 	m := map[string]any{"type": typ, "additionalProperties": false}
 	if p != nil {
 		mp := map[string]any{}
@@ -170,22 +169,27 @@ func obj(typ string, p props, required []string) map[string]any {
 }
 
 func arr(items map[string]any) map[string]any {
+
 	return map[string]any{"type": "array", "items": items}
 }
 
 func strSchema(desc string) map[string]any {
+
 	return map[string]any{"type": "string", "description": desc}
 }
 
 func intSchema(desc string) map[string]any {
+
 	return map[string]any{"type": "integer", "description": desc}
 }
 
 func boolSchema(desc string) map[string]any {
+
 	return map[string]any{"type": "boolean", "description": desc}
 }
 
 func enumSchema(desc string, values ...string) map[string]any {
+
 	vs := make([]any, len(values))
 	for i, v := range values {
 		vs[i] = v

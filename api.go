@@ -17,13 +17,11 @@ import (
 // embedder decides which model to talk to and what the agent is, and passes
 // both in. Everything the runtime adds to the prompt is the tool catalog.
 //
-// Everything below the surface lives under internal/: config, llm, session
-// and tools. They are unreachable from outside this module, which is what
-// makes them free to change. The layering is strict and one-directional:
-//
-//	config  <- llm  <- session  <- tools  <- agent
-//
-// A package may import anything to its left and nothing to its right.
+// Everything is contained within this single package. There are no nested
+// internal modules or complex layering rules. It is a monolithic engine:
+// you define the behavior (SystemPrompt), add your tools as plugins,
+// and start the agent. It is not a framework for building arbitrary agents;
+// it is the agent itself.
 //
 // Concurrency: an *Agent drives one turn at a time. Step and Run must not be
 // called concurrently with each other or with Reset, Undo or Cd. Interrupt is
@@ -59,13 +57,12 @@ import (
 // LoadOrCreateSession can be handed straight back through Config.Session.
 // ---------------------------------------------------------------------------
 
-
-
 // OpenAI builds a Model for any OpenAI-compatible endpoint. This is the
 // implementation that ships; Config.Model accepts any other.
 func OpenAI(cfg ClientConfig) (Model, error) { return NewClient(cfg) }
 
 // toolSpecs projects tools down to what the model layer is allowed to see:
+
 // name, description, schema — never Fn. This is the one place the execution
 // layer crosses into the model layer, and it is an allowlist by construction.
 func toolSpecs(tools []Tool) []ToolSpec {
@@ -77,6 +74,7 @@ func toolSpecs(tools []Tool) []ToolSpec {
 }
 
 // Sentinel errors. Wrap with %w when returning from internals; check
+
 // with errors.Is at the boundary.
 var (
 	ErrNoModel        = errors.New("agent: Config.Model is required")
@@ -88,6 +86,7 @@ var (
 )
 
 // Config is the contract for constructing an Agent. Provider and
+
 // SystemPrompt are required; every other field has a zero-value default.
 type Config struct {
 	// Model is the LLM this agent talks to. Required.
@@ -99,6 +98,7 @@ type Config struct {
 	Model Model
 
 	// SystemPrompt is the agent's role text — the entire "who am I"
+
 	// answer the runtime sends to the model. Required. The runtime
 	// appends the built-in tool catalog and project orientation
 	// automatically; the role text should describe behavior, not
@@ -106,11 +106,13 @@ type Config struct {
 	SystemPrompt string
 
 	// Tools are appended to the built-in tool set. Names must not
+
 	// collide with built-ins (read, write, exec, search, task,
 	// bash_output, kill_shell).
 	Tools []Tool
 
 	// ExcludeBuiltins names built-in tools to leave out. Empty means the
+
 	// agent gets all seven.
 	//
 	// This is how you bound what an agent can do. A research agent that must
@@ -123,6 +125,7 @@ type Config struct {
 	ExcludeBuiltins []string
 
 	// Pruner, when non-nil, parks old messages as the context grows.
+
 	// nil disables pruning.
 	Pruner *Pruner
 
