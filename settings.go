@@ -221,8 +221,55 @@ type SearchConfig struct {
 	OutputBytes Bytes `yaml:"output_bytes"`
 }
 
+// PruneMode is how hard the curator is asked to look for blocks to park.
+//
+// It changes the curator's judgment threshold — how confident it must be
+// that a block is dead before parking it — and nothing else. Every mode gets
+// the same never-park guarantees and the same one-way parking semantics; a
+// stricter mode is not permitted to park something a looser one protects.
+// The knob is the bar for "is this still needed", not the safety rules.
+type PruneMode string
+
+const (
+	// PruneLow parks only what is unambiguously dead. Use when context is
+	// cheap relative to the cost of the agent losing a thread.
+	PruneLow PruneMode = "low"
+
+	// PruneModerate parks what is clearly no longer in play. The default.
+	PruneModerate PruneMode = "moderate"
+
+	// PruneExtreme parks anything not carrying the current direction
+	// forward. Use when context is the binding constraint and the agent
+	// re-reading a file occasionally is cheaper than a bloated window.
+	PruneExtreme PruneMode = "extreme"
+)
+
+// PruneModes lists the valid modes, for validation and error messages.
+var PruneModes = []PruneMode{PruneLow, PruneModerate, PruneExtreme}
+
+// Valid reports whether m is a mode the curator knows how to run.
+func (m PruneMode) Valid() bool {
+	for _, known := range PruneModes {
+		if m == known {
+			return true
+		}
+	}
+	return false
+}
+
 // PrunerSettings tunes the secondary model that parks stale context.
 type PrunerSettings struct {
+	// Mode is how aggressively the curator parks. See PruneMode. The zero
+	// value takes PruneModerate.
+	Mode PruneMode `yaml:"mode"`
+
+	// WindowBlocks is how many of the most recent blocks are kept active for
+	// free, no model call. Only blocks older than the window are ever
+	// candidates for parking — by the window itself (recency, free) or by
+	// the curator (judgment, costs a call). This is the first and cheapest
+	// line of defense; the curator only ever sees what falls outside it.
+	WindowBlocks int `yaml:"window_blocks"`
+
 	// FloorTokens is the context size below which pruning is not worth a
 	// round trip.
 	FloorTokens int `yaml:"floor_tokens"`
@@ -231,8 +278,13 @@ type PrunerSettings struct {
 	// before another one fires.
 	GrowthTokens int `yaml:"growth_tokens"`
 
-	// MaxTokens caps the curator's reply. Its answer is one line of JSON; a
-	// chatty model hits this wall instead of burning tokens on prose.
+	// MaxTokens caps the curator's reply.
+	//
+	// The answer itself is one line of JSON, but providers that bill reasoning
+	// against this cap — OpenRouter does — will cut a reasoning model off
+	// mid-thought and return empty content. The cap has to cover the thinking
+	// as well as the answer, so it is sized for a reasoning curator rather
+	// than for the JSON.
 	MaxTokens int `yaml:"max_tokens"`
 
 	// Timeout bounds one curator call.
@@ -292,9 +344,11 @@ func DefaultSettings() Settings {
 		},
 
 		Pruner: PrunerSettings{
+			Mode:         PruneModerate,
+			WindowBlocks: 30,
 			FloorTokens:  10000,
 			GrowthTokens: 5000,
-			MaxTokens:    4096,
+			MaxTokens:    16000,
 			Timeout:      Duration(60 * time.Second),
 		},
 	}
@@ -344,6 +398,10 @@ func (r Settings) WithDefaults() Settings {
 	fillInt(&r.Tools.Search.MaxMatches, d.Tools.Search.MaxMatches)
 	fillBytes(&r.Tools.Search.OutputBytes, d.Tools.Search.OutputBytes)
 
+	if r.Pruner.Mode == "" {
+		r.Pruner.Mode = d.Pruner.Mode
+	}
+	fillInt(&r.Pruner.WindowBlocks, d.Pruner.WindowBlocks)
 	fillInt(&r.Pruner.FloorTokens, d.Pruner.FloorTokens)
 	fillInt(&r.Pruner.GrowthTokens, d.Pruner.GrowthTokens)
 	fillInt(&r.Pruner.MaxTokens, d.Pruner.MaxTokens)

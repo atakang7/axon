@@ -7,14 +7,12 @@ import (
 	"strings"
 )
 
-
 const taskDescription = `Track a multi-step plan. Skip for one-shot work.
   - register: set goal + steps (short imperatives, ~3-7 words each).
   - advance: mark current step done, move to next.
   - replan: replace steps when the current plan no longer fits.
 
 Goal must be phrased as the question the final answer will answer (e.g. "is anything in the blog weak for my career?" — not "review the blog"). Aim for 2-4 steps; more than 4 means you haven't scoped tightly enough — narrow the goal or split into a follow-up.`
-
 
 func TaskTool(plan Plan) Tool {
 	type input struct {

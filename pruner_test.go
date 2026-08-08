@@ -3,6 +3,7 @@ package axon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -152,7 +153,7 @@ func TestPruneParksNamedBlocksOnly(t *testing.T) {
 		t.Fatalf("Park mutated stored content: %q", s.Messages[0].Content)
 	}
 
-	ctx := s.ContextMessages()
+	ctx := s.ContextMessages(0)
 	if len(ctx) == 0 || !strings.Contains(ctx[0].Content, "parked") {
 		t.Fatalf("ContextMessages does not show a breadcrumb for the parked block: %+v", ctx)
 	}
@@ -205,8 +206,10 @@ func TestParkList(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // A model that names an unknown id alongside a valid one must still park the
-// valid one, and report the rejects in the error rather than discarding the
-// entire pass — an unusable id should not cost the whole curation cycle.
+// valid one and report success — the pass did its job. The unusable id is
+// reported through Rejected, not as an error: a curator that invents one id
+// out of ten has not failed, and calling that "pruning failed" told operators
+// a pass had been skipped when it had actually just parked nine blocks.
 func TestPruneNamingUnknownIDStillParksValid(t *testing.T) {
 	s := newPrunerSession(t)
 	s.Append(Msg{Role: "user", Content: "valid block"})      // m1
@@ -219,18 +222,52 @@ func TestPruneNamingUnknownIDStillParksValid(t *testing.T) {
 		return &Msg{Role: "assistant", Content: `{"park":[1,99]}`}, nil
 	}}})
 
-	_, err := p.Prune(context.Background(), s)
-	if err == nil {
-		t.Fatal("Prune did not report the unusable id")
-	}
-	if !strings.Contains(err.Error(), "m99") {
-		t.Fatalf("error does not name the rejected block: %v", err)
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune reported failure for a pass that parked a block: %v", err)
 	}
 	if !s.Messages[0].Parked {
 		t.Fatal("the valid id was not parked despite the other id being rejected")
 	}
 	if s.Messages[1].Parked {
 		t.Fatal("an id nobody named got parked")
+	}
+
+	rejected := p.Rejected()
+	if len(rejected) != 1 || rejected[0] != "m99" {
+		t.Fatalf("Rejected() = %v, want [m99]", rejected)
+	}
+	if again := p.Rejected(); again != nil {
+		t.Fatalf("Rejected() did not clear: %v", again)
+	}
+}
+
+// A curator naming only protected blocks — what production saw as
+// "pruning failed: named 2 unusable block(s): m102, m104" — is a pass that
+// parked nothing, but it is still not an error. Nothing went wrong; the model
+// simply had no usable suggestion.
+func TestPruneNamingOnlyProtectedBlocksIsNotAnError(t *testing.T) {
+	s := newPrunerSession(t)
+	s.Append(Msg{Role: "user", Content: "old user"})
+	s.Append(Msg{Role: "assistant", Content: "old assistant"})
+	s.Append(Msg{Role: "user", Content: "most recent user"})      // protected
+	s.Append(Msg{Role: "assistant", Content: "most recent asst"}) // protected
+
+	protectedUser := s.Messages[2].ID
+	protectedAsst := s.Messages[3].ID
+
+	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
+		return &Msg{Role: "assistant", Content: fmt.Sprintf(`{"park":[%s,%s]}`,
+			strings.TrimPrefix(protectedUser, "m"), strings.TrimPrefix(protectedAsst, "m"))}, nil
+	}}})
+
+	if _, err := p.Prune(context.Background(), s); err != nil {
+		t.Fatalf("Prune reported an error for a pass that simply parked nothing: %v", err)
+	}
+	if len(parkedIDs(s)) != 0 {
+		t.Fatalf("a protected block was parked: %v", parkedIDs(s))
+	}
+	if got := p.Rejected(); len(got) != 2 {
+		t.Fatalf("Rejected() = %v, want both protected ids", got)
 	}
 }
 
@@ -350,7 +387,7 @@ func TestPrunerRequestRendering(t *testing.T) {
 		t.Fatalf("seed park: %v", err)
 	}
 
-	req := prunerRequest(s, defaultPrunerReminder)
+	req := prunerRequest(s, 0, defaultPrunerReminder)
 
 	if strings.Contains(req, "system messages are never parkable") {
 		t.Fatal("prunerRequest included a system message")
@@ -372,7 +409,7 @@ func TestPrunerRequestRendering(t *testing.T) {
 		t.Fatalf("RegisterTask: %v", err)
 	}
 	s2.Append(Msg{Role: "user", Content: strings.Repeat("y", 2500)})
-	req2 := prunerRequest(s2, defaultPrunerReminder)
+	req2 := prunerRequest(s2, 0, defaultPrunerReminder)
 	if !strings.Contains(req2, "...[truncated, 2500 chars total]") {
 		t.Fatalf("prunerRequest did not truncate an over-cap block: %q", req2)
 	}
@@ -501,5 +538,75 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 	}
 	if !sawPruneSkipped {
 		t.Fatal("no KindError 'prune skipped' event emitted for the failed prune pass")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Prune modes
+// ---------------------------------------------------------------------------
+
+// Each mode must produce its own instruction — otherwise the knob is wired
+// to nothing and a config change silently does nothing.
+func TestPruneModeInjectsDistinctInstruction(t *testing.T) {
+	seen := map[string]PruneMode{}
+	for _, mode := range PruneModes {
+		p := prunerSystemPrompt(mode)
+		if prior, dup := seen[p]; dup {
+			t.Fatalf("modes %q and %q produce an identical prompt", prior, mode)
+		}
+		seen[p] = mode
+	}
+}
+
+// The safety rules and the answer format are invariants: a mode moves the
+// threshold for "still needed", never what may be parked or how to reply.
+// An unknown mode must still be a working prompt, not a broken one.
+func TestPruneModeKeepsInvariants(t *testing.T) {
+	invariants := []string{
+		`{"park":[3,7,9]}`,
+		"Never park, in any mode:",
+		"- a user message",
+		"- the most recent assistant message",
+		"- a block holding an unresolved error or a failing test",
+		"- a block naming a file the agent has edited or is editing",
+		"Parking is one-way",
+	}
+
+	for _, mode := range append(append([]PruneMode{}, PruneModes...), PruneMode("nonsense")) {
+		p := prunerSystemPrompt(mode)
+		for _, want := range invariants {
+			if !strings.Contains(p, want) {
+				t.Errorf("mode %q dropped invariant %q", mode, want)
+			}
+		}
+		if !strings.Contains(p, "MODE:") {
+			t.Errorf("mode %q injected no mode instruction", mode)
+		}
+	}
+}
+
+// An unset mode must land on moderate rather than an empty string, which
+// would inject nothing and leave the curator with no threshold at all.
+func TestPrunerDefaultsToModerate(t *testing.T) {
+	p := NewPruner(PrunerConfig{Model: &scriptedModel{}})
+	if p.mode != PruneModerate {
+		t.Fatalf("zero-value PrunerSettings gave mode %q, want %q", p.mode, PruneModerate)
+	}
+}
+
+// SetPruneMode must reach the live Pruner, and must refuse a bad value
+// rather than applying it.
+func TestSetPruneMode(t *testing.T) {
+	p := NewPruner(PrunerConfig{Model: &scriptedModel{}})
+	a := &Agent{pruner: p, settings: DefaultSettings()}
+
+	a.SetPruneMode(PruneExtreme)
+	if p.mode != PruneExtreme || a.settings.Pruner.Mode != PruneExtreme {
+		t.Fatalf("SetPruneMode(extreme): pruner=%q settings=%q", p.mode, a.settings.Pruner.Mode)
+	}
+
+	a.SetPruneMode(PruneMode("aggressive-ish"))
+	if p.mode != PruneExtreme {
+		t.Fatalf("SetPruneMode applied an invalid mode: %q", p.mode)
 	}
 }

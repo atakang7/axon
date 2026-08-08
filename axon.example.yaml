@@ -120,5 +120,8 @@ tools:
 pruner:
   floor_tokens: 10000       # below this, a prune is not worth a round trip
   growth_tokens: 5000       # accumulate this much before pruning again
-  max_tokens: 4096          # caps the curator's reply
+  # Caps the curator's reply. The answer is one line of JSON, but providers
+  # bill reasoning against this cap — set too low, a reasoning curator spends
+  # it all thinking and returns empty content.
+  max_tokens: 16000
   timeout: 60s

@@ -136,9 +136,10 @@ Releases are fully automated. Every push to `main` runs [semantic-release](https
 
 1. Reads the conventional-commit messages since the last tag.
 2. Computes the next semver (major / minor / patch / none) per the table above.
-3. Updates `CHANGELOG.md` and commits it back as `chore(release): X.Y.Z [skip ci]`.
-4. Creates and pushes the `vX.Y.Z` tag.
-5. Publishes a GitHub Release pointing at the tag. axon is a library-only repo; no binaries are shipped here. (Binaries for the terminal CLI live on [bouton's releases](https://github.com/atakang7/bouton/releases).)
+3. Creates and pushes the `vX.Y.Z` tag.
+4. Publishes a GitHub Release pointing at the tag, with GitHub's own auto-generated notes (categorized PRs, contributors, compare link) filled in as the body. axon is a library-only repo; no binaries are shipped here. (Binaries for the terminal CLI live on [bouton's releases](https://github.com/atakang7/bouton/releases).)
+
+`main` is branch-protected: releases are the only thing that can push straight to it (as an admin action), everything else goes through a PR with the CI gate passing. There is no `CHANGELOG.md` — the Releases page is the single source of truth for what shipped.
 
 There is no manual `git tag` step. To ship a feature, merge a `feat:` commit to `main`; to ship a fix, merge a `fix:` commit. To skip a release entirely (e.g. internal CI tweaks), use `chore:`, `ci:`, `test:`, or `style:`.
 

@@ -1,4 +1,4 @@
-module github.com/atakang7/axon
+module github.com/atakang7/axon/v2
 
 go 1.26.2
 

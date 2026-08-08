@@ -1,79 +1,76 @@
 ---
-title: Defining Tools
-description: Contracts and concurrency for custom capabilities.
+title: Custom tools
+description: Define JSON-schema tools and attach them to an Agent.
 ---
 
-Tools are the capability boundary between the Axon runtime and your infrastructure. 
-
-```mermaid
-graph LR
-    classDef secure fill:#991B1B,stroke:#7F1D1D,stroke-width:2px,color:#fff;
-    classDef runtime fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff;
-    
-    subgraph Axon Step Lifecycle
-        State[(Session State)]:::runtime
-        Stream[Network Stream]:::runtime
-        Dispatch{Tool Dispatcher}:::runtime
-    end
-    
-    subgraph Isolated Capability Closure
-        Func(fn(ctx, args)):::secure
-        DB[(External Database)]:::secure
-    end
-    
-    Dispatch ==>|JSON Args + ctx| Func
-    Func ==>|Network I/O| DB
-    DB -.->|Raw Data| Func
-    Func ==>|String/Error Result| Dispatch
-    
-    State -.-x|NO ACCESS| Func
-```
-
-## The Tool Contract
-
-A valid `axon.Tool` must define a JSON Schema outlining its required arguments, and a Go closure `Fn` to execute the logic.
-
-Because Axon executes tools in parallel if the LLM requests it, **your tool closures must be thread-safe.** Furthermore, they must strictly respect `ctx.Done()` to prevent leaked goroutines during a turn cancellation.
-
-### Example: Database Query Tool
+A custom tool has four fields. Three are required by `New`: `Name`, `Schema`, and `Fn`. `Description` is optional at validation time but strongly affects whether a model knows when to call the tool.
 
 ```go
-var ReadDBTool = axon.Tool{
-	Name:        "query_database",
-	Description: "Execute a read-only SQL query to retrieve application state.",
-	Schema: map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"sql": map[string]any{
-				"type": "string",
-				"description": "A PostgreSQL SELECT statement.",
-			},
-		},
-		"required": []string{"sql"},
-	},
-	Fn: func(ctx context.Context, args json.RawMessage) (string, error) {
-		var input struct {
-			SQL string `json:"sql"`
-		}
-		if err := json.Unmarshal(args, &input); err != nil {
-			// Returning an error here passes the error back to the LLM,
-			// allowing it to self-correct its JSON payload in the next frame.
-			return "", fmt.Errorf("invalid json payload: %w", err)
-		}
-
-		// The provided context respects the timeout/cancellation of ag.Step()
-		rows, err := db.QueryContext(ctx, input.SQL)
-		if err != nil {
-			return "", err 
-		}
-		
-		return formatRows(rows), nil
-	},
+tool := axon.Tool{
+    Name:        "project_name",
+    Description: "Return the current project's display name.",
+    Schema: map[string]any{
+        "type":                 "object",
+        "properties":           map[string]any{},
+        "additionalProperties": false,
+    },
+    Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
+        return "axon", nil
+    },
 }
 ```
 
-## Security & Context Isolation
+Attach it at construction:
 
-Tools in Axon are capability-based. A tool's `Fn` receives only what it needs: the request context and the parsed arguments. 
+```go
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "...",
+    Tools:        []axon.Tool{tool},
+})
+```
 
-Tools **do not** receive a reference to the `Agent`, the `Session`, or global configuration. This isolation guarantees that a compromised or hallucinated tool dispatch cannot mutate the agent's internal memory projection or extract API keys.
+## Schema is always required
+
+Even a no-argument tool must supply a non-nil JSON Schema. Axon rejects a nil schema before the first model call.
+
+The runtime does not validate model-emitted arguments against that schema before calling `Fn`. Your function must decode and validate `json.RawMessage` itself.
+
+## Tool names must be unique
+
+By default these names are already occupied:
+
+```text
+read, write, exec, bash_output, kill_shell, search, task
+```
+
+To replace a built-in intentionally, exclude it first:
+
+```go
+axon.Config{
+    ExcludeBuiltins: []string{"search"},
+    Tools:           []axon.Tool{mySearch},
+}
+```
+
+MCP-discovered tools and caller-supplied tools share the same duplicate-name validation.
+
+## Context cancellation
+
+The `ctx` passed to `Fn` is the active turn context and is canceled by `Agent.Interrupt()` or parent-context cancellation.
+
+Long-running custom tools should select on `ctx.Done()` or pass the context to their own I/O. Axon cannot force a tool implementation that ignores cancellation to stop.
+
+## Error contract
+
+Return a normal Go error when the tool operation fails:
+
+```go
+return "", fmt.Errorf("lookup failed: %w", err)
+```
+
+Axon emits `tool_error`, converts the error text to a `role=tool` message, and lets the model reason about the failure on the next loop iteration.
+
+## Do not expose more capability than necessary
+
+Built-in tools use narrow `Workspace` and `Plan` interfaces for a reason. Apply the same pattern to custom tools: close over the smallest service/interface the function needs rather than the entire application container.

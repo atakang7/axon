@@ -1,49 +1,110 @@
 ---
-title: Configuration & State
-description: Managing environments, secrets, and session projections.
+title: Configuration & state locations
+description: Load axon.yaml, resolve credentials, and control where state is written.
 ---
 
-Axon enforces a strict decoupling of structural configuration (which is safe to version control) and secret material (which is environment-bound).
+Axon can be configured entirely in Go, or you can opt into its file loader.
 
-```mermaid
-graph TD
-    classDef file fill:#F59E0B,stroke:#B45309,stroke-width:2px,color:#fff;
-    classDef mem fill:#10B981,stroke:#047857,stroke-width:2px,color:#fff;
-    
-    YAML[axon.yaml<br/>Topology & Limits]:::file
-    ENV[.env<br/>Secrets & Keys]:::file
-    
-    YAML --> Parse{axon.Load}
-    ENV --> Parse
-    
-    Parse --> Config[axon.Config]:::mem
-    Config --> Agent((Agent Instance)):::mem
+## Standard locations
+
+`Load()` is equivalent to:
+
+```go
+axon.LoadFrom(axon.ConfigPath(), axon.EnvPath())
 ```
 
-## Configuration Topology
+The default settings path is:
 
-The runtime expects two distinct files:
-
-1. `axon.yaml`: Defines the topology. Which endpoints are available, token thresholds, and pruner configuration.
-2. `.env`: Supplies the actual bearer tokens and database credentials.
-
-### axon.yaml
-```yaml
-providers:
-  openrouter:
-    base_url: https://openrouter.ai/api
-    api_key: ${OPENROUTER_API_KEY}
-    models:
-      deepseek/deepseek-v3.2:
-        route: null
+```text
+$AXON_CONFIG
+or $XDG_CONFIG_HOME/axon/axon.yaml
+or ~/.config/axon/axon.yaml
 ```
 
-During `axon.Load()`, the runtime parses the YAML and strictly resolves any `${VAR}` references against the `.env` file or the OS environment. If a variable is missing, `Load()` panics or errors immediately. This fail-fast design prevents silent downstream HTTP 401s.
+The credentials path is:
 
-## Session Projection
+```text
+$AXON_ENV
+or $XDG_CONFIG_HOME/axon/.env
+or ~/.config/axon/.env
+```
 
-Axon persists conversation history using an append-only event log (typically written to `AXON_DATA_DIR`). 
+`EnvPath` is deliberately tied to the config home, not the current project directory.
 
-When you call `ag.Session()`, Axon reads the event log and builds an in-memory struct representing the *current* state of the conversation. 
+## Loader pipeline
 
-Because memory is a projection and never mutated in place, state corruptions are impossible. Calling `ag.Undo()` simply truncates the final event frame from the log, perfectly reverting both the model's output and the resulting tool side-effects from the perspective of the prompt context.
+`LoadFrom(configPath, envPath)` performs these steps in order:
+
+1. parse the credentials file;
+2. read YAML;
+3. decode YAML with `KnownFields(true)` so unknown keys fail;
+4. resolve `$VAR` / `${VAR}` references in provider `api_key` and `base_url`;
+5. apply `WithDefaults()`;
+6. validate providers, retry attempts, and prune mode.
+
+The returned `Settings` has no pending substitution or defaulting work.
+
+## Secret lookup order
+
+For each variable reference, Axon first checks the parsed credentials file, then falls back to the process environment when the environment variable exists and is non-empty.
+
+An unresolved variable is a configuration error; it is not replaced with an empty string.
+
+:::caution
+The credentials file itself must currently exist for `Load`/`LoadFrom` because `readEnvFile` runs before configuration decoding. A process environment variable can satisfy a referenced secret, but it does not remove that file-existence requirement.
+:::
+
+## `.env` syntax
+
+The parser supports:
+
+- `KEY=VALUE`;
+- blank lines;
+- `#` comments;
+- optional `export ` prefix;
+- one matching pair of single or double quotes around a value.
+
+It is intentionally **not a shell**: it does not execute commands or interpolate variables between entries.
+
+## State directory
+
+When no `SessionConfig.DataDir` is supplied:
+
+```text
+$AXON_DATA_DIR
+or $XDG_DATA_HOME/agent
+or ~/.local/share/agent
+```
+
+Notice that the default leaf directory is currently `agent`, not `axon`.
+
+The same data root contains default session files and background-shell log directories.
+
+## Pin one session explicitly
+
+Session path precedence is:
+
+```text
+$AXON_SESSION_PATH
+then settings.session.path
+then derived per-current-working-directory path
+```
+
+These path environment variables are the remaining ambient overrides; operational values such as timeouts and output sizes come from `Settings` instead.
+
+## Direct configuration
+
+You can bypass file loading completely:
+
+```go
+settings := axon.DefaultSettings()
+settings.Tools.Exec.Timeout = axon.Duration(15 * time.Second)
+
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "...",
+    Settings:     settings,
+})
+```
+
+`New` calls `WithDefaults` again, so a partially populated `Settings` is valid.

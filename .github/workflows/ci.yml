@@ -4,22 +4,60 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Callable so release.yml can run this exact gate as a prerequisite rather
+  # than keeping a second copy of it. There is one definition of "green".
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  gate:
+    name: build / vet / fmt / test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
       - run: go build ./...
+
       - run: go vet ./...
-      - run: go test ./...
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go test -race ./...
+
+  docs:
+    name: docs / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+      - run: npm run build
 
   commitlint:
     name: Conventional Commits
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4

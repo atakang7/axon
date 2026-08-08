@@ -1,15 +1,63 @@
 ---
-title: Axon Runtime
-description: A deterministic Go runtime for LLM agent orchestration.
+title: Axon
+description: A small Go runtime for tool-using LLM agents.
 template: splash
 hero:
-  tagline: A deterministic Go runtime for LLM agent orchestration.
+  tagline: Build the product around the agent. Let Axon own the runtime underneath it.
   actions:
-    - text: Read the Design Doc
-      link: /axon/overview/introduction/
+    - text: Get started
+      link: /axon/overview/getting-started/
       icon: right-arrow
-    - text: Source Code
+      variant: primary
+    - text: Architecture
+      link: /axon/overview/architecture/
+      icon: open-book
+    - text: GitHub
       link: https://github.com/atakang7/axon
       icon: external
-      variant: minimal
 ---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+Axon is a **Go library for the execution layer of an LLM agent**. It takes a model, a system prompt, optional custom/MCP tools, and operational settings; then it drives model calls until the model stops asking for tools.
+
+<CardGrid>
+  <Card title="Deterministic turn loop">
+    User input, model call, tool calls, tool results, follow-up model calls, final text. The loop is explicit and inspectable.
+  </Card>
+  <Card title="Bounded built-ins">
+    File, search, shell, background-process, and task tools are built in with explicit time/output/context limits.
+  </Card>
+  <Card title="Persistent working state">
+    Sessions keep the conversation, working directory, task plan, edit history, block IDs, and turn counter on disk.
+  </Card>
+  <Card title="Context projection">
+    The historical log is preserved while old blocks can be collapsed into breadcrumbs and optionally parked by a secondary model.
+  </Card>
+</CardGrid>
+
+## The shortest useful mental model
+
+```text
+Your application
+  ├─ chooses/configures a Model
+  ├─ supplies a system prompt
+  ├─ optionally supplies custom tools / MCP servers
+  └─ calls Agent.Step or Agent.Run
+             │
+             ▼
+          Axon runtime
+  session → context projection → model → tools → model → ... → final answer
+             │                    │
+             ├─ events            ├─ retries / streaming
+             ├─ pruning           └─ OpenAI-compatible client (optional)
+             └─ persistence
+```
+
+## Choose your path
+
+- **Embedding Axon now?** Start with [Getting started](/axon/overview/getting-started/).
+- **Evaluating the design?** Read [Architecture](/axon/overview/architecture/) and [Life of a turn](/axon/overview/life-of-a-turn/).
+- **Operating it safely?** Read [Configuration](/axon/reference/configuration/) and the [Security model](/axon/concepts/security-model/).
+- **Extending it?** Read [Custom tools](/axon/guides/defining-tools/), [MCP servers](/axon/guides/mcp/), and the [Agent API](/axon/reference/agent-api/).
+- **Working on Axon itself?** Use the [Source map](/axon/internals/source-map/) and [Runtime invariants](/axon/internals/runtime-invariants/).

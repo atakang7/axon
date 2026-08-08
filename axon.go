@@ -45,7 +45,21 @@ type Request struct {
 	Tools []ToolSpec
 
 	// MaxTokens caps this one reply. Zero means the model's own default.
+	//
+	// On providers that bill reasoning against this cap — OpenRouter does — a
+	// reasoning model can spend the whole budget thinking and be cut off
+	// before it emits a single content token. A cap sized for the answer
+	// alone is how a working model returns nothing.
 	MaxTokens int
+
+	// ResponseFormat constrains the shape of the reply, forwarded verbatim as
+	// the request's "response_format" field. Zero value sends nothing.
+	//
+	// This is the supported way to get JSON out of a reasoning model: the
+	// model still thinks in reasoning tokens, but the answer it finally emits
+	// is grammar-constrained to the schema and lands in Content, where a
+	// caller can parse it without scraping prose for braces.
+	ResponseFormat json.RawMessage
 
 	// Stream receives output as it arrives. The zero value discards it.
 	Stream Stream

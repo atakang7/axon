@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-
 // ---------------------------------------------------------------------------
 // WRITE
 // ---------------------------------------------------------------------------
@@ -31,7 +30,6 @@ type writeInput struct {
 	EndLine   int    `json:"end_line"`
 }
 
-
 func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput, string, error) {
 	var p writeInput
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -43,7 +41,6 @@ func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput,
 	}
 
 	abs := ws.ResolvePath(p.Path)
-
 
 	switch p.Mode {
 	case writeSave:

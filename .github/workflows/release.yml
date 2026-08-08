@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  # semantic-release commits `chore(release): [skip ci]` back to main, which
+  # by design does not trigger this workflow. If a release fails partway,
+  # main is then ahead of the last attempt and re-running the old run just
+  # reports "local branch is behind". This is the way back in without
+  # pushing an empty commit.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,8 +20,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The gate is a prerequisite, not a parallel workflow. Both this and CI
+  # trigger on push to main, so without this dependency a commit that fails
+  # tests still cuts a release — the two workflows would simply race.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
   release:
     name: semantic-release
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,9 +57,20 @@ jobs:
         with:
           semantic_version: 23
           extra_plugins: |
-            @semantic-release/changelog@6
-            @semantic-release/exec@6
-            @semantic-release/git@10
             conventional-changelog-conventionalcommits@7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # semantic-release only determines the version and tags/publishes the
+      # release; it no longer writes release notes. GitHub's own generator
+      # (categorized PR list, contributors, compare link) fills the body
+      # instead, so there is one changelog source of truth — the release
+      # page — and nothing needs to be committed back to main.
+      - name: Fill release notes from GitHub's auto-generated notes
+        if: steps.semantic.outputs.new_release_published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.semantic.outputs.new_release_git_tag }}
+        run: |
+          notes=$(gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name="$TAG" --jq .body)
+          gh release edit "$TAG" --notes "$notes"

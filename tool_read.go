@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-
 // ---------------------------------------------------------------------------
 // READ
 // ---------------------------------------------------------------------------
@@ -30,7 +29,6 @@ type readInput struct {
 	Limit  int    `json:"limit"`
 }
 
-
 func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, string, error) {
 	var p readInput
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -46,7 +44,6 @@ func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, s
 
 	return &p, abs, nil
 }
-
 
 func ReadTool(ws Workspace, lim Limits) Tool {
 	limit := lim.ReadLines

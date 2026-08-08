@@ -1,63 +1,87 @@
 ---
-title: Life of a Turn
-description: The execution flow of ag.Step.
+title: Life of a turn
+description: Exact Step execution order and failure behavior.
 ---
 
-Understanding the lifecycle of `ag.Step(ctx, input)` is critical for writing robust integrations, especially when managing deadlines or handling telemetry.
+`Agent.Step(ctx, input)` is the central state machine.
 
-When `Step` is invoked, Axon executes the following strict state machine:
+## 1. Record the user turn
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant Step as ag.Step(ctx)
-    participant Provider as LLM API Stream
-    participant Tool as Tool Subprocess
-    
-    User->>Step: "List active processes"
-    activate Step
-    
-    Step->>Provider: Flush Session Projection
-    activate Provider
-    Provider-->>Step: KindToken (Streaming text)
-    Provider-->>Step: KindToolCall (JSON: exec)
-    deactivate Provider
-    
-    Step->>Tool: execute(ctx, "exec", {"cmd": "ps aux"})
-    activate Tool
-    Note over Step,Tool: Context strictly limits execution bound
-    Tool-->>Step: ToolResult (stdout payloads)
-    deactivate Tool
-    
-    Step->>Provider: Append ToolResult & Recurse
-    activate Provider
-    Provider-->>Step: KindToken (Summarizing result)
-    Provider-->>Step: Stop Reason (Turn Completed)
-    deactivate Provider
-    
-    Step-->>User: "Processes listed successfully."
-    deactivate Step
+Axon rejects an empty input, increments `Session.Turn`, emits `turn_start`, appends the user message, and saves the session.
+
+That first save is strict: if it fails, `Step` returns an error before calling the model.
+
+It then emits `user_input`.
+
+## 2. Project and optionally prune context
+
+Before **every** model call in the loop, Axon checks `Pruner.ShouldFire` when a pruner exists.
+
+If pruning is due:
+
+- emit `prune_start` with the estimated projected token count;
+- run the curator;
+- on success emit `prune_end`;
+- on failure emit `error` with `"prune skipped"` and continue the turn.
+
+Pruning is an optimization, not a prerequisite for a successful turn.
+
+## 3. Call the model
+
+Axon creates a cancelable turn context, exposes it through `Interrupt`, then calls the model with:
+
+- `Session.ContextMessages(settings.Pruner.WindowBlocks)`;
+- the current tool specs;
+- streaming callbacks for text, reasoning, and partial tool arguments.
+
+The call is retried according to `RetryConfig` for configured HTTP statuses and for supported transient transport failures such as timeout, EOF/truncated stream, connection reset/refused, and DNS errors.
+
+`context.Canceled` and `context.DeadlineExceeded` are never retried.
+
+## 4. Record the assistant message
+
+A successful model message is appended and Axon attempts to save the session.
+
+Unlike the initial user save, a later persistence failure does not abort the turn; it emits an `error` event with `"session not persisted"`.
+
+If the message contains text, Axon remembers the latest text as `StepResult.Assistant` and emits `assistant_end`.
+
+## 5A. No tool calls → finish
+
+When the message has no tool calls, Axon clears the interrupt handle, emits `turn_end`, and returns:
+
+```go
+type StepResult struct {
+    Assistant string
+    ToolCalls []ToolCall
+    Turn      int
+}
 ```
 
-## 1. Context Acquisition
-The provided `context.Context` is anchored. Axon will monitor this context for cancellation throughout the entirety of the turn. If the context expires, Axon tears down the network stream and sends `SIGKILL` to active tool subprocesses.
+## 5B. Tool calls → execute and continue
 
-## 2. API Streaming (`KindAPICall`)
-Axon flushes the current session projection to the LLM provider as an array of messages. As the provider responds, Axon multiplexes the stream:
-- **Reasoning Tokens:** Emitted immediately as `KindReasoning` events.
-- **Content Tokens:** Emitted immediately as `KindToken` events.
-- **Tool Dispatches:** Buffered until a complete JSON arguments payload is parsed.
+For each returned tool call, in order:
 
-## 3. Tool Execution (`KindToolCall`)
-If the model requests tool execution, Axon pauses token generation.
-- The runtime unmarshals the JSON payload and validates it against your defined schema.
-- The tool's `Fn` closure is invoked synchronously, passing down the turn's `context.Context`.
-- If the model dispatches multiple tools concurrently, Axon executes them in parallel via a wait group.
+1. emit `tool_call`;
+2. find the matching tool by name;
+3. call its `Fn` with the same turn context;
+4. turn success **or failure** into a `role=tool` message;
+5. append/save the tool result;
+6. prefix the stored tool content with its block ID when one exists;
+7. emit `tool_result` on success or `tool_error` from `runTool` on tool failure.
 
-## 4. State Projection & Recurse
-Once tools complete, their stdout/stderr payloads are appended to the event log. 
-If tools were executed, Axon automatically recurses back to **Step 2**, returning the tool payloads to the model to evaluate the result.
+Then the loop goes back to pruning/model invocation with the new tool results in context.
 
-## 5. Termination (`KindTurnEnd`)
-The loop terminates, and `ag.Step` unblocks, returning the final assistant response string once the model yields a `stop` reason.
+:::note
+The shipped OpenAI-compatible client asks providers for `parallel_tool_calls: true`, but Axon's runtime executes returned tool calls sequentially in slice order.
+:::
+
+## Interruption
+
+`Interrupt()` atomically cancels the currently active model/tool turn context. If cancellation reaches `Step`, it returns `ErrInterrupted` plus the turn number and any tool calls accumulated so far.
+
+`Run` treats `ErrInterrupted` specially: it continues to the next input instead of failing the whole run.
+
+## Empty model responses
+
+A model response with neither text nor tool calls is treated as an error. Axon gives that condition one retry; a second empty response fails the call even when the general retry policy allows more attempts.
