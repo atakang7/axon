@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-
 type bgShell struct {
 	ID        string
 	Command   string
@@ -26,20 +25,16 @@ type bgShell struct {
 	logFile *os.File
 	doneCh  chan struct{}
 
-
 	mu       sync.Mutex
 	exitCode int
 	exitNote string
 	finished bool
 
-
 	readOffset int64
-
 
 	logDev uint64
 	logIno uint64
 }
-
 
 type BackgroundShells struct {
 	mu     sync.Mutex
@@ -55,19 +50,16 @@ func NewBackgroundShells() *BackgroundShells {
 		root = os.TempDir()
 	}
 
-
 	dir, err := os.MkdirTemp(root, "shells-")
 	if err != nil {
 		dir = root
 	}
-
 
 	return &BackgroundShells{
 		shells: map[string]*bgShell{},
 		dir:    dir,
 	}
 }
-
 
 // LogDir is the directory this registry writes shell logs to.
 func (r *BackgroundShells) LogDir() string {

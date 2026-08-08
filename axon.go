@@ -51,20 +51,6 @@ type Request struct {
 	Stream Stream
 }
 
-// Stream receives incremental output during a completion. Every field is
-// optional; a nil func is simply not called.
-//
-// Callbacks run synchronously on the goroutine reading the response, in
-// arrival order, and must not block. Anything slow — a network write to a
-// browser, a disk flush — has to be handed to a buffered channel and done
-// elsewhere: blocking here stops the read, and a stall long enough to trip the
-// idle timeout fails the whole completion.
-//
-// Reasoning is separate from Token because reasoning models emit a long
-// thinking block before any content, and a caller usually wants to render the
-// two differently. ToolArgs exists because some providers buffer tool-call
-// arguments to end-of-message rather than streaming them, so a UI watching
-// only Token can look frozen during a perfectly healthy stream.
 type Stream struct {
 	Token func(text string)
 
@@ -142,39 +128,6 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
-// ---------------------------------------------------------------------------
-// Tools
-// ---------------------------------------------------------------------------
-
-// Tool is a named function the model can call. This is the extension surface:
-// put your own in agent.Config.Tools.
-//
-//	deploy := axon.Tool{
-//	    Name:        "deploy",
-//	    Description: "Deploy a service to staging.",
-//	    Schema: map[string]any{
-//	        "type":       "object",
-//	        "properties": map[string]any{"service": map[string]any{"type": "string"}},
-//	        "required":   []string{"service"},
-//	    },
-//	    Fn: func(ctx context.Context, args json.RawMessage) (string, error) {
-//	        var p struct{ Service string }
-//	        if err := json.Unmarshal(args, &p); err != nil {
-//	            return "", err
-//	        }
-//	        return deployTo(ctx, p.Service)
-//	    },
-//	}
-//
-// The string Fn returns goes into the conversation as the tool's result, so it
-// is written for the model to read. Returning an error is not fatal: the error
-// text becomes the result and the model gets to react to it, which is usually
-// what you want for a failure it could recover from.
-//
-// Name, Schema and Fn are required. agent.New rejects a Tool missing any of
-// them with agent.ErrInvalidTool rather than letting the turn loop discover it:
-// a nil Fn would otherwise panic mid-turn, after the model had already
-// committed to the call.
 type Tool struct {
 	// Name is what the model calls. Required. It must not collide with a
 	// built-in the agent still has (read, write, exec, search, task,
