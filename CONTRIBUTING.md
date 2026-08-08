@@ -119,48 +119,16 @@ Subjects are lowercase, imperative ("add", not "added" or "adds"), and ≤ 100 c
 
 axon is a library-only repository. The terminal coding agent lives in [bouton](https://github.com/atakang7/bouton).
 
-```
-axon/
-├── agent/                     # the public runtime (the product of this repo)
-│   ├── api.go                 # Config, New, Step, Run, ...; re-exported types
-│   ├── agent.go               # Agent struct, chat/retry, runTool
-│   ├── setup.go               # New, Reset, Undo, Cd, Close — lifecycle
-│   ├── loop.go                # Step and Run — the turn loop
-│   ├── handler.go             # Event, Kind, ToolEvent, PruneInfo, SessionInfo
-│   ├── prompt.go              # buildSystemPrompt (role text + tool catalog)
-│   └── pruner.go              # secondary-LLM pruner
-├── internal/                  # unreachable from outside the module
-│   ├── config/config.go       # session/bg paths, Limits
-│   ├── llm/                   # Model port, Provider, wire types, OpenAI client
-│   ├── session/               # append-only log, cwd, undo, task plan, projection
-│   └── tools/                 # the seven built-in tools, background shells
-└── ...                        # README, ARCHITECTURE, CHANGELOG, LICENSE, go.mod
-```
+The runtime knows nothing about terminals, flags, YAML, or `os.Exit`. Library users build `Config` directly.
 
-The runtime knows nothing about terminals, flags, YAML, or `os.Exit`. Library users build `agent.Config` directly.
+The project is structured as a flat, single-package architecture (`package axon`) to maximize simplicity and minimize internal boundaries. All core logic (agent, tools, llm client, session) lives in the root directory.
 
-### The layering rule
+### Architecture
 
-```
-config  ←  llm  ←  session  ←  tools  ←  agent
-```
-
-**A package may import anything to its left, and nothing to its right.** This
-is not a convention — each layer is its own package, so a wrong-direction
-import fails the build. Before adding an import, check which way it points; if
-it points right, the code is in the wrong layer.
-
-Two consequences worth knowing before you change anything:
-
-- `llm` must never learn what a `Tool` is. It takes `ToolSpec` (name,
-  description, schema) and never sees `Fn`. `agent.toolSpecs` is the only
-  crossing point.
-- `tools` must never take a `*Session`. A tool declares the narrowest
-  interface it needs (`Workspace`, `Plan`) in `internal/tools/tools.go`, and
-  `Session` satisfies it implicitly. If a new tool seems to need more than
-  that, say so in the PR rather than widening the interface quietly.
-
-`ARCHITECTURE.md` has the full table and the rationale.
+The architecture adheres strictly to Go minimalism:
+- **Flat structure**: No nested packages. This forces a cohesive API and prevents dependency cycles.
+- **Single responsibility**: Each file handles a specific domain (`agent.go`, `tools.go`, `client.go`, `session.go`).
+- **No external dependencies**: The runtime relies entirely on the standard library.
 
 ## Releases
 
