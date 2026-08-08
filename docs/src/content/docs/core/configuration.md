@@ -1,28 +1,13 @@
 ---
-title: Configuration
-description: Managing settings and credentials in Axon.
+title: Configuration Schemas
+description: Writing system settings and environment variables.
 ---
 
-Axon requires two configuration files to separate settings from secrets. 
+Write configuration logic using two explicit files: `axon.yaml` (structural settings) and `.env` (secrets).
 
-| File | Contains | Version Control |
-| --- | --- | --- |
-| `~/.config/axon/axon.yaml` | System settings | **Yes** |
-| `~/.config/axon/.env` | Credentials | **No** |
+## axon.yaml
 
-You can override these locations by setting `AXON_CONFIG` and `AXON_ENV`.
-
-## Setup
-
-```bash
-mkdir -p ~/.config/axon
-curl -o ~/.config/axon/axon.yaml https://raw.githubusercontent.com/atakang7/axon/main/axon.example.yaml
-
-printf 'OPENROUTER_API_KEY=sk-or-...\n' > ~/.config/axon/.env
-chmod 600 ~/.config/axon/.env
-```
-
-## Structure
+Define endpoints, available models, and thresholds. Write this file to `~/.config/axon/axon.yaml`.
 
 ```yaml
 providers:
@@ -31,6 +16,27 @@ providers:
     api_key: ${OPENROUTER_API_KEY}
     models:
       deepseek/deepseek-v3.2:
+        route: null
+      qwen/qwen3.6-flash:
+        route: null
+
+model:
+  temperature: 0.1
+  max_tokens: 4096
 ```
 
-Variables defined as `${VAR}` resolve strictly from the `.env` file, falling back to the process environment. An unresolved variable errors at load, preventing downstream API authentication failures.
+## .env
+
+Define secrets matching the interpolated `${VAR}` keys in the YAML. Write this file to `~/.config/axon/.env`.
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-abcdef1234567890
+```
+
+## Environment Overrides
+
+To explicitly override file paths at runtime without altering code, export the following environment variables prior to running the executable:
+
+- `AXON_CONFIG`: Absolute path to `axon.yaml`.
+- `AXON_ENV`: Absolute path to `.env`.
+- `AXON_DATA_DIR`: Absolute path for the session database.

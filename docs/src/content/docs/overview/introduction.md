@@ -1,16 +1,34 @@
 ---
-title: Introduction
-description: What is Axon and why does it exist?
+title: Architecture Model
+description: System boundaries and invariants.
 ---
 
-Axon is a Go runtime for building LLM agents. 
+Implement Axon as an orchestrator for a single model API connection. It manages tool dispatches, memory persistence, and context pruning.
 
-It drives the autonomous agent loop: streaming a model API, dispatching tool calls, persisting an append-only session, pruning context under token pressure, and emitting structured events at every step.
+## Invariants
 
-## Design Principles
+1. **Monolithic Model Allocation.** You supply one primary model for inference and one secondary model for context pruning. Axon does not manage parallel sub-agents.
+2. **Turn-Scoped Execution.** Wrap every `Step` call in a finite `context.Context`. This context bounds the HTTP request and all tool subprocesses spawned during the turn.
+3. **Stateless Settings.** Load `axon.Config` exactly once at startup. Settings are immutable during runtime.
+4. **Append-Only Memory.** Session state is an immutable event log. Implement `/undo` or state truncations strictly via projection, not mutation.
 
-- **One LLM, no subagents.** Cost is controlled by a secondary pruner model that parks stale context, not by running parallel agent fleets.
-- **Append-only session log.** Memory is a projection, never a mutation. It enables byte-exact undos and preserves full history for audit.
-- **Turn-scoped lifecycles.** A single `context.Context` spans one user turn, covering the HTTP stream and all concurrent tool subprocesses.
-- **Capability-based tools.** Tools receive narrow interfaces (e.g., `Workspace`, `Plan`). They cannot access ambient state or credentials.
-- **Stateless configuration.** Settings resolve at construction. The runtime never re-reads state, allowing multiple diverse agents within a single process.
+## API Surface
+
+Interact with the runtime exclusively through the `axon.Agent` interface:
+
+```go
+// Block until a turn completes, returning the assistant response.
+ag.Step(ctx context.Context, input string) (string, error)
+
+// Block and loop continuously against an input provider.
+ag.Run(ctx context.Context, inputFn func() (string, error))
+
+// Halt the active Step or Run loop immediately.
+ag.Interrupt() bool
+
+// Flush the session and rebuild the root system prompt.
+ag.Reset()
+
+// Return the current immutable state projection.
+ag.Session() *axon.Session
+```

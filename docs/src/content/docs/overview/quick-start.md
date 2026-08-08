@@ -1,19 +1,15 @@
 ---
-title: Quick Start
-description: Run your first Axon agent.
+title: Initializing the Agent
+description: Code implementation for the core loop.
 ---
 
-## Installation
+Include `github.com/atakang7/axon` in your `go.mod`.
 
-Axon is a standard Go module.
+## Bootstrap the Runtime
 
-```bash
-go get github.com/atakang7/axon
-```
-
-## Basic Loop
-
-Initialize configuration, instantiate a model provider, and start the agent.
+1. Load the immutable configuration from the filesystem.
+2. Allocate the LLM provider client.
+3. Construct the agent instance.
 
 ```go
 package main
@@ -21,42 +17,45 @@ package main
 import (
     "context"
     "fmt"
+    "log"
+
     "github.com/atakang7/axon"
 )
 
 func main() {
     ctx := context.Background()
 
-    // 1. Load settings from axon.yaml and .env
+    // Load configuration. Reads ~/.config/axon/axon.yaml and .env.
     settings, err := axon.Load()
     if err != nil {
-        panic(err)
+        log.Fatalf("config load failed: %v", err)
     }
     
-    // 2. Initialize provider client
+    // Allocate provider. The model string must match a configured model in your YAML.
     model, err := settings.NewClient("openrouter", "deepseek/deepseek-v3.2")
     if err != nil {
-        panic(err)
+        log.Fatalf("provider allocation failed: %v", err)
     }
 
-    // 3. Create the agent
+    // Construct the agent. Attaches default tools automatically.
     ag, err := axon.New(axon.Config{
         Model:        model,
-        SystemPrompt: "You are an expert coding assistant.",
+        SystemPrompt: "You are a backend orchestrator. Use tools strictly when required.",
         Settings:     settings,
     })
     if err != nil {
-        panic(err)
+        log.Fatalf("agent construction failed: %v", err)
     }
     defer ag.Close()
 
-    // 4. Execute a single turn
-    res, err := ag.Step(ctx, "list every TODO comment under cmd/")
+    // Execute one turn.
+    response, err := ag.Step(ctx, "List the open ports on this machine.")
     if err != nil {
-        panic(err)
+        log.Fatalf("step failed: %v", err)
     }
-    fmt.Println(res)
+    
+    fmt.Println(response)
 }
 ```
 
-Axon automatically attaches its built-in tools (read, write, exec, search, task) by default. `Step` runs one turn to completion and returns the final assistant text alongside a record of executed tools.
+Do not share the `ag` instance across concurrent `Step` calls for different users. One `Agent` represents one session.

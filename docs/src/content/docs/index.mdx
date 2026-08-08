@@ -1,14 +1,14 @@
 ---
-title: Axon
-description: A Minimalist Go Runtime for Building LLM Agents
+title: Axon Reference
+description: Go Runtime API and Implementation Reference
 template: splash
 hero:
-  tagline: A standard library approach to LLM agents. Streamline model APIs, tools, memory, and observability into a robust Go runtime.
+  tagline: Implementation reference for the Axon agent runtime.
   actions:
-    - text: Introduction
-      link: /overview/introduction/
+    - text: Initialize the Loop
+      link: /overview/quick-start/
       icon: right-arrow
-    - text: GitHub Repository
+    - text: Source Code
       link: https://github.com/atakang7/axon
       icon: external
       variant: minimal
@@ -17,16 +17,16 @@ hero:
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid stagger>
-	<Card title="Pragmatic Loop" icon="setting">
-		Streams models, dispatches tool calls, and prunes context deterministically.
+	<Card title="Initialize" icon="setting">
+		Load settings, allocate the provider, and construct the agent instance.
 	</Card>
-	<Card title="Stateless Setup" icon="document">
-		Isolated configuration loading. Run concurrent divergent agents cleanly in one process.
+	<Card title="Implement Tools" icon="document">
+		Write strictly typed capability handlers and register them to the loop.
 	</Card>
-	<Card title="Append-Only Memory" icon="add-document">
-		Session state is a projection. Features robust byte-exact rollbacks and audit logs.
+	<Card title="Manage State" icon="add-document">
+		Access the append-only session projection for undos and audits.
 	</Card>
-	<Card title="Strict Observability" icon="open-book">
-		Hooks into every execution frame. Exposes structured events for logging or UI rendering.
+	<Card title="Consume Events" icon="open-book">
+		Write telemetry callbacks to trace token streams and execution frames.
 	</Card>
 </CardGrid>

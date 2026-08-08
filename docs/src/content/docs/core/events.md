@@ -1,35 +1,62 @@
 ---
-title: Events & Observability
-description: Subscribing to the agent loop.
+title: Writing Telemetry Callbacks
+description: Intercept state mutations and output streams.
 ---
 
-Axon emits typed events for every stage of the execution loop via `Config.OnEvent`.
+Write an `OnEvent` callback in `axon.Config` to capture the internal state machine transitions, tool dispatches, and token streams.
 
-## Handling Events
+## Event Dispatcher Implementation
 
-Assign a callback to intercept execution states, tool calls, and payload telemetry.
+Define a switch block matching `axon.Kind*` constants. Do not execute blocking operations inside this callback; it will stall the generation loop.
 
 ```go
-cfg.OnEvent = func(ctx context.Context, e axon.Event) {
-    switch e.Kind {
-    case axon.KindToken:
-        // Stream text output
-        fmt.Print(e.Text)
-    case axon.KindToolCall:
-        // Log tool invocation
-        log.Printf("Tool Executed: %s with args %s", e.Tool.Name, e.Tool.Args)
-    case axon.KindError:
-        // Log terminal errors
-        log.Printf("Error: %v", e.Error)
+import (
+    "context"
+    "fmt"
+    "log"
+    "github.com/atakang7/axon"
+)
+
+func BuildEventLogger() func(context.Context, axon.Event) {
+    return func(ctx context.Context, e axon.Event) {
+        switch e.Kind {
+        
+        // Print raw model text output to stdout directly.
+        case axon.KindToken:
+            fmt.Print(e.Text)
+            
+        // Print internal reasoning (e.g. <think> blocks in DeepSeek).
+        case axon.KindReasoning:
+            // Often rendered in dim or distinct styling.
+            fmt.Print(e.Text)
+            
+        // Log tool arguments when the model decides to dispatch one.
+        case axon.KindToolCall:
+            log.Printf("Executing tool [%s] with args: %s", e.Tool.Name, e.Tool.Args)
+            
+        // Log the return payload from a completed tool execution.
+        case axon.KindToolResult:
+            log.Printf("Tool [%s] completed. Output length: %d bytes", e.Tool.Name, len(e.Text))
+            
+        // Log runtime-level faults.
+        case axon.KindError:
+            log.Printf("Runtime failure: %v", e.Error)
+        }
     }
 }
 ```
 
-## Available Event Kinds
+## Registration
 
-Refer to `handler.go` for the canonical list. Key events include:
-- `KindTurnStart`, `KindTurnEnd`
-- `KindAPICall`
-- `KindToken`, `KindReasoning`, `KindAssistantEnd`
-- `KindToolCall`, `KindToolResult`, `KindToolError`
-- `KindPruneStart`, `KindPruneEnd`
+Assign the callback prior to calling `axon.New`.
+
+```go
+config := axon.Config{
+    Model:        model,
+    SystemPrompt: prompt,
+    Settings:     settings,
+    OnEvent:      BuildEventLogger(),
+}
+
+ag, err := axon.New(config)
+```

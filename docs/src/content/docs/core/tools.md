@@ -1,53 +1,61 @@
 ---
-title: Tools
-description: Extending Axon capabilities.
+title: Writing Custom Tools
+description: Define capability boundaries and logic closures.
 ---
 
-Axon exposes a standard `Tool` interface. Custom tools execute within the turn's `context.Context`.
+Write tools by satisfying the `axon.Tool` interface. 
 
-## Implementing a Tool
+Tools execute concurrently during a `Step` if the model dispatches them in parallel. Ensure your closures are thread-safe.
 
-Define the JSON Schema for the arguments, and provide a closure for execution.
+## Tool Definition
+
+Define a strict JSON schema and map the inputs to a Go struct inside the execution closure.
 
 ```go
-import (
-    "context"
-    "encoding/json"
-    "github.com/atakang7/axon"
-)
-
-var DeployTool = axon.Tool{
-    Name:        "deploy",
-    Description: "Deploy a service to staging.",
+var QueryDatabaseTool = axon.Tool{
+    Name:        "query_db",
+    Description: "Execute a read-only SQL query against the primary database.",
     Schema: map[string]any{
         "type": "object",
         "properties": map[string]any{
-            "service": map[string]any{"type": "string"},
+            "sql": map[string]any{
+                "type": "string",
+                "description": "A valid PostgreSQL SELECT statement.",
+            },
         },
-        "required": []string{"service"},
+        "required": []string{"sql"},
     },
+    // The ctx is derived from the parent Step() call.
     Fn: func(ctx context.Context, args json.RawMessage) (string, error) { 
         var input struct {
-            Service string `json:"service"`
+            SQL string `json:"sql"`
         }
         if err := json.Unmarshal(args, &input); err != nil {
+            return "", fmt.Errorf("invalid arguments: %w", err)
+        }
+        
+        // Ensure you respect ctx.Done() in long-running I/O operations.
+        results, err := executeQuery(ctx, input.SQL)
+        if err != nil {
+            // Return errors to allow the model to auto-correct.
             return "", err
         }
         
-        // Execute deployment...
-        return "Success: " + input.Service, nil
+        return results, nil
     },
 }
 ```
 
 ## Registration
 
-Pass your tool during agent initialization. It appends to the built-in toolset. Colliding tool names trigger an error during `New`.
+Inject the tool array into `axon.Config` during initialization.
 
 ```go
 ag, err := axon.New(axon.Config{
     Model:        model, 
     SystemPrompt: "...", 
-    Tools:        []axon.Tool{DeployTool},
+    Tools:        []axon.Tool{QueryDatabaseTool},
 })
 ```
+
+To strip all default built-in tools (read, write, exec, search, task) and strictly allow only your provided tools, set `ExcludeBuiltins: true` in `axon.Config`.
