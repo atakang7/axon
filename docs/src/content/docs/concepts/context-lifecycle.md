@@ -1,6 +1,6 @@
 ---
 title: Context lifecycle
-description: Axon's working-set model: durable history, recency collapse, and optional semantic parking.
+description: "Axon's working-set model: durable history, recency collapse, and optional semantic parking."
 ---
 
 The central idea of Axon's context system is: **history is not the same thing as working memory**.
