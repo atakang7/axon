@@ -1,57 +1,63 @@
 ---
-title: Telemetry & Events
-description: Subscribing to the runtime execution frames.
+title: Events & observability
+description: Observe sessions, turns, streaming, tools, pruning, retries, and errors.
 ---
 
-Axon is fundamentally a background orchestrator. To surface its behavior to a UI, a log aggregator, or a metrics pipeline, you must implement the `OnEvent` hook.
-
-```mermaid
-graph LR
-    classDef event fill:#8B5CF6,stroke:#5B21B6,stroke-width:2px,color:#fff;
-    classDef sink fill:#3B82F6,stroke:#1D4ED8,stroke-width:2px,color:#fff;
-
-    Stream[Internal Loop] -->|Dispatches Event| Handler{Config.OnEvent}:::event
-    
-    Handler -->|KindToken| UI[UI Chat Bubble]:::sink
-    Handler -->|KindToolCall| Spin[Loading Spinner]:::sink
-    Handler -->|KindPruneStart| Warn[Context Warning]:::sink
-    Handler -->|KindError| Log[Log Aggregator]:::sink
-```
-
-## The Event Loop
-
-`Config.OnEvent` receives a synchronous callback for every state transition in the `ag.Step` loop. 
-
-**Critical Requirement:** The `OnEvent` callback blocks the primary execution thread of the agent. Do not perform heavy synchronous I/O (like writing to a slow database) directly inside this closure. If you need to write to a slow sink, dispatch the event to a buffered channel.
-
-### Example: Stdout Telemetry
+Pass `OnEvent` in `Config` to receive the runtime event stream.
 
 ```go
-func LoggingCallback(ctx context.Context, e axon.Event) {
-	switch e.Kind {
-	case axon.KindToken:
-		// Stream the assistant's standard text output.
-		fmt.Print(e.Text)
-		
-	case axon.KindToolCall:
-		// Log the intent to execute a tool.
-		log.Printf("[DISPATCH] %s: %s\n", e.Tool.Name, e.Tool.Args)
-		
-	case axon.KindPruneStart:
-		// Emit telemetry that the context window hit capacity.
-		log.Println("[WARN] Token pressure critical. Invoking secondary pruner model.")
-		
-	case axon.KindError:
-		// Catch HTTP stream failures or tool panics.
-		log.Printf("[FATAL] %v\n", e.Error)
-	}
-}
-
-// Attach during initialization:
-config := axon.Config{
-	Model:   model,
-	OnEvent: LoggingCallback,
-}
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "...",
+    OnEvent: func(ctx context.Context, e axon.Event) {
+        log.Printf("turn=%d kind=%s", e.Turn, e.Kind)
+    },
+})
 ```
 
-For the complete enumeration of event types, refer to the `Kind*` constants in `handler.go`.
+## The callback is synchronous
+
+`emit` calls `OnEvent` directly on the runtime goroutine. There is no internal event queue.
+
+That means a slow handler adds latency to model streaming, tool execution, and turn progress. If your telemetry sink can block, hand the event off to your own buffered channel/worker.
+
+## Automatic fields
+
+Before delivery, `emit` fills:
+
+- `Time` with `time.Now()` when zero;
+- `Turn` from the active session when zero.
+
+Only fields relevant to a particular `Kind` are populated.
+
+## Typical timeline
+
+A tool-using turn usually looks like:
+
+```text
+turn_start
+user_input
+[prune_start → prune_end]
+api_call
+reasoning / token / tool_arg_delta ...
+tool_call
+tool_result | tool_error
+api_call
+...
+assistant_end
+turn_end
+```
+
+Retries emit `info` before the next attempt and `error` for the failed request.
+
+## Session events
+
+`New` emits `session_start` after constructing the agent. `Close` emits `session_end` before resource cleanup.
+
+The current `New` implementation leaves `SessionInfo.Provider` and `SessionInfo.Model` blank because the generic `Model` interface has no standard metadata method. An embedder that knows those values should attach them in its own telemetry context.
+
+## Streaming tool arguments
+
+`tool_arg_delta` carries fragments while the provider is still streaming a function call. `tool_call` later carries the complete raw JSON arguments.
+
+This separation is useful for UI: deltas can animate progress, while only the resolved call should be treated as executable input.

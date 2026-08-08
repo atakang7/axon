@@ -1,24 +1,47 @@
-<div align="center">
-  <h1>Axon</h1>
-  <p><b>Go Runtime for LLM Agents</b></p>
-</div>
+# Axon
 
-Axon orchestrates the agent loop. It streams model responses, dispatches tool calls, maintains an append-only session, prunes context under token constraints, and emits deterministic structured events.
+**Axon is a small Go runtime for building tool-using LLM agents.** It owns the turn loop, tool dispatch, session persistence, context projection/pruning, background processes, MCP tool discovery, retries, streaming, and structured runtime events.
 
-You provide the model, system prompt, and tools. Axon handles the execution.
+Axon is a library, not a CLI or an opinionated application shell. You provide the model and system prompt; Axon provides the runtime.
 
->**[Documentation](https://atakang7.github.io/axon)**
+```bash
+go get github.com/atakang7/axon/v2
+```
 
-## Documentation Tree
+```go
+settings, err := axon.Load()
+if err != nil {
+    log.Fatal(err)
+}
 
-- **[Overview]**
-  - [Introduction](docs/src/content/docs/overview/introduction.md)
-  - [Quick Start](docs/src/content/docs/overview/quick-start.md)
-- **[Core Components]**
-  - [Configuration](docs/src/content/docs/core/configuration.md)
-  - [Tools](docs/src/content/docs/core/tools.md)
-  - [Events & Observability](docs/src/content/docs/core/events.md)
+model, err := settings.NewClient("openrouter", "<model-id>")
+if err != nil {
+    log.Fatal(err)
+}
+
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "You are a careful coding agent.",
+    Settings:     settings,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close()
+
+result, err := agent.Step(context.Background(), "Explain this repository.")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(result.Assistant)
+```
+
+## Documentation
+
+**[Read the Axon documentation →](https://atakang7.github.io/axon/)**
+
+The documentation is organized around the runtime as implemented: architecture, turn lifecycle, configuration, models/providers, sessions, context pruning, built-in tools, MCP, events, security boundaries, and a source-level code map.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
