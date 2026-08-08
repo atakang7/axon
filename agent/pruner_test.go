@@ -73,7 +73,7 @@ func TestContextTokensCountsContentAndToolCalls(t *testing.T) {
 // floor would fire on every single turn.
 func TestShouldFirePolicy(t *testing.T) {
 	s := newPrunerSession(t)
-	p := &Pruner{}
+	p := &Pruner{floor: 10000, growth: 5000}
 
 	// 9999 tokens: strictly under pruneFloor (10000).
 	s.Append(Msg{Role: "user", Content: strings.Repeat("a", 39996)})
@@ -127,9 +127,9 @@ func TestPruneParksNamedBlocksOnly(t *testing.T) {
 	s.Append(Msg{Role: "user", Content: "third"})
 
 	target := s.Messages[0].ID // "first" -> m1
-	p := NewPruner(funcModel{fn: func(context.Context, Request) (*Msg, error) {
+	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
 		return &Msg{Role: "assistant", Content: `{"park":[1]}`}, nil
-	}})
+	}}})
 
 	before, after, err := p.Prune(context.Background(), s)
 	if err != nil {
@@ -211,9 +211,9 @@ func TestPruneNamingUnknownIDStillParksValid(t *testing.T) {
 	s.Append(Msg{Role: "assistant", Content: "keep me"}) // m2
 
 	// Ask to park m1 (valid) and m99 (does not exist).
-	p := NewPruner(funcModel{fn: func(context.Context, Request) (*Msg, error) {
+	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
 		return &Msg{Role: "assistant", Content: `{"park":[1,99]}`}, nil
-	}})
+	}}})
 
 	_, _, err := p.Prune(context.Background(), s)
 	if err == nil {
@@ -239,9 +239,9 @@ func TestPruneRepeatParkOfAlreadyParkedBlockIsAccepted(t *testing.T) {
 		t.Fatalf("seed park: %v", err)
 	}
 
-	p := NewPruner(funcModel{fn: func(context.Context, Request) (*Msg, error) {
+	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
 		return &Msg{Role: "assistant", Content: `{"park":[1]}`}, nil
-	}})
+	}}})
 	_, _, err := p.Prune(context.Background(), s)
 	if err != nil {
 		t.Fatalf("re-parking an already-parked block should not be rejected: %v", err)
@@ -270,7 +270,7 @@ func TestPruneFailureModesLeaveSessionUntouched(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newPrunerSession(t)
 			s.Append(Msg{Role: "user", Content: "untouched"})
-			p := NewPruner(tc.model)
+			p := NewPruner(PrunerConfig{Model: tc.model})
 
 			_, _, err := p.Prune(context.Background(), s)
 			if err == nil {
@@ -303,7 +303,7 @@ func TestPruneSetsRequestCapWithoutMutatingSharedModel(t *testing.T) {
 
 	s := newPrunerSession(t)
 	s.Append(Msg{Role: "user", Content: "hello"})
-	p := NewPruner(model)
+	p := NewPruner(PrunerConfig{Model: model})
 
 	if _, _, err := p.Prune(context.Background(), s); err != nil {
 		t.Fatalf("Prune: %v", err)
@@ -346,7 +346,7 @@ func TestPrunerRequestRendering(t *testing.T) {
 		t.Fatalf("seed park: %v", err)
 	}
 
-	req := prunerRequest(s)
+	req := prunerRequest(s, defaultPrunerReminder)
 
 	if strings.Contains(req, "system messages are never parkable") {
 		t.Fatal("prunerRequest included a system message")
@@ -368,7 +368,7 @@ func TestPrunerRequestRendering(t *testing.T) {
 		t.Fatalf("RegisterTask: %v", err)
 	}
 	s2.Append(Msg{Role: "user", Content: strings.Repeat("y", 2500)})
-	req2 := prunerRequest(s2)
+	req2 := prunerRequest(s2, defaultPrunerReminder)
 	if !strings.Contains(req2, "...[truncated, 2500 chars total]") {
 		t.Fatalf("prunerRequest did not truncate an over-cap block: %q", req2)
 	}
@@ -426,9 +426,9 @@ func TestPruneUpdatesLastFireToPostPruneSize(t *testing.T) {
 	s.Append(Msg{Role: "assistant", Content: strings.Repeat("b", 4000)})
 
 	target := s.Messages[0].ID
-	p := NewPruner(funcModel{fn: func(context.Context, Request) (*Msg, error) {
+	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
 		return &Msg{Role: "assistant", Content: `{"park":[1]}`}, nil
-	}})
+	}}})
 
 	beforeTokens := p.ContextTokens(s)
 	if _, _, err := p.Prune(context.Background(), s); err != nil {
@@ -468,7 +468,7 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 		SystemPrompt:    "you are a test agent",
 		ExcludeBuiltins: allBuiltins,
 		Session:         sess,
-		Pruner:          NewPruner(prunerModel),
+		Pruner:          NewPruner(PrunerConfig{Model: prunerModel}),
 	}
 	var log eventLog
 	cfg.OnEvent = log.record

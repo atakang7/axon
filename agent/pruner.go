@@ -26,37 +26,58 @@ import (
 	"time"
 )
 
-// Pruner is the curator: a client for a cheap, fast, long-context model plus
-// the policy for when to fire. It owns its own bookkeeping — the agent holds
-// no pruning state.
-type Pruner struct {
-	model Model
-
-	// lastFire is the projected context size at the previous successful pass,
-	// zero if it has never run.
-	lastFire int
+// PrunerConfig sets the policy for the context curator.
+type PrunerConfig struct {
+	Model        Model
+	FloorTokens  int    // Minimum context size before pruning starts (default 10000)
+	GrowthTokens int    // Tokens since last pass required to fire again (default 5000)
+	SystemPrompt string // Instructions telling the pruner what to do (defaults provided)
+	Reminder     string // Text appended to the user prompt to enforce format (defaults provided)
 }
 
-// Thresholds. Below the floor, curation costs more than it saves. Above it,
-// the growth bar stops the pruner re-firing every single turn.
+type Pruner struct {
+	model        Model
+	floor        int
+	growth       int
+	systemPrompt string
+	reminder     string
+	lastFire     int
+}
+
 const (
-	pruneFloor  = 10000
-	pruneGrowth = 5000
+	defaultPruneFloor  = 10000
+	defaultPruneGrowth = 5000
 )
 
-// NewPruner wraps a model — typically a cheap, fast, long-context one. Pass
-// nil to disable pruning; every method is safe on a nil *Pruner, so the caller
-// needs no special case.
-//
+const defaultPrunerReminder = "\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park."
+
+// NewPruner wraps a model — typically a cheap, fast, long-context one.
 // The model may be shared with the agent. The output cap lives on the request,
-// not on the model, so the pruner cannot narrow anyone else's budget. An
-// earlier version set MaxTokens on the client it was handed, which would have
-// silently capped a shared model at 256 tokens.
-func NewPruner(m Model) *Pruner {
-	if m == nil {
+// not on the model, so the pruner cannot narrow anyone else's budget.
+func NewPruner(cfg PrunerConfig) *Pruner {
+	if cfg.Model == nil {
 		return nil
 	}
-	return &Pruner{model: m}
+	p := &Pruner{
+		model:        cfg.Model,
+		floor:        cfg.FloorTokens,
+		growth:       cfg.GrowthTokens,
+		systemPrompt: cfg.SystemPrompt,
+		reminder:     cfg.Reminder,
+	}
+	if p.floor == 0 {
+		p.floor = defaultPruneFloor
+	}
+	if p.growth == 0 {
+		p.growth = defaultPruneGrowth
+	}
+	if p.systemPrompt == "" {
+		p.systemPrompt = prunerSystemPrompt
+	}
+	if p.reminder == "" {
+		p.reminder = defaultPrunerReminder
+	}
+	return p
 }
 
 // prunerMaxTokens caps the curator's reply. The answer is one line of JSON; a
@@ -85,13 +106,13 @@ func (p *Pruner) ShouldFire(s *Session) bool {
 		return false
 	}
 	tokens := p.ContextTokens(s)
-	if tokens < pruneFloor {
+	if tokens < p.floor {
 		return false
 	}
 	if p.lastFire == 0 {
 		return true
 	}
-	return tokens-p.lastFire >= pruneGrowth
+	return tokens-p.lastFire >= p.growth
 }
 
 // Prune runs one curator pass and parks whatever the model names, returning
@@ -112,8 +133,8 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (before, after int, err 
 
 	reply, err := p.model.Complete(callCtx, Request{
 		Messages: []Msg{
-			{Role: "system", Content: prunerSystemPrompt},
-			{Role: "user", Content: prunerRequest(s)},
+			{Role: "system", Content: p.systemPrompt},
+			{Role: "user", Content: prunerRequest(s, p.reminder)},
 		},
 		MaxTokens: prunerMaxTokens,
 	})
@@ -195,7 +216,7 @@ func gist(s *Session, id string) string {
 // prunerRequest renders the task and the active log, each block labelled with
 // the ID the pruner will name it by. Already-parked blocks are omitted: they
 // are not in the model's context any more, so they are not up for decision.
-func prunerRequest(s *Session) string {
+func prunerRequest(s *Session, reminder string) string {
 	var b strings.Builder
 
 	b.WriteString("# TASK\n")
@@ -226,7 +247,7 @@ func prunerRequest(s *Session) string {
 		}
 	}
 
-	b.WriteString("\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park.")
+	b.WriteString(reminder)
 
 	return b.String()
 }
