@@ -46,6 +46,9 @@ type Agent struct {
 
 	// Settings this agent was constructed with, already defaulted.
 	settings Settings
+
+	// Config.MaxIterations; zero means the loop is unbounded.
+	maxIterations int
 }
 
 // SetModel changes the model this agent talks to.
@@ -125,6 +128,9 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 				},
 				ToolArgs: func(name, delta string) {
 					a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
+				},
+				Usage: func(prompt, completion int) {
+					a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion}})
 				},
 			},
 		})

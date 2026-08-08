@@ -91,6 +91,7 @@ func New(cfg Config) (*Agent, error) {
 		excludeBuiltins: cfg.ExcludeBuiltins,
 		mcpClients:      mcpClients,
 		settings:        settings,
+		maxIterations:   cfg.MaxIterations,
 	}
 
 	// Model and Provider are left blank: Model is an interface an embedder can

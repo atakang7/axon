@@ -71,6 +71,11 @@ type Stream struct {
 	Reasoning func(text string)
 
 	ToolArgs func(name, delta string)
+
+	// Usage reports the token totals from the stream's final chunk, if the
+	// provider includes them. It is called at most once per response, after
+	// the last chunk. A provider that omits usage never calls it.
+	Usage func(prompt, completion int)
 }
 
 // Provider is one endpoint: base URL, model name, credentials, and any

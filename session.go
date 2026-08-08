@@ -15,6 +15,29 @@ type Edit struct {
 	Path, Before string
 }
 
+// deriveTitle makes a short human title from a user's first message. It is not
+// a summary — it is a cheap, deterministic truncation so a switcher can show
+// something more meaningful than an opaque session id before any model call.
+func deriveTitle(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	// Collapse newlines and runs of whitespace so a multi-line first message
+	// produces one tidy line.
+	text = strings.ReplaceAll(text, "\n", " ")
+	for strings.Contains(text, "  ") {
+		text = strings.ReplaceAll(text, "  ", " ")
+	}
+
+	const max = 60
+	if len([]rune(text)) <= max {
+		return text
+	}
+	r := []rune(text)
+	return string(r[:max]) + "…"
+}
 const maxUndoBytes = 8 << 20
 
 // Task is the agent's registered objective for non-trivial work.
@@ -34,6 +57,7 @@ type Session struct {
 	ID          string    `json:"id"`
 	StartedAt   time.Time `json:"started_at"`
 	Cwd         string    `json:"cwd,omitempty"`
+	Title       string    `json:"title,omitempty"`
 	Messages    []Msg     `json:"messages"`
 	Edits       []Edit    `json:"edits"`
 	CurrentTask *Task     `json:"current_task,omitempty"`

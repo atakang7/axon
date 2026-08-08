@@ -1,83 +1,81 @@
 ---
 title: Quickstart
-description: Build the smallest useful Axon agent without hiding the construction boundaries.
+description: Get an agent running in under a minute.
 ---
 
-This quickstart uses direct Go construction first because it exposes the runtime cleanly. File-based configuration is optional and comes afterward.
-
-## 1. Install
+## Install
 
 ```bash
 go get github.com/atakang7/axon/v2
 ```
 
-The module currently declares Go `1.26.2`.
-
-## 2. Build a model
-
-Axon ships an OpenAI-compatible streaming client:
+## Minimal agent (no config file)
 
 ```go
-model, err := axon.OpenAI(axon.ClientConfig{
-    Provider: axon.Provider{
-        Name:    "my-provider",
-        BaseURL: "https://example.com/v1",
-        Model:   "<model-id>",
-        APIKey:  os.Getenv("MODEL_API_KEY"),
-    },
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/atakang7/axon/v2"
+)
+
+func main() {
+    model, err := axon.OpenAI(axon.ClientConfig{
+        Provider: axon.Provider{
+            BaseURL: "https://openrouter.ai/api",
+            Model:   "deepseek/deepseek-v3.2",
+            APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    agent, err := axon.New(axon.Config{
+        Model:        model,
+        SystemPrompt: "You are a careful coding agent.",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer agent.Close()
+
+    result, err := agent.Step(context.Background(), "List the files in this directory.")
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(result.Assistant)
+}
+```
+
+**Required:** `Config.Model` and `Config.SystemPrompt`. Everything else has defaults.
+
+## Multi-turn loop
+
+```go
+agent.Run(ctx, func() (string, bool) {
+    fmt.Print("> ")
+    var line string
+    _, err := fmt.Scanln(&line)
+    return line, err == nil
 })
-if err != nil {
-    log.Fatal(err)
-}
 ```
 
-`BaseURL` may end in `/v1`; if it does not, the client appends `/v1` before calling `/chat/completions`.
+`Run` calls `Step` for each line until the input function returns `false` or `ctx` is cancelled. Interruptions (`ErrInterrupted`) are handled — the loop continues.
 
-## 3. Construct an agent
-
-```go
-agent, err := axon.New(axon.Config{
-    Model:        model,
-    SystemPrompt: "You are a careful coding agent.",
-})
-if err != nil {
-    log.Fatal(err)
-}
-defer agent.Close()
-```
-
-`Model` and `SystemPrompt` are the only required constructor fields. Zero-valued operational settings are filled from `axon.DefaultSettings()`.
-
-By default Axon also attaches seven built-in tools: `read`, `write`, `exec`, `bash_output`, `kill_shell`, `search`, and `task`.
-
-## 4. Run one turn
+## With config file
 
 ```go
-result, err := agent.Step(context.Background(), "Summarize this project.")
+settings, err := axon.Load() // reads ~/.config/axon/axon.yaml + .env
 if err != nil {
     log.Fatal(err)
 }
 
-fmt.Println(result.Assistant)
-```
-
-One `Step` can contain many model calls and many tool calls. It returns only when the model finally produces a response with no further tool calls, or the turn fails/interruption occurs.
-
-## 5. Close what you own
-
-`Close` cleans up live background shells and MCP subprocesses owned by the agent. Treat it like closing a database client: once you construct an agent, arrange to close it.
-
-## Optional: load operational settings from files
-
-When you want provider definitions and operational policy outside your binary:
-
-```go
-settings, err := axon.Load()
-if err != nil {
-    log.Fatal(err)
-}
-
-model, err := settings.NewClient("openrouter", "<model-id>")
+model, err := settings.NewClient("openrouter", "deepseek/deepseek-v3.2")
 if err != nil {
     log.Fatal(err)
 }
@@ -87,8 +85,61 @@ agent, err := axon.New(axon.Config{
     SystemPrompt: "You are a careful coding agent.",
     Settings:     settings,
 })
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close()
 ```
 
-That sequence is intentionally explicit: **load settings → choose a provider/model → build a model → wire the agent**.
+`Settings.NewClient(endpoint, model)` resolves the provider from config, applies model settings, and returns a working `Model` in one call.
 
-Read [Configuration model](/axon/configuration/) before treating `axon.yaml` as a global magic file; different sections are consumed at different boundaries.
+## With pruner
+
+```go
+prunerModel, _ := axon.OpenAI(axon.ClientConfig{
+    Provider: axon.Provider{
+        BaseURL: "https://openrouter.ai/api",
+        Model:   "qwen/qwen3.6-flash",    // cheap, fast
+        APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+    },
+})
+
+agent, _ := axon.New(axon.Config{
+    Model:        mainModel,
+    Pruner:       prunerModel,
+    SystemPrompt: "...",
+})
+```
+
+The pruner is a secondary model that parks stale context. Use a cheap flash-tier model. See [Context Management](/axon/runtime/context/) for details.
+
+## With events
+
+```go
+agent, _ := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "...",
+    OnEvent: func(ctx context.Context, e axon.Event) {
+        switch e.Kind {
+        case axon.KindToken:
+            fmt.Print(e.Text)
+        case axon.KindToolCall:
+            fmt.Printf("→ %s\n", e.Tool.Name)
+        case axon.KindError:
+            fmt.Fprintf(os.Stderr, "err: %v\n", e.Err)
+        }
+    },
+})
+```
+
+See [Events](/axon/runtime/events/) for the full kind reference.
+
+## Best practices
+
+1. **Always `defer agent.Close()`** — kills background shells, closes MCP subprocesses.
+2. **Use `Settings.NewClient()`** when loading from config.
+3. **Keep system prompts instructional** — Axon appends tool schemas automatically.
+4. **Enable the pruner for long sessions** — context grows unbounded without it.
+5. **Background all network commands** — if it *might* hang, set `run_in_background: true`.
+6. **Concurrency:** `Step`/`Run`/`Reset` are not concurrent-safe. `Interrupt()` is the only goroutine-safe method.
+7. **Tool schema is always required** — even for no-arg tools use `map[string]any{"type": "object"}`.

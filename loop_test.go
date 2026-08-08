@@ -1099,3 +1099,74 @@ func TestEmitFillsZeroTime(t *testing.T) {
 		t.Fatal("emit left Event.Time zero")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// MaxIterations: bounding an unattended loop
+// ---------------------------------------------------------------------------
+
+// A model that never stops calling tools must be cut off at MaxIterations, and
+// the cap must bound *model calls actually issued* — not one more. This is the
+// property an unattended embedder pays for: without it, a looping model spends
+// the caller's budget until some outside force kills the process.
+func TestStepStopsAtMaxIterations(t *testing.T) {
+	cfg := noToolsConfig(t)
+	echo := fnTool("echo", func(context.Context, json.RawMessage) (string, error) { return "again", nil })
+	cfg.Tools = []Tool{echo}
+	cfg.MaxIterations = 3
+
+	calls := 0
+	cfg.Model = funcModel{fn: func(context.Context, Request) (*Msg, error) {
+		calls++
+		return toolCallMsg(fmt.Sprintf("c%d", calls), "echo", "{}"), nil
+	}}
+
+	a, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer a.Close()
+
+	res, err := a.Step(context.Background(), "go")
+	if !errors.Is(err, ErrMaxIterations) {
+		t.Fatalf("Step err = %v, want ErrMaxIterations", err)
+	}
+	if calls != 3 {
+		t.Fatalf("model called %d times, want exactly 3 (the cap)", calls)
+	}
+	// Partial work still comes back, so a harness can record what was attempted
+	// rather than throwing the trajectory away.
+	if len(res.ToolCalls) != 3 {
+		t.Fatalf("res.ToolCalls = %d, want 3", len(res.ToolCalls))
+	}
+}
+
+// Zero MaxIterations must stay unbounded: that is the interactive default, and
+// silently capping it would truncate long agentic turns for every existing
+// embedder.
+func TestStepUnboundedWhenMaxIterationsZero(t *testing.T) {
+	cfg := noToolsConfig(t)
+	echo := fnTool("echo", func(context.Context, json.RawMessage) (string, error) { return "ok", nil })
+	cfg.Tools = []Tool{echo}
+
+	calls := 0
+	cfg.Model = funcModel{fn: func(context.Context, Request) (*Msg, error) {
+		calls++
+		if calls <= 6 {
+			return toolCallMsg(fmt.Sprintf("c%d", calls), "echo", "{}"), nil
+		}
+		return finalMsg("done"), nil
+	}}
+
+	a, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer a.Close()
+
+	if _, err := a.Step(context.Background(), "go"); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if calls != 7 {
+		t.Fatalf("model called %d times, want 7 (ran to natural completion)", calls)
+	}
+}

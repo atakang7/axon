@@ -223,6 +223,22 @@ type reply struct {
 	reasoningContent strings.Builder
 	toolArgs         map[int]*strings.Builder
 	toolMeta         map[int]ToolCall
+	usage            usage
+}
+
+// usage is the token accounting carried by a stream's final chunk, when the
+// provider includes it. Providers disagree on field names, so this is the
+// normalized shape; parsing normalizes into it.
+type usage struct {
+	PromptTokens     int
+	CompletionTokens int
+}
+
+// reportUsage delivers any usage the stream carried to the caller, once.
+func (r *reply) reportUsage(stream Stream) {
+	if stream.Usage != nil && (r.usage.PromptTokens != 0 || r.usage.CompletionTokens != 0) {
+		stream.Usage(r.usage.PromptTokens, r.usage.CompletionTokens)
+	}
 }
 
 // readStream consumes the SSE body until the server closes it, applying an
@@ -260,6 +276,7 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 		return nil, err
 	}
 
+	out.reportUsage(stream)
 	return out.message(), nil
 }
 
@@ -271,7 +288,7 @@ func (r *reply) consume(text string, stream Stream) {
 		return
 	}
 
-	var chunk struct {
+var chunk struct {
 		Choices []struct {
 			Delta struct {
 				Content          string `json:"content"`
@@ -287,10 +304,23 @@ func (r *reply) consume(text string, stream Stream) {
 				} `json:"tool_calls"`
 			} `json:"delta"`
 		} `json:"choices"`
+
+		// usage arrives on the stream's final chunk, keyed separately from the
+		// per-choice delta. Providers disagree on the field names, so collect
+		// it verbatim and normalize below.
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 
 	if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Choices) == 0 {
 		return
+	}
+
+	if chunk.Usage != nil {
+		r.usage.PromptTokens = chunk.Usage.PromptTokens
+		r.usage.CompletionTokens = chunk.Usage.CompletionTokens
 	}
 
 	delta := chunk.Choices[0].Delta

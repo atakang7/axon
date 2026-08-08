@@ -1,46 +1,127 @@
 ---
 title: Architecture
-description: Implementation architecture for contributors and maintainers.
+description: Internal design reference for contributors.
 ---
 
-This section is deliberately different from the concepts manual. Concepts describe the system users should hold in their head; internals describe how the current Go implementation realizes that model.
+## Package layout
 
-## Construction boundary
+Single flat package. No `internal/`, no sub-packages. Everything is `package axon`.
 
-`New(Config)` is the composition root.
+```
+axon/
+├── axon.go              ← types: Model, Request, Msg, Tool, Provider, Stream
+├── api.go               ← public surface: OpenAI(), Config, errors
+├── setup.go             ← New(), Close(), Reset(), Undo()
+├── loop.go              ← Step(), Run() — the turn loop
+├── agent.go             ← Agent struct, chat() retries, tool dispatch
+│
+├── session.go           ← Session: persist, append, edit tracking, tasks
+├── sessions_list.go     ← ListSessions(), SwitchSession()
+├── memory.go            ← ContextMessages() — what the model sees
+│
+├── pruner.go            ← context curator: park stale blocks
+├── prompt.go            ← system prompt builder
+│
+├── client.go            ← OpenAI-compatible SSE streaming HTTP client
+│
+├── settings.go          ← Settings tree, defaults, provider resolution
+├── load.go              ← YAML + .env loading, secret expansion
+├── config.go            ← file locations, Limits
+├── scalar.go            ← Duration, Bytes YAML types
+│
+├── handler.go           ← Event, Kind, payload structs
+├── bg.go                ← BackgroundShells registry
+├── mcp.go               ← MCP JSON-RPC subprocess client
+│
+├── tools.go             ← Workspace/Plan interfaces, tool names, schema helpers
+├── tools_helpers.go     ← WriteFileAtomic, binary detection, limitBuf
+├── tool_read.go         ← read tool
+├── tool_write.go        ← write tool
+├── tool_exec.go         ← exec + bash_output + kill_shell tools
+├── tool_search.go       ← search tool (ripgrep)
+└── tool_task.go         ← task tool
+```
 
-At construction it resolves settings defaults, selects/loads a session, applies an optional workspace directory, allocates a per-agent background-shell registry, starts MCP servers, binds built-in capabilities, validates custom/discovered tools, seeds a fresh system message, constructs an optional pruner, stores resolved policy on the agent, and emits session start.
+## Type relationships
 
-The important invariant is that lower layers do not repeatedly rediscover configuration from global state.
+```
+axon.Config ──────────┐
+  .Model ─────────────┼──► Model interface { Complete(ctx, Request) (*Msg, error) }
+  .Pruner ────────────┤                         │
+  .SystemPrompt       │                         ▼
+  .Tools []Tool ──────┤               ┌──────────────────┐
+  .OnEvent ───────────┤               │    Client         │
+  .Session ───────────┤               │  (SSE streaming)  │
+  .MCPServers ────────┤               └──────────────────┘
+  .Settings ──────────┤
+  .ExcludeBuiltins    │
+  .Cwd                │
+                      ▼
+               ┌─────────────┐
+               │    Agent     │
+               ├─────────────┤
+               │ model        │──► Model
+               │ tools []Tool │──► read, write, exec, search, task, + custom
+               │ session      │──► Session (persistence + edit log + task)
+               │ pruner       │──► Pruner (nil if no pruner model)
+               │ shells       │──► BackgroundShells (per-agent registry)
+               │ mcpClients   │──► []mcpClient (subprocess lifecycle)
+               │ onEvent      │──► func(ctx, Event)
+               │ limits       │──► Limits (flat caps from Settings.Tools)
+               │ settings     │──► Settings (frozen at construction)
+               └─────────────┘
+```
 
-## Turn boundary
+## Settings lifecycle
 
-`Step` owns the user-turn state machine. It records input, optionally invokes the pruner, performs a model call, records the assistant response, executes returned tools in order, records those observations, and loops until no tool calls remain.
+```
+axon.yaml ──► Load() ──► resolveSecrets(.env) ──► WithDefaults() ──► validate()
+                                                       │
+                                                       ▼
+                                                  frozen in Agent
+```
 
-The model-call implementation is separated from the loop so retry/streaming behavior can evolve without putting provider transport logic in the state machine.
+Settings are frozen at agent construction. Nothing re-reads config after `New()`. Two agents in one process can differ.
 
-## Context projection boundary
+## SSE stream processing
 
-The session stores messages; the primary model consumes a derived projection.
+```
+Client.Complete()
+│
+├─ POST {baseURL}/v1/chat/completions (stream: true)
+├─ Set idle timer (IdleTimeout)
+│
+└─ for each SSE line:
+     ├─ Reset idle timer
+     ├─ Parse: data: {"choices":[{"delta":{...}}]}
+     │
+     ├─ delta.content → accumulate + Stream.Token()
+     ├─ delta.reasoning_content → accumulate + Stream.Reasoning()
+     ├─ delta.tool_calls[i] → accumulate by index + Stream.ToolArgs()
+     ├─ usage → store for final report
+     │
+     ├─ data: [DONE] → stop
+     └─ idle timer fires → cancel → "stream stalled" error
+```
 
-The projection code is responsible for recency collapse, persisted parking breadcrumbs, tool-call/result coherence, and current task injection. The pruner mutates parking metadata but is not the component that serializes provider messages.
+Tool calls arrive as fragments keyed by index. Reassembled in stable order after the stream ends.
 
-## Tool boundary
+## Background shells
 
-Tools are runtime objects with executable functions. Before a model call, they are projected into `ToolSpec` values that have no function pointer.
+```
+exec(command, run_in_background=true)
+│
+├─ sh -lc "command" (Setpgid for process group)
+├─ stdout/stderr → logfile (per-shell)
+├─ stdin → /dev/null
+└─ return shell_id
 
-Built-ins bind to capability interfaces/values rather than the entire agent. MCP tools are adapted into the same `Tool` shape during construction.
+bash_output(shell_id) → readNew(maxBytes)
+  ├─ Delta only (offset tracked per-shell)
+  ├─ File identity tracked (dev+inode) for replacement detection
+  └─ Caps output, advances offset past dropped bytes
 
-## Resource ownership
+kill_shell(shell_id) → SIGTERM to process group → wait → SIGKILL
 
-Background shell registries and MCP client lists live on the agent instance. They are lifecycle resources, not package globals.
-
-`Reset` kills background shells and resets conversational/session state while keeping MCP clients attached. `Close` terminates both shell and MCP resources.
-
-## Transport boundary
-
-The shipped client is one implementation of `Model`. It owns OpenAI-compatible request serialization, SSE parsing, request/idle timeout behavior, API-error construction, and streamed callback dispatch.
-
-A custom `Model` can replace this entire transport layer without changing the rest of the runtime.
-
-Use [Source map](/axon/internals/source-map/) for file ownership and [Runtime invariants](/axon/internals/runtime-invariants/) for properties changes should preserve.
+agent.Close() / Reset() → KillAll()
+```
