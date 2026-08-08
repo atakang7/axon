@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -129,8 +130,8 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 		})
 
 		if err == nil {
-			if msg != nil && strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 {
-				lastErr = fmt.Errorf("empty response from model")
+			if reason := unusableReply(msg); reason != "" {
+				lastErr = errors.New(reason)
 				a.emit(ctx, Event{Kind: KindError, Err: lastErr})
 				if attempt >= 1 {
 					return nil, lastErr
@@ -148,6 +149,78 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 	}
 
 	return nil, lastErr
+}
+
+// toolMarkupMarkers are fragments that appear only inside a model's native
+// tool-call syntax. Providers are meant to parse that syntax into the
+// tool_calls field and never show it to a client; some routes leak it as
+// ordinary content instead.
+//
+// deepseek emits a DSML block, mistral [TOOL_CALLS], qwen and others a
+// <tool_call> element. The list is fragments rather than whole tags because
+// the leak is often a fragment — a block's closing tags with the opening ones
+// already consumed.
+var toolMarkupMarkers = []string{
+	"DSML",
+	"tool_calls",
+	"tool▁calls",
+	"tool_call",
+	"function_call",
+	"TOOL_CALLS",
+}
+
+// markupTag matches one angle-bracketed tag, including the full-width
+// delimiters deepseek wraps its own in.
+var markupTag = regexp.MustCompile(`<[^>]*>`)
+
+// unusableReply names why a reply cannot be treated as an answer, or "" when
+// it can. Both cases it catches mean the same thing to the turn loop: there is
+// nothing here to act on and nothing here to show the user.
+//
+// The loop ends a turn when an assistant message carries no tool calls, so a
+// provider that drops a tool call on the floor reads as "the model is done".
+// Treating that as an answer is how the agent stops mid-task and prints raw
+// template tokens as its reply.
+func unusableReply(msg *Msg) string {
+	if msg == nil {
+		return "empty response from model"
+	}
+	if len(msg.ToolCalls) > 0 {
+		return "" // it asked for a tool; whatever else it said does not matter
+	}
+
+	content := strings.TrimSpace(msg.Content)
+	if content == "" {
+		return "empty response from model"
+	}
+	if isOnlyToolMarkup(content) {
+		return "provider returned unparsed tool-call markup instead of tool calls"
+	}
+
+	return ""
+}
+
+// isOnlyToolMarkup reports whether content is a provider's leaked tool-call
+// block and nothing else.
+//
+// The test is deliberately narrow: the content must name a tool-call marker
+// AND consist of nothing but tags. A model that merely writes about tool_calls
+// in prose — explaining itself, quoting an error, documenting this very
+// behaviour — leaves words behind once the tags are stripped, and keeps its
+// answer.
+func isOnlyToolMarkup(content string) bool {
+	var named bool
+	for _, marker := range toolMarkupMarkers {
+		if strings.Contains(content, marker) {
+			named = true
+			break
+		}
+	}
+	if !named {
+		return false
+	}
+
+	return strings.TrimSpace(markupTag.ReplaceAllString(content, "")) == ""
 }
 
 func (a *Agent) runTool(ctx context.Context, tc ToolCall) Msg {

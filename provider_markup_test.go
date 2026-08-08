@@ -59,55 +59,76 @@ func agentAgainst(t *testing.T, p *prunerProvider) *Agent {
 	return a
 }
 
-// REPRODUCTION: the agent accepts the markup as a finished answer and ends the
-// turn. Nothing errors, nothing retries, and the user is shown raw template
-// tokens as if they were the assistant's reply.
-func TestProviderToolMarkupLeakEndsTheTurnSilently(t *testing.T) {
-	provider := newPrunerProvider(t, dsmlCloserChunks...)
+// A leaked block must be retried, not accepted as an answer. The provider
+// dropped a tool call the model asked for; one more attempt is far more likely
+// to produce it than treating template tokens as the reply.
+func TestProviderToolMarkupLeakIsRetried(t *testing.T) {
+	provider := newPrunerProviderFunc(t, func(call int) []sseDelta {
+		if call == 0 {
+			return dsmlCloserChunks
+		}
+		return []sseDelta{{Content: "here is the real answer"}}
+	})
 	a := agentAgainst(t, provider)
 
 	res, err := a.Step(context.Background(), "keep going")
 	if err != nil {
-		t.Fatalf("Step returned an error: %v", err)
-	}
-
-	if len(res.ToolCalls) != 0 {
-		t.Fatalf("expected no tool calls, got %d", len(res.ToolCalls))
-	}
-	if !strings.Contains(res.Assistant, "DSML") {
-		t.Fatalf("assistant text does not carry the markup: %q", res.Assistant)
-	}
-
-	t.Logf("REPRODUCED: turn ended after one call with the assistant text set to "+
-		"%q — the agent stopped mid-task and showed the user template tokens",
-		res.Assistant)
-
-	if len(provider.requests) != 1 {
-		t.Fatalf("provider saw %d calls; the runtime did not retry", len(provider.requests))
-	}
-}
-
-// The leaked block is stored verbatim in the session, so it is replayed to the
-// provider on every later turn. Whatever made the model emit an unbalanced
-// block once is now permanently in its context.
-func TestProviderToolMarkupLeakPersistsIntoHistory(t *testing.T) {
-	provider := newPrunerProvider(t, dsmlCloserChunks...)
-	a := agentAgainst(t, provider)
-
-	if _, err := a.Step(context.Background(), "keep going"); err != nil {
 		t.Fatalf("Step: %v", err)
 	}
 
-	var found bool
-	for _, m := range a.Session().ContextMessages(0) {
-		if m.Role == "assistant" && strings.Contains(m.Content, "DSML") {
-			found = true
-		}
+	if len(provider.requests) != 2 {
+		t.Fatalf("provider saw %d calls, want 2 — the leak was not retried",
+			len(provider.requests))
 	}
-	if !found {
-		t.Skip("markup is not replayed; the runtime already strips it")
+	if res.Assistant != "here is the real answer" {
+		t.Fatalf("assistant = %q, want the retry's answer", res.Assistant)
 	}
-	t.Log("the markup is replayed to the provider on every subsequent turn")
+	if strings.Contains(res.Assistant, "DSML") {
+		t.Fatal("template tokens were shown to the user as the reply")
+	}
+}
+
+// A provider that leaks on every attempt must fail the turn with a named
+// cause. Stopping silently — the original symptom — is the one outcome that
+// tells nobody anything.
+func TestProviderToolMarkupLeakFailsLoudlyWhenPersistent(t *testing.T) {
+	provider := newPrunerProvider(t, dsmlCloserChunks...)
+	a := agentAgainst(t, provider)
+
+	_, err := a.Step(context.Background(), "keep going")
+	if err == nil {
+		t.Fatal("a persistently leaking provider ended the turn as a success")
+	}
+	if !strings.Contains(err.Error(), "tool-call markup") {
+		t.Fatalf("error does not name the cause: %v", err)
+	}
+	t.Logf("failed loudly after %d attempts: %v", len(provider.requests), err)
+}
+
+// Prose that merely mentions tool calls is a real answer and must survive —
+// including the sentence this very changelog entry is written in.
+func TestProviderToolMarkupDoesNotSwallowRealAnswers(t *testing.T) {
+	for _, content := range []string{
+		"The provider leaked a tool_calls block instead of parsing it.",
+		"I could not emit a <tool_call> because the schema was rejected.",
+		"Done. See the DSML notes in the trace for why the earlier turn stopped.",
+	} {
+		t.Run(content[:20], func(t *testing.T) {
+			provider := newPrunerProvider(t, sseDelta{Content: content})
+			a := agentAgainst(t, provider)
+
+			res, err := a.Step(context.Background(), "explain")
+			if err != nil {
+				t.Fatalf("a real answer was rejected: %v", err)
+			}
+			if res.Assistant != content {
+				t.Fatalf("assistant = %q, want %q", res.Assistant, content)
+			}
+			if len(provider.requests) != 1 {
+				t.Fatalf("a real answer was retried %d times", len(provider.requests))
+			}
+		})
+	}
 }
 
 // The same leak with tool_calls PRESENT is harmless: the loop runs the tool and
