@@ -93,6 +93,13 @@ func (p *Pruner) ShouldFire(s *Session) bool {
 // Any failure — network, parse, model nonsense — returns an error with the
 // session untouched. Pruning is an optimisation: the turn continues without
 // it rather than failing.
+//
+// A failure still advances lastFire to the size Prune was called at. Without
+// that, ShouldFire's "lastFire == 0 means fire" rule would retry a curator
+// that is timing out or offline on every single loop iteration — paying its
+// full timeout as added latency on every tool call for the rest of the turn.
+// The next attempt instead waits for another growth-tokens' worth of context,
+// same cadence as a successful pass.
 func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 	if p == nil {
 		return 0, nil
@@ -112,21 +119,30 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 		MaxTokens: p.maxTokens,
 	})
 	if err != nil {
+		p.lastFire = before
 		return before, fmt.Errorf("pruner: %w", err)
 	}
 
 	if reply == nil || strings.TrimSpace(reply.Content) == "" {
+		p.lastFire = before
 		return before, fmt.Errorf("pruner: empty response")
 	}
 
 	ids, err := parkList(reply.Content)
 	if err != nil {
+		p.lastFire = before
 		return before, fmt.Errorf("pruner: %w", err)
 	}
+
+	protected := protectedIDs(s)
 
 	var rejected []string
 	for _, id := range ids {
 		block := fmt.Sprintf("m%d", id)
+		if protected[block] {
+			rejected = append(rejected, block)
+			continue
+		}
 		if err := s.Park(block, gist(s, block), "pruner: not needed to continue"); err != nil {
 			rejected = append(rejected, block)
 		}
@@ -144,6 +160,35 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 	}
 
 	return p.lastFire, nil
+}
+
+// protectedIDs returns the block IDs the curator must never park: the most
+// recent user message and the most recent assistant message. The system
+// prompt already tells the curator this, but a cheap or weak model cannot be
+// trusted to follow it — losing either one leaves the agent unable to tell
+// what it was just asked or what it just said, which is what sends a
+// confused model back to redo work it already did.
+func protectedIDs(s *Session) map[string]bool {
+	protected := map[string]bool{}
+
+	var haveUser, haveAssistant bool
+	for i := len(s.Messages) - 1; i >= 0 && !(haveUser && haveAssistant); i-- {
+		m := s.Messages[i]
+		if m.ID == "" || m.Parked {
+			continue
+		}
+
+		switch {
+		case m.Role == "user" && !haveUser:
+			protected[m.ID] = true
+			haveUser = true
+		case m.Role == "assistant" && !haveAssistant:
+			protected[m.ID] = true
+			haveAssistant = true
+		}
+	}
+
+	return protected
 }
 
 // parkList pulls {"park":[...]} out of the reply, tolerating any prose the

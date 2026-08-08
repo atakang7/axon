@@ -209,8 +209,10 @@ func TestParkList(t *testing.T) {
 // entire pass — an unusable id should not cost the whole curation cycle.
 func TestPruneNamingUnknownIDStillParksValid(t *testing.T) {
 	s := newPrunerSession(t)
-	s.Append(Msg{Role: "user", Content: "valid block"})  // m1
-	s.Append(Msg{Role: "assistant", Content: "keep me"}) // m2
+	s.Append(Msg{Role: "user", Content: "valid block"})      // m1
+	s.Append(Msg{Role: "assistant", Content: "old answer"})  // m2
+	s.Append(Msg{Role: "user", Content: "most recent user"}) // m3, protected
+	s.Append(Msg{Role: "assistant", Content: "keep me"})     // m4, protected
 
 	// Ask to park m1 (valid) and m99 (does not exist).
 	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
@@ -426,6 +428,8 @@ func TestPruneUpdatesLastFireToPostPruneSize(t *testing.T) {
 	s := newPrunerSession(t)
 	s.Append(Msg{Role: "user", Content: strings.Repeat("a", 4000)})
 	s.Append(Msg{Role: "assistant", Content: strings.Repeat("b", 4000)})
+	s.Append(Msg{Role: "user", Content: "most recent user"})       // protected
+	s.Append(Msg{Role: "assistant", Content: "most recent reply"}) // protected
 
 	target := s.Messages[0].ID
 	p := NewPruner(PrunerConfig{Model: funcModel{fn: func(context.Context, Request) (*Msg, error) {

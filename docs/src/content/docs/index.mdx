@@ -1,0 +1,32 @@
+---
+title: Axon
+description: A Minimalist Go Runtime for Building LLM Agents
+template: splash
+hero:
+  tagline: A standard library approach to LLM agents. Streamline model APIs, tools, memory, and observability into a robust Go runtime.
+  actions:
+    - text: Introduction
+      link: /overview/introduction/
+      icon: right-arrow
+    - text: GitHub Repository
+      link: https://github.com/atakang7/axon
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+	<Card title="Pragmatic Loop" icon="setting">
+		Streams models, dispatches tool calls, and prunes context deterministically.
+	</Card>
+	<Card title="Stateless Setup" icon="document">
+		Isolated configuration loading. Run concurrent divergent agents cleanly in one process.
+	</Card>
+	<Card title="Append-Only Memory" icon="add-document">
+		Session state is a projection. Features robust byte-exact rollbacks and audit logs.
+	</Card>
+	<Card title="Strict Observability" icon="open-book">
+		Hooks into every execution frame. Exposes structured events for logging or UI rendering.
+	</Card>
+</CardGrid>
