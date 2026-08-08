@@ -324,8 +324,8 @@ func TestPruneSetsRequestCapWithoutMutatingSharedModel(t *testing.T) {
 	if len(reqs) != 2 {
 		t.Fatalf("model saw %d requests, want 2", len(reqs))
 	}
-	if reqs[0].MaxTokens != prunerMaxTokens {
-		t.Fatalf("pruner request MaxTokens = %d, want %d", reqs[0].MaxTokens, prunerMaxTokens)
+	if reqs[0].MaxTokens != DefaultSettings().Pruner.MaxTokens {
+		t.Fatalf("pruner request MaxTokens = %d, want %d", reqs[0].MaxTokens, DefaultSettings().Pruner.MaxTokens)
 	}
 	if reqs[1].MaxTokens != 0 {
 		t.Fatalf("agent's own request MaxTokens = %d, want 0 (unset) — the pruner's cap leaked onto the shared model", reqs[1].MaxTokens)

@@ -91,16 +91,19 @@ func ExecTool(ws Workspace, shells *BackgroundShells, lim Limits) Tool {
 				return formatBgStart(sh), nil
 			}
 
-			return runForegroundProcess(ctx, p, resolvedDir, lim.ExecOutputBytes)
+			return runForegroundProcess(ctx, p, resolvedDir, lim.ExecOutputBytes, lim.ExecKillGrace)
 		},
 	}
 }
 
-// killGrace bounds how long we wait for a killed command's output copier to
-// finish before giving up on it and returning what we captured.
-const killGrace = 2 * time.Second
+// runForegroundProcess runs one command to completion. killGrace bounds how
+// long a killed command's output copier is waited on before it is abandoned
+// and whatever was captured is returned.
+func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string, outputBytes int, killGrace time.Duration) (string, error) {
+	if killGrace <= 0 {
+		killGrace = DefaultLimits().ExecKillGrace
+	}
 
-func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string, outputBytes int) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -234,7 +237,7 @@ func BashOutputTool(shells *BackgroundShells, lim Limits) Tool {
 
 const killShellDescription = `Stop a background shell (SIGTERM, then SIGKILL after grace). Always kill servers you started — sessions do not leak processes, but cleaning up early frees ports.`
 
-func KillShellTool(shells *BackgroundShells) Tool {
+func KillShellTool(shells *BackgroundShells, lim Limits) Tool {
 	return Tool{
 		Name:        toolKillShell,
 		Description: killShellDescription,
@@ -252,7 +255,7 @@ func KillShellTool(shells *BackgroundShells) Tool {
 			if !ok {
 				return "", fmt.Errorf("unknown shell_id: %s", p.ShellID)
 			}
-			if err := sh.kill(2 * time.Second); err != nil {
+			if err := sh.kill(lim.ExecKillGrace); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("shell_id: %s\nstatus: %s\n", sh.ID, sh.status()), nil

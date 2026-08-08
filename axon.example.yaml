@@ -1,0 +1,124 @@
+# axon.yaml — every setting axon has.
+#
+# Copy to ~/.config/axon/axon.yaml and edit. There are no secrets in this file
+# (${VAR} is resolved from the .env beside it), so it is safe to commit.
+#
+# Every field below is optional and shown at its default. Delete anything you
+# do not want to override — a config that sets three things is a better config
+# than one that restates thirty.
+
+# ---------------------------------------------------------------------------
+# Providers — where requests go
+#
+# axon speaks one protocol: OpenAI-style streaming chat completions at
+# {base_url}/v1/chat/completions with a bearer token. Anything that speaks it
+# works; OpenRouter is what it is developed against.
+#
+# axon does not choose between the models you list. Listing is all this does —
+# your application pins one or offers the user a choice.
+# ---------------------------------------------------------------------------
+providers:
+  openrouter:
+    base_url: https://openrouter.ai/api
+    api_key: ${OPENROUTER_API_KEY}
+    models:
+      # A model with no options needs no value.
+      qwen/qwen3.6-flash:
+
+      # `route` is an OpenRouter routing hint, forwarded as the request's
+      # "provider" field. Endpoints that do not understand it will reject it,
+      # so set it only where it means something.
+      deepseek/deepseek-v3.2:
+        route: Baidu Qianfan
+      moonshotai/kimi-k2.5:
+        route: modelrun/fp4
+
+  # A local endpoint needs no key.
+  ollama:
+    base_url: http://localhost:11434
+    models:
+      qwen2.5-coder:7b:
+
+# ---------------------------------------------------------------------------
+# Session — where conversation state is written
+# ---------------------------------------------------------------------------
+session:
+  # Each working directory gets its own session file beneath this.
+  data_dir: ~/.local/share/agent
+
+  # Pin one session file instead of deriving it per directory. Rarely wanted.
+  # path: /tmp/axon-session.json
+
+# ---------------------------------------------------------------------------
+# Model — how each request is shaped
+# ---------------------------------------------------------------------------
+model:
+  max_tokens: 20000
+
+  # Bounds one whole streamed response. Generous, because a long agent turn
+  # legitimately takes minutes.
+  request_timeout: 30m
+
+  # Bounds the gap between two chunks. This is the one that actually fires: a
+  # provider that goes silent mid-stream fails in 20 seconds instead of
+  # holding the turn for the full request_timeout.
+  idle_timeout: 20s
+
+  # Forwarded as reasoning.effort — "", low, medium or high.
+  reasoning_effort: ""
+  exclude_reasoning: false
+
+# ---------------------------------------------------------------------------
+# Retry
+#
+# Network failures and truncated streams are always retried and are not listed
+# here — they say nothing about whether the request was acceptable. Only HTTP
+# status codes are a policy decision.
+# ---------------------------------------------------------------------------
+retry:
+  max_attempts: 10          # includes the first try; 1 means never retry
+  backoff_cap: 60s          # ceilings the exponential wait
+  on_status: [429, 500, 502, 503, 504]
+
+# ---------------------------------------------------------------------------
+# Tools
+#
+# Every value here bounds what a single tool call can cost — in context, or in
+# how long it holds a turn. They are the only thing standing between one bad
+# tool call and a large bill, so raise them deliberately.
+#
+# Sizes accept KB/MB (decimal) and KiB/MiB (binary), or a plain byte count.
+# Durations accept 30s, 10m, 1h30m, or a plain number of seconds.
+# ---------------------------------------------------------------------------
+tools:
+  read:
+    lines: 200              # default slice size
+    max_bytes: 2MiB         # refuses a full read of anything larger
+
+  exec:
+    timeout: 30s            # default for one foreground command
+    max_timeout: 10m        # ceiling on whatever the model asks for
+    output_bytes: 12000     # captured output per command
+    tail_lines: 50          # kept when output exceeds the cap
+    max_tail_lines: 500     # ceiling on the tail the model may request
+    kill_grace: 2s          # wait for a killed command to release its pipe
+
+  bash_output:
+    max_bytes: 32KiB        # one poll of a background shell
+
+  search:
+    timeout: 30s
+    max_matches: 100
+    output_bytes: 12000
+
+# ---------------------------------------------------------------------------
+# Pruner — the secondary model that parks stale context
+#
+# Only used when the application supplies a pruner model. Parking is a
+# projection, never a mutation: the original stays in the session log.
+# ---------------------------------------------------------------------------
+pruner:
+  floor_tokens: 10000       # below this, a prune is not worth a round trip
+  growth_tokens: 5000       # accumulate this much before pruning again
+  max_tokens: 4096          # caps the curator's reply
+  timeout: 60s

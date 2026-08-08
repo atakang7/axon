@@ -15,26 +15,62 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// The OpenAI-compatible implementation
+// Configuration & Types
 // ---------------------------------------------------------------------------
 
+// errorBodyLimit caps how much of a failed response is kept: enough for a
+// provider's JSON error, short of an HTML error page from a proxy.
+const errorBodyLimit = 4096
+
 // ClientConfig configures the shipped Model implementation.
+//
+// Every zero value falls back to DefaultSettings, so a client constructed with
+// only a Provider behaves exactly as the documented defaults say.
 type ClientConfig struct {
 	// Provider is the endpoint, model name and credentials. Required.
 	Provider Provider
 
 	// MaxTokens is the default cap when a Request does not set its own.
-	// Zero uses defaultMaxTokens. Lower it for budget-sensitive providers.
 	MaxTokens int
 
-	// ReasoningEffort is forwarded as OpenRouter/OpenAI-style reasoning.effort.
+	// ReasoningEffort is forwarded as reasoning.effort.
 	ReasoningEffort string
 
 	// ExcludeReasoning asks the provider to omit reasoning tokens entirely.
 	ExcludeReasoning bool
+
+	// RequestTimeout bounds one whole streamed response.
+	RequestTimeout time.Duration
+
+	// IdleTimeout bounds the gap between two chunks, so a provider that goes
+	// silent mid-response fails fast rather than holding the turn for the
+	// whole of RequestTimeout.
+	IdleTimeout time.Duration
 }
 
-const defaultMaxTokens = 20000
+// APIError is a non-2xx response from the provider.
+//
+// It carries the status as a number so callers can branch on it. The retry
+// loop has to tell a rate limit from a bad request, and deciding that by
+// matching the text of a message makes retry behaviour depend on wording
+// nobody thinks of as load-bearing.
+type APIError struct {
+	// Status is the HTTP status code.
+	Status int
+
+	// Body is the response body, truncated to errorBodyLimit. Providers put
+	// the actual reason here — an unknown model, an expired key — and
+	// discarding it costs hours.
+	Body string
+}
+
+func (e *APIError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("API error %d", e.Status)
+	}
+
+	return fmt.Sprintf("API error %d: %s", e.Status, e.Body)
+}
 
 // Client is an OpenAI-compatible streaming Model. Safe for concurrent use.
 type Client struct {
@@ -43,26 +79,44 @@ type Client struct {
 	cfg     ClientConfig
 }
 
+// ---------------------------------------------------------------------------
+// Client Constructors & Methods
+// ---------------------------------------------------------------------------
+
 // NewClient builds a Model for any OpenAI-compatible endpoint.
 func NewClient(cfg ClientConfig) (*Client, error) {
 	url := strings.TrimRight(cfg.Provider.BaseURL, "/")
 	if url == "" {
 		return nil, fmt.Errorf("provider %q has no base_url", cfg.Provider.Name)
 	}
+
 	if !strings.HasSuffix(url, "/v1") {
 		url += "/v1"
 	}
+
+	defaults := DefaultSettings().Model
+
+	if cfg.MaxTokens <= 0 {
+		cfg.MaxTokens = defaults.MaxTokens
+	}
+	if cfg.RequestTimeout <= 0 {
+		cfg.RequestTimeout = defaults.RequestTimeout.Std()
+	}
+	if cfg.IdleTimeout <= 0 {
+		cfg.IdleTimeout = defaults.IdleTimeout.Std()
+	}
+
 	return &Client{
-		http:    &http.Client{Timeout: 30 * time.Minute},
+		http:    &http.Client{Timeout: cfg.RequestTimeout},
 		baseURL: url,
 		cfg:     cfg,
 	}, nil
 }
 
 // Model reports which model this client talks to.
-func (c *Client) Model() string { return c.cfg.Provider.Model }
-
-const idleTimeout = 20 * time.Second
+func (c *Client) Model() string {
+	return c.cfg.Provider.Model
+}
 
 // Complete sends one request and assembles the reply, invoking req.Stream as output arrives.
 func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
@@ -74,7 +128,12 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/chat/completions",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +141,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
+
 	if key := c.cfg.Provider.APIKey; key != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+key)
 	}
@@ -93,27 +153,29 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %s: %s", resp.Status, strings.TrimSpace(string(detail)))
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
+		return nil, &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(detail))}
 	}
 
-	return readStream(ctx, resp.Body, req.Stream, cancel)
+	return readStream(ctx, resp.Body, req.Stream, cancel, c.cfg.IdleTimeout)
 }
 
 func (c *Client) requestBody(req Request) ([]byte, error) {
 	tools := make([]map[string]any, len(req.Tools))
 	for i, t := range req.Tools {
-		tools[i] = map[string]any{"type": "function", "function": map[string]any{
-			"name": t.Name, "description": t.Description, "parameters": t.Schema,
-		}}
+		tools[i] = map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.Schema,
+			},
+		}
 	}
 
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = c.cfg.MaxTokens
-	}
-	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
 	}
 
 	body := map[string]any{
@@ -148,7 +210,7 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 }
 
 // ---------------------------------------------------------------------------
-// SSE
+// Server-Sent Events (SSE) Processing
 // ---------------------------------------------------------------------------
 
 // reply accumulates a streamed response. Tool calls arrive as fragments keyed by index.
@@ -161,7 +223,7 @@ type reply struct {
 
 // readStream consumes the SSE body until the server closes it, applying an
 // idle timeout so a silent provider fails fast instead of hanging the turn.
-func readStream(ctx context.Context, body io.Reader, stream Stream, cancel context.CancelFunc) (*Msg, error) {
+func readStream(ctx context.Context, body io.Reader, stream Stream, cancel context.CancelFunc, idleTimeout time.Duration) (*Msg, error) {
 	out := &reply{
 		toolArgs: map[int]*strings.Builder{},
 		toolMeta: map[int]ToolCall{},
@@ -193,17 +255,18 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
 	return out.message(), nil
 }
 
 // consume applies one SSE line. Anything unparseable is skipped: a malformed
-
 // keep-alive or comment must not abort an otherwise healthy stream.
 func (r *reply) consume(text string, stream Stream) {
 	data := strings.TrimPrefix(text, "data: ")
 	if data == "" || data == "[DONE]" {
 		return
 	}
+
 	var chunk struct {
 		Choices []struct {
 			Delta struct {
@@ -221,13 +284,14 @@ func (r *reply) consume(text string, stream Stream) {
 			} `json:"delta"`
 		} `json:"choices"`
 	}
+
 	if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Choices) == 0 {
 		return
 	}
+
 	delta := chunk.Choices[0].Delta
 
 	if delta.ReasoningContent != "" {
-
 		r.reasoningContent.WriteString(delta.ReasoningContent)
 		if stream.Reasoning != nil {
 			stream.Reasoning(delta.ReasoningContent)
@@ -235,7 +299,6 @@ func (r *reply) consume(text string, stream Stream) {
 	}
 
 	if delta.Content != "" {
-
 		r.content.WriteString(delta.Content)
 		if stream.Token != nil {
 			stream.Token(delta.Content)
@@ -243,14 +306,15 @@ func (r *reply) consume(text string, stream Stream) {
 	}
 
 	for _, tc := range delta.ToolCalls {
-
 		if _, seen := r.toolMeta[tc.Index]; !seen {
 			meta := ToolCall{ID: tc.ID, Type: tc.Type}
 			meta.Function.Name = tc.Function.Name
 			r.toolMeta[tc.Index] = meta
 			r.toolArgs[tc.Index] = &strings.Builder{}
 		}
+
 		r.toolArgs[tc.Index].WriteString(tc.Function.Arguments)
+
 		if stream.ToolArgs != nil && tc.Function.Arguments != "" {
 			stream.ToolArgs(r.toolMeta[tc.Index].Function.Name, tc.Function.Arguments)
 		}
@@ -258,25 +322,26 @@ func (r *reply) consume(text string, stream Stream) {
 }
 
 // message assembles the finished assistant message, ordering tool calls by the
-
 // index the provider gave them so the sequence is stable.
 func (r *reply) message() *Msg {
 	finalContent := r.content.String()
 	finalReasoning := r.reasoningContent.String()
 
 	if len(r.toolMeta) == 0 {
-		return &Msg{Role: "assistant", Content: finalContent, Reasoning: finalReasoning}
+		return &Msg{
+			Role:      "assistant",
+			Content:   finalContent,
+			Reasoning: finalReasoning,
+		}
 	}
 
 	indices := make([]int, 0, len(r.toolMeta))
-
 	for i := range r.toolMeta {
 		indices = append(indices, i)
 	}
 	sort.Ints(indices)
 
 	calls := make([]ToolCall, 0, len(indices))
-
 	for _, i := range indices {
 		tc := r.toolMeta[i]
 		tc.Function.Arguments = r.toolArgs[i].String()
@@ -287,5 +352,11 @@ func (r *reply) message() *Msg {
 		}
 		calls = append(calls, tc)
 	}
-	return &Msg{Role: "assistant", Content: finalContent, Reasoning: finalReasoning, ToolCalls: calls}
+
+	return &Msg{
+		Role:      "assistant",
+		Content:   finalContent,
+		Reasoning: finalReasoning,
+		ToolCalls: calls,
+	}
 }

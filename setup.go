@@ -2,6 +2,7 @@ package axon
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -15,9 +16,15 @@ func New(cfg Config) (*Agent, error) {
 		return nil, ErrNoSystemPrompt
 	}
 
+	// Defaults are applied once, here, and the result is what every part of
+	// this agent uses from now on. Nothing below re-reads configuration, so an
+	// agent's behaviour is fixed at construction and two agents in one process
+	// can differ.
+	settings := cfg.Settings.WithDefaults()
+
 	sess := cfg.Session
 	if sess == nil {
-		sess = LoadOrCreateSession()
+		sess = LoadOrCreateSessionAt(settings.Session.SessionFile())
 	}
 	if cfg.Cwd != "" {
 		if err := sess.SetCwd(cfg.Cwd); err != nil {
@@ -25,8 +32,8 @@ func New(cfg Config) (*Agent, error) {
 		}
 	}
 
-	shells := NewBackgroundShells()
-	limits := LoadLimits()
+	shells := NewBackgroundShellsAt(settings.Session.BackgroundLogDir(os.Getpid()))
+	limits := settings.Tools.limits()
 
 	var mcpClients []*mcpClient
 	for _, mc := range cfg.MCPServers {
@@ -74,6 +81,7 @@ func New(cfg Config) (*Agent, error) {
 		customTools:     cfg.Tools,
 		excludeBuiltins: cfg.ExcludeBuiltins,
 		mcpClients:      mcpClients,
+		settings:        settings,
 	}, nil
 }
 
@@ -108,7 +116,7 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 		WriteTool(ws),
 		ExecTool(ws, shells, lim),
 		BashOutputTool(shells, lim),
-		KillShellTool(shells),
+		KillShellTool(shells, lim),
 		SearchTool(ws, lim),
 		TaskTool(ws),
 	}

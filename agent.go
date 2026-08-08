@@ -42,6 +42,9 @@ type Agent struct {
 
 	// MCP clients managed by this agent.
 	mcpClients []*mcpClient
+
+	// Settings this agent was constructed with, already defaulted.
+	settings Settings
 }
 
 // Interrupt cancels the in-flight chat call, or false if no turn is active.
@@ -58,22 +61,22 @@ func (a *Agent) initSessionMessages() {
 	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.systemPrompt, a.tools)}}
 }
 
-
 func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
-	const maxAttempts = 10
+	policy := a.settings.Retry
+	if policy.MaxAttempts < 1 {
+		policy = DefaultSettings().Retry
+	}
+
 	var lastErr error
 
-	for attempt := range maxAttempts {
+	for attempt := range policy.MaxAttempts {
 		if attempt > 0 {
-			backoff := 1 << attempt
-			if backoff > 60 {
-				backoff = 60
-			}
-			a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("retry %d/%d in %ds", attempt+1, maxAttempts, backoff)})
+			backoff := backoffFor(attempt, policy.BackoffCap.Std())
+			a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("retry %d/%d in %s", attempt+1, policy.MaxAttempts, backoff)})
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(time.Duration(backoff) * time.Second):
+			case <-time.After(backoff):
 			}
 		}
 
@@ -108,7 +111,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 
 		a.emit(ctx, Event{Kind: KindError, Err: err})
 		lastErr = err
-		if !retryable(err) {
+		if !a.retryable(err) {
 			return nil, err
 		}
 	}
@@ -135,13 +138,50 @@ func (a *Agent) runTool(ctx context.Context, tc ToolCall) Msg {
 	return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: "tool not found"}
 }
 
-func retryable(err error) bool {
+// backoffFor returns how long to wait before the given attempt: exponential,
+// ceilinged by the configured cap.
+func backoffFor(attempt int, cap time.Duration) time.Duration {
+	if cap <= 0 {
+		cap = DefaultSettings().Retry.BackoffCap.Std()
+	}
+
+	// Shift on a duration rather than a second count so the cap can be any
+	// duration, not just a whole number of seconds.
+	wait := time.Second << attempt
+	if wait <= 0 || wait > cap {
+		return cap
+	}
+
+	return wait
+}
+
+// retryable reports whether a failed request is worth another attempt.
+//
+// HTTP failures are decided by status code against the configured policy, not
+// by matching the text of an error message. That distinction matters: an error
+// string is a presentation detail, and a retry loop that depends on one breaks
+// silently the moment the wording changes.
+//
+// Transport failures — a dropped connection, a DNS blip, a truncated stream —
+// are always retried and are not configurable, because they say nothing about
+// whether the request itself was acceptable.
+func (a *Agent) retryable(err error) bool {
 	if err == nil {
 		return false
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		policy := a.settings.Retry
+		if len(policy.OnStatus) == 0 {
+			policy = DefaultSettings().Retry
+		}
+
+		return policy.Retryable(apiErr.Status)
 	}
 
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -151,13 +191,6 @@ func retryable(err error) bool {
 	var nerr net.Error
 	if errors.As(err, &nerr) && nerr.Timeout() {
 		return true
-	}
-
-	m := err.Error()
-	for _, code := range []string{"API error 429", "API error 500", "API error 502", "API error 503", "API error 504"} {
-		if strings.Contains(m, code) {
-			return true
-		}
 	}
 
 	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {

@@ -832,11 +832,16 @@ func TestChatRetriesEmptyReplyOnceThenFails(t *testing.T) {
 	}
 }
 
-// retryable() is the pure decision behind the entire backoff ladder, and is
+// retryable is the pure decision behind the entire backoff ladder, and is
 // tested directly rather than through chat()'s real time.After sleeps —
-// driving all 10 attempts through chat() would make the suite hang for
-// minutes.
+// driving every attempt through chat() would make the suite hang for minutes.
+//
+// The HTTP cases go through *APIError rather than an error string. That is the
+// point of the type: a retry loop that matched message text would keep passing
+// this test while breaking the moment a provider reworded its errors.
 func TestRetryable(t *testing.T) {
+	agent := &Agent{settings: DefaultSettings()}
+
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -849,21 +854,43 @@ func TestRetryable(t *testing.T) {
 		{"DNS error", &net.DNSError{Err: "no such host", Name: "example.invalid"}, true},
 		{"ECONNREFUSED", syscall.ECONNREFUSED, true},
 		{"ECONNRESET", syscall.ECONNRESET, true},
-		{"API error 429", errors.New("API error 429: rate limited"), true},
-		{"API error 500", errors.New("API error 500: internal"), true},
-		{"API error 502", errors.New("API error 502: bad gateway"), true},
-		{"API error 503", errors.New("API error 503: unavailable"), true},
-		{"API error 504", errors.New("API error 504: timeout"), true},
+		{"429 rate limited", &APIError{Status: 429, Body: "rate limited"}, true},
+		{"500 internal", &APIError{Status: 500}, true},
+		{"502 bad gateway", &APIError{Status: 502}, true},
+		{"503 unavailable", &APIError{Status: 503}, true},
+		{"504 timeout", &APIError{Status: 504}, true},
+		{"wrapped 429", fmt.Errorf("chat: %w", &APIError{Status: 429}), true},
 		{"context.Canceled", context.Canceled, false},
 		{"context.DeadlineExceeded", context.DeadlineExceeded, false},
-		{"API error 400", errors.New("API error 400: bad request"), false},
+		{"400 bad request", &APIError{Status: 400, Body: "bad model"}, false},
+		{"401 unauthorized", &APIError{Status: 401}, false},
 		{"plain error", errors.New("something else"), false},
+
+		// An error that merely reads like a rate limit is not one. This is the
+		// case the old string-matching implementation got wrong.
+		{"text that looks like 429", errors.New("API error 429: rate limited"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := retryable(tc.err); got != tc.want {
+			if got := agent.retryable(tc.err); got != tc.want {
 				t.Fatalf("retryable(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// The retry policy is configuration, so a config that declines to retry rate
+// limits must be obeyed.
+func TestRetryablePolicyIsConfigurable(t *testing.T) {
+	settings := DefaultSettings()
+	settings.Retry.OnStatus = []int{503}
+	agent := &Agent{settings: settings}
+
+	if agent.retryable(&APIError{Status: 429}) {
+		t.Error("429 retried although the configured policy lists only 503")
+	}
+
+	if !agent.retryable(&APIError{Status: 503}) {
+		t.Error("503 not retried although the configured policy lists it")
 	}
 }
 

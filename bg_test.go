@@ -393,7 +393,7 @@ func TestKillShellUnknownAndLive(t *testing.T) {
 	t.Setenv("AXON_DATA_DIR", t.TempDir())
 	shells := NewBackgroundShells()
 	defer shells.KillAll()
-	tool := KillShellTool(shells)
+	tool := KillShellTool(shells, DefaultLimits())
 
 	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{"shell_id": "bash_99"}))
 	if err == nil {

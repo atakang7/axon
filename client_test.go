@@ -126,7 +126,7 @@ func TestRequestBodyMaxTokensPrecedence(t *testing.T) {
 	}{
 		{"request wins over client config", 5000, 100, 100},
 		{"client config wins when request unset", 5000, 0, 5000},
-		{"library default when neither set", 0, 0, defaultMaxTokens},
+		{"library default when neither set", 0, 0, float64(DefaultSettings().Model.MaxTokens)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestReadStreamAccumulatesContentAndFiresToken(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, stream, cancel)
+	msg, err := readStream(ctx, body, stream, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestReadStreamSeparatesReasoningFromContent(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, stream, cancel)
+	msg, err := readStream(ctx, body, stream, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestReadStreamAssemblesToolCallArguments(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, stream, cancel)
+	msg, err := readStream(ctx, body, stream, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestReadStreamOrdersToolCallsByIndexNotArrivalOrder(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, Stream{}, cancel)
+	msg, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestReadStreamEmptyToolArgumentsBecomeEmptyObject(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, Stream{}, cancel)
+	msg, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestReadStreamSkipsNoiseWithoutAborting(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, Stream{}, cancel)
+	msg, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestReadStreamIgnoresChunkWithNoChoices(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, Stream{}, cancel)
+	msg, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestReadStreamNoToolCallsYieldsNilSlice(t *testing.T) {
 	body := sseLines(chunk(chunkDelta{Content: "plain answer"}), "data: [DONE]")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	msg, err := readStream(ctx, body, Stream{}, cancel)
+	msg, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std())
 	if err != nil {
 		t.Fatalf("readStream: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestReadStreamCallerCancellationSurfacesContextError(t *testing.T) {
 		pw.Close()
 	}()
 
-	_, err := readStream(ctx, pr, Stream{}, func() { pw.Close() })
+	_, err := readStream(ctx, pr, Stream{}, func() { pw.Close() }, DefaultSettings().Model.IdleTimeout.Std())
 	if err == nil {
 		t.Fatal("readStream returned nil error after caller cancellation")
 	}

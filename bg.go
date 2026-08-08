@@ -43,9 +43,18 @@ type BackgroundShells struct {
 	dir    string
 }
 
-// NewBackgroundShells creates an empty registry with its own log directory.
+// NewBackgroundShells creates an empty registry under the default log
+// location. Agents constructed through New use NewBackgroundShellsAt with the
+// configured location instead.
 func NewBackgroundShells() *BackgroundShells {
-	root := BackgroundLogRoot(os.Getpid())
+	return NewBackgroundShellsAt(SessionConfig{}.BackgroundLogDir(os.Getpid()))
+}
+
+// NewBackgroundShellsAt creates an empty registry rooted at the given
+// directory, falling back to the system temp directory when it cannot be
+// created — a registry that cannot log is still more useful than a failed
+// startup.
+func NewBackgroundShellsAt(root string) *BackgroundShells {
 	if err := os.MkdirAll(root, 0755); err != nil {
 		root = os.TempDir()
 	}

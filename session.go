@@ -84,8 +84,20 @@ func (s *Session) TaskBlock() string {
 	return b.String()
 }
 
+// LoadOrCreateSession loads the session for the current working directory
+// from the default location. Agents constructed through New use
+// LoadOrCreateSessionAt with the configured location instead.
 func LoadOrCreateSession() *Session {
-	p := SessionPath()
+	return LoadOrCreateSessionAt(SessionPath())
+}
+
+// LoadOrCreateSessionAt loads the session stored at path, or starts a fresh
+// one. A file that exists but does not parse is moved aside rather than
+// deleted: a corrupt session is still the only record of what happened.
+func LoadOrCreateSessionAt(p string) *Session {
+	if p == "" {
+		p = SessionPath()
+	}
 
 	if data, err := os.ReadFile(p); err == nil {
 		var s Session

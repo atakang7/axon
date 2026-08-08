@@ -34,33 +34,25 @@ var (
 
 // Config is the contract for constructing an Agent. Model and SystemPrompt are required.
 type Config struct {
-	// LLM implementation this agent talks to. Required.
 	Model Model
 
-	// Agent's role text sent to model. Required.
 	SystemPrompt string
 
-	// Custom tools appended to built-ins; names must not collide.
 	Tools []Tool
 
-	// Built-in tool names to exclude; empty means include all.
 	ExcludeBuiltins []string
 
-	// Pruner parks old messages as context grows; nil disables pruning.
 	Pruner *Pruner
 
-	// Working directory agent operates against; empty means current process cwd.
 	Cwd string
 
-	// Existing session to reuse; nil means load default on-disk session.
 	Session *Session
 
-	// Observability event sink; nil discards events.
 	OnEvent func(ctx context.Context, e Event)
 
-	// MCPServers spawns the specified MCP subprocesses, discovering their tools
-	// and automatically appending them to the agent's tool catalog.
 	MCPServers []MCPServer
+
+	Settings Settings
 }
 
 // InputFunc supplies user input to Run. Returns (line, true) per turn, (_, false) when exhausted.

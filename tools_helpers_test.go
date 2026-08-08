@@ -327,7 +327,7 @@ func TestCatalogMatchesActualToolNames(t *testing.T) {
 		WriteTool(ws),
 		ExecTool(ws, shells, lim),
 		BashOutputTool(shells, lim),
-		KillShellTool(shells),
+		KillShellTool(shells, DefaultLimits()),
 		SearchTool(ws, lim),
 		TaskTool(plan),
 	}

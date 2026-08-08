@@ -9,27 +9,29 @@ import (
 )
 
 // PrunerConfig sets the policy for the context curator.
+//
+// The thresholds mirror the pruner section of axon.yaml; leaving them zero
+// takes the configured defaults. The curator's prompts are deliberately not
+// here — they are axon's own, they change with the parking format they
+// describe, and an embedder that overrode one would silently break parking
+// the next time that format changed.
 type PrunerConfig struct {
-	Model        Model
-	FloorTokens  int
-	GrowthTokens int
-	SystemPrompt string
-	Reminder     string
+	// Model is the curator, typically a cheap, fast, long-context one.
+	Model Model
+
+	// Settings are the thresholds and caps from axon.yaml. The zero value
+	// takes DefaultSettings's pruner section.
+	Settings PrunerSettings
 }
 
 type Pruner struct {
-	model        Model
-	floor        int
-	growth       int
-	systemPrompt string
-	reminder     string
-	lastFire     int
+	model     Model
+	floor     int
+	growth    int
+	maxTokens int
+	timeout   time.Duration
+	lastFire  int
 }
-
-const (
-	defaultPruneFloor  = 10000
-	defaultPruneGrowth = 5000
-)
 
 const defaultPrunerReminder = "\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park."
 
@@ -39,35 +41,23 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 		return nil
 	}
 
-	p := &Pruner{
-		model:        cfg.Model,
-		floor:        cfg.FloorTokens,
-		growth:       cfg.GrowthTokens,
-		systemPrompt: cfg.SystemPrompt,
-		reminder:     cfg.Reminder,
-	}
+	s := cfg.Settings
+	d := DefaultSettings().Pruner
 
-	if p.floor == 0 {
-		p.floor = defaultPruneFloor
-	}
-	if p.growth == 0 {
-		p.growth = defaultPruneGrowth
-	}
-	if p.systemPrompt == "" {
-		p.systemPrompt = prunerSystemPrompt
-	}
-	if p.reminder == "" {
-		p.reminder = defaultPrunerReminder
-	}
+	fillInt(&s.FloorTokens, d.FloorTokens)
+	fillInt(&s.GrowthTokens, d.GrowthTokens)
+	fillInt(&s.MaxTokens, d.MaxTokens)
+	fillDuration(&s.Timeout, d.Timeout)
 
-	return p
+	return &Pruner{
+		model:     cfg.Model,
+		floor:     s.FloorTokens,
+		growth:    s.GrowthTokens,
+		maxTokens: s.MaxTokens,
+		timeout:   s.Timeout.Std(),
+	}
 }
 
-// prunerMaxTokens caps the curator's reply. The answer is one line of JSON; a
-// chatty model that wants to think out loud hits this wall instead of burning
-// tokens on prose nobody reads. Increased to 4096 to accommodate reasoning models
-// that must "think" before they output the final JSON object.
-const prunerMaxTokens = 4096
 
 // ContextTokens estimates what the next request will cost. Character count
 // over four is plenty for a threshold decision; provider-accurate counting
@@ -111,15 +101,15 @@ func (p *Pruner) Prune(ctx context.Context, s *Session) (before, after int, err 
 	before = p.ContextTokens(s)
 
 	// Correctness matters more than latency here, so the budget is generous.
-	callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	reply, err := p.model.Complete(callCtx, Request{
 		Messages: []Msg{
-			{Role: "system", Content: p.systemPrompt},
-			{Role: "user", Content: prunerRequest(s, p.reminder)},
+			{Role: "system", Content: prunerSystemPrompt},
+			{Role: "user", Content: prunerRequest(s, defaultPrunerReminder)},
 		},
-		MaxTokens: prunerMaxTokens,
+		MaxTokens: p.maxTokens,
 	})
 	if err != nil {
 		return before, before, fmt.Errorf("pruner: %w", err)
