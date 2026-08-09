@@ -1,17 +1,17 @@
 ---
 title: Axon | Agent Runtime for Go
-description: A compact Go runtime for tool-using LLM agents. Axon owns turns, tools, sessions, context, retries, streaming, background work, and MCP.
+description: The Go agent runtime behind Cortex. Axon owns turns, tools, sessions, context pruning, retries, streaming, background work, and MCP.
 template: splash
 hero:
-  title: The agent runtime<br/><span class="text-gradient">you don't have to build.</span>
-  tagline: Axon is a compact Go runtime for tool-using LLM agents. Bring the model, prompt, tools, and product. Axon owns the execution machinery underneath.
+  title: The runtime behind<br/><span class="text-gradient">Cortex.</span>
+  tagline: Axon is the Go execution runtime powering a real terminal coding agent. It owns the loop, tools, sessions, context pruning, streaming, background processes, and MCP — so the product on top can stay focused on being the agent.
   actions:
     - text: Start Building
       link: /axon/start/quickstart/
       icon: right-arrow
       variant: primary
-    - text: View on GitHub
-      link: https://github.com/atakang7/axon
+    - text: See Cortex
+      link: https://github.com/atakang7/cortex
       icon: github
       variant: secondary
 ---
@@ -19,20 +19,56 @@ hero:
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <div class="signal-strip" aria-label="Axon at a glance">
+  <span><strong>Powers Cortex</strong></span>
   <span><strong>Go-native</strong> runtime</span>
   <span><strong>Model-agnostic</strong> via OpenAI-compatible APIs</span>
   <span><strong>MIT</strong> licensed</span>
 </div>
 
+## Proven by a product, not a diagram.
+
+[Cortex](https://github.com/atakang7/cortex) is a terminal coding agent built directly on Axon. It is the cleanest explanation of where the boundary lives:
+
+<div class="cortex-proof">
+  <div class="cortex-copy">
+    <span class="eyebrow">REFERENCE PRODUCT</span>
+    <h3>Cortex is the agent. Axon is everything underneath it.</h3>
+    <p>
+      Cortex owns the model configuration, coding-agent role, terminal UX, and product behavior. Axon supplies the reusable execution layer: streaming chat, tool dispatch, an append-only session, context pruning, background processes, and the built-in tool surface.
+    </p>
+
+    <div class="stack-split">
+      <div>
+        <span class="stack-name">cortex</span>
+        <strong>Config · Prompt · Terminal · Coding behavior</strong>
+      </div>
+      <span class="stack-on">built on</span>
+      <div class="stack-axon">
+        <span class="stack-name">axon</span>
+        <strong>Loop · Tools · Session · Context · Execution</strong>
+      </div>
+    </div>
+
+    <a class="text-link" href="https://github.com/atakang7/cortex">Explore Cortex on GitHub →</a>
+  </div>
+
+  <figure class="cortex-terminal">
+    <img src="/axon/cortex-terminal.png" alt="Cortex terminal coding agent running on Axon, showing a completed code change, test verification, context size, and token usage." />
+    <figcaption>Real Cortex session: edit, verify, continue — with Axon driving the runtime underneath.</figcaption>
+  </figure>
+</div>
+
+That separation is the whole bet: **an agent product should not need to reimplement an agent runtime.**
+
+---
+
 ## Build the product. Reuse the hard part.
 
-Every serious agent eventually needs the same machinery: a tool-calling loop, retries, streaming, session state, context control, background processes, observability, and provider edge-case handling.
+Every serious tool-using agent eventually needs the same machinery. Axon packages that machinery behind a small Go API while leaving product decisions above the line.
 
-**Axon makes that layer reusable and inspectable.** Your application stays responsible for the part that actually makes it yours: the system prompt, tools, interface, policy, and product behavior.
-
-<div class="runtime-flow" role="img" aria-label="Your product sends work through Axon to models and tools">
+<div class="runtime-flow" role="img" aria-label="Cortex or your product uses Axon, which drives models and tools">
   <div class="flow-node flow-product">
-    <span class="flow-label">YOUR PRODUCT</span>
+    <span class="flow-label">YOUR AGENT</span>
     <strong>Prompt · Tools · UI · Policy</strong>
   </div>
   <span class="flow-arrow">→</span>
@@ -42,21 +78,42 @@ Every serious agent eventually needs the same machinery: a tool-calling loop, re
   </div>
   <span class="flow-arrow">→</span>
   <div class="flow-node">
-    <span class="flow-label">RUNTIME</span>
+    <span class="flow-label">ENVIRONMENT</span>
     <strong>Models · MCP · Shell · Files</strong>
   </div>
 </div>
 
+<CardGrid stagger>
+  <Card title="Tool-calling loop" icon="cycle">
+    Stream model replies, execute tool calls, record results, and continue until the model is actually done — without rebuilding the control loop in every agent.
+  </Card>
+  <Card title="Long-running context" icon="seti:db">
+    Keep extended sessions usable with a recency window plus optional model-assisted pruning that parks stale history instead of blindly dropping it.
+  </Card>
+  <Card title="Real process execution" icon="laptop">
+    Run foreground commands or manage long-lived background processes such as dev servers, watchers, and database clients with tracked process groups and incremental output.
+  </Card>
+  <Card title="Provider resilience" icon="rocket">
+    Retries, SSE stream handling, status-aware failures, and malformed provider-output defenses live in the runtime instead of leaking into every product built on top.
+  </Card>
+  <Card title="Sessions and events" icon="document">
+    Persist conversations and consume structured runtime events to build terminal, web, or custom interfaces without coupling UI code to the execution loop.
+  </Card>
+  <Card title="MCP without ceremony" icon="puzzle">
+    Attach MCP tool servers over stdio and expose them beside native tools through the same runtime surface.
+  </Card>
+</CardGrid>
+
 ---
 
-## Tiny surface. Serious benchmark.
+## Then prove the stack on real engineering work.
 
-A runtime this small is only interesting if it can support agents that actually solve hard engineering tasks. So Axon is being evaluated with a frozen, deterministic SWE-rebench protocol instead of hand-picked demos.
+Cortex is the reference product built on Axon. The next question is whether that small runtime can support a coding agent that competes on real repository tasks. That is what the frozen SWE-rebench run is for.
 
 <div class="benchmark-panel">
   <div class="benchmark-heading">
     <div>
-      <span class="eyebrow">BENCHMARK PROTOCOL</span>
+      <span class="eyebrow">CORTEX + AXON EVALUATION</span>
       <h3>SWE-rebench 2026_02</h3>
     </div>
     <span class="benchmark-status">Results pending</span>
@@ -69,7 +126,7 @@ A runtime this small is only interesting if it can support agents that actually 
     </div>
     <div class="benchmark-stat">
       <strong>1×</strong>
-      <span>frozen Axon trajectory per task</span>
+      <span>frozen trajectory per task</span>
     </div>
     <div class="benchmark-stat">
       <strong>GPT-5.4</strong>
@@ -83,40 +140,15 @@ A runtime this small is only interesting if it can support agents that actually 
 
   <div class="benchmark-footer">
     <span>Reported: Resolved@1 · tokens/task · tokens/resolved · median wall time</span>
-    <span>No fabricated $/task comparison without equivalent cache accounting.</span>
+    <span>Frozen before run #1. No tuning against failures.</span>
   </div>
 </div>
 
-The goal is simple: **freeze the runtime, run the whole split, publish what happened.** If Axon is competitive, scale the experiment. If it is not, the benchmark should say so.
+The benchmark is not the product story. **Cortex is.** The benchmark is simply the falsifiable check that the runtime underneath it holds up when the tasks get hard.
 
 ---
 
-## One runtime layer, not another agent framework
-
-<CardGrid stagger>
-  <Card title="Tool-calling loop" icon="cycle">
-    Drive multi-turn model execution without rebuilding the control loop. Axon streams replies, executes tool calls, records results, and continues until the model is done.
-  </Card>
-  <Card title="Long-running context" icon="seti:db">
-    Keep extended sessions usable with a recency window plus optional model-assisted pruning that parks stale history instead of blindly dropping it.
-  </Card>
-  <Card title="Real process execution" icon="laptop">
-    Run foreground commands or manage long-lived background processes such as dev servers, watchers, and database clients with tracked process groups and incremental output.
-  </Card>
-  <Card title="Provider resilience" icon="rocket">
-    Retries, SSE stream handling, status-aware failures, and malformed provider-output defenses live in the runtime instead of leaking into every agent built on top.
-  </Card>
-  <Card title="Sessions and events" icon="document">
-    Persist conversations and consume structured runtime events to build terminal, web, or custom interfaces without coupling UI code to the execution loop.
-  </Card>
-  <Card title="MCP without ceremony" icon="puzzle">
-    Attach MCP tool servers over stdio and expose them beside native tools through the same runtime surface.
-  </Card>
-</CardGrid>
-
----
-
-## The core is intentionally boring
+## The core is intentionally boring.
 
 <div class="code-showcase">
 
@@ -146,7 +178,7 @@ result, err := agent.Step(ctx, "Find and fix the failing test.")
 
 </div>
 
-That is the point: **the interesting code should be your agent, not its plumbing.**
+**The interesting code should be your agent, not its plumbing.** Cortex is one product built on that idea. Axon is the reusable layer for the next one.
 
 <div class="final-cta">
   <div>
@@ -156,6 +188,7 @@ That is the point: **the interesting code should be your agent, not its plumbing
   </div>
   <div class="cta-links">
     <a class="cta-primary" href="/axon/start/quickstart/">Read the quickstart →</a>
+    <a href="https://github.com/atakang7/cortex">Study Cortex</a>
     <a href="/axon/internals/architecture/">See the architecture</a>
   </div>
 </div>
