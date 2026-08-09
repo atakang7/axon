@@ -1,12 +1,12 @@
 ---
-title: Axon | Go Runtime for LLM Agents
-description: A minimalist, production-ready Go runtime for tool-using LLM agents.
+title: Axon | Agent Runtime for Go
+description: A compact Go runtime for tool-using LLM agents. Axon owns turns, tools, sessions, context, retries, streaming, background work, and MCP.
 template: splash
 hero:
-  title: Build the Agent.<br/><span class="text-gradient">Not the Engine.</span>
-  tagline: Axon is the execution machinery for modern LLM agents. It owns the turn loops, tools, sessions, context pressure, retries, and streaming. You own the product.
+  title: The agent runtime<br/><span class="text-gradient">you don't have to build.</span>
+  tagline: Axon is a compact Go runtime for tool-using LLM agents. Bring the model, prompt, tools, and product. Axon owns the execution machinery underneath.
   actions:
-    - text: Get Started
+    - text: Start Building
       link: /axon/start/quickstart/
       icon: right-arrow
       variant: primary
@@ -18,66 +18,157 @@ hero:
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-## The Foundation for Autonomous Agents
+<div class="signal-strip" aria-label="Axon at a glance">
+  <span><strong>Go-native</strong> runtime</span>
+  <span><strong>Model-agnostic</strong> via OpenAI-compatible APIs</span>
+  <span><strong>MIT</strong> licensed</span>
+</div>
 
-Axon provides the hardened, production-ready primitives required to build agents like **cortex** without writing thousands of lines of boilerplate infrastructure.
+## Build the product. Reuse the hard part.
 
-<div class="code-showcase">
-```go
-package main
+Every serious agent eventually needs the same machinery: a tool-calling loop, retries, streaming, session state, context control, background processes, observability, and provider edge-case handling.
 
-import (
-    "context"
-    "github.com/atakang7/axon/v2"
-)
+**Axon makes that layer reusable and inspectable.** Your application stays responsible for the part that actually makes it yours: the system prompt, tools, interface, policy, and product behavior.
 
-func main() {
-    agent, _ := axon.New(axon.Config{
-        Model:        axon.OpenAI(os.Getenv("OPENROUTER_API_KEY"), "deepseek/deepseek-v3.2"),
-        SystemPrompt: "You are a careful coding agent.",
-    })
-    defer agent.Close()
-
-    agent.Run(context.Background(), func() (string, bool) {
-        // Your UI loop here. Axon handles the rest.
-        return getInput(), true
-    })
-}
-```
+<div class="runtime-flow" role="img" aria-label="Your product sends work through Axon to models and tools">
+  <div class="flow-node flow-product">
+    <span class="flow-label">YOUR PRODUCT</span>
+    <strong>Prompt · Tools · UI · Policy</strong>
+  </div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node flow-axon">
+    <span class="flow-label">AXON</span>
+    <strong>Turns · Context · Sessions · Execution</strong>
+  </div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node">
+    <span class="flow-label">RUNTIME</span>
+    <strong>Models · MCP · Shell · Files</strong>
+  </div>
 </div>
 
 ---
 
-## Production-Grade Capabilities
+## Tiny surface. Serious benchmark.
+
+A runtime this small is only interesting if it can support agents that actually solve hard engineering tasks. So Axon is being evaluated with a frozen, deterministic SWE-rebench protocol instead of hand-picked demos.
+
+<div class="benchmark-panel">
+  <div class="benchmark-heading">
+    <div>
+      <span class="eyebrow">BENCHMARK PROTOCOL</span>
+      <h3>SWE-rebench 2026_02</h3>
+    </div>
+    <span class="benchmark-status">Results pending</span>
+  </div>
+
+  <div class="benchmark-grid">
+    <div class="benchmark-stat">
+      <strong>57</strong>
+      <span>real GitHub engineering tasks</span>
+    </div>
+    <div class="benchmark-stat">
+      <strong>1×</strong>
+      <span>frozen Axon trajectory per task</span>
+    </div>
+    <div class="benchmark-stat">
+      <strong>GPT-5.4</strong>
+      <span>medium reasoning · web disabled</span>
+    </div>
+    <div class="benchmark-stat">
+      <strong>PASS / FAIL</strong>
+      <span>deterministic hidden evaluation</span>
+    </div>
+  </div>
+
+  <div class="benchmark-footer">
+    <span>Reported: Resolved@1 · tokens/task · tokens/resolved · median wall time</span>
+    <span>No fabricated $/task comparison without equivalent cache accounting.</span>
+  </div>
+</div>
+
+The goal is simple: **freeze the runtime, run the whole split, publish what happened.** If Axon is competitive, scale the experiment. If it is not, the benchmark should say so.
+
+---
+
+## One runtime layer, not another agent framework
 
 <CardGrid stagger>
-  <Card title="Infinite Context via Pruning" icon="seti:db">
-    Dual-tier memory system. Uses a free recency window combined with a secondary, flash-tier LLM to aggressively park stale context and keep your primary model fast and focused.
+  <Card title="Tool-calling loop" icon="cycle">
+    Drive multi-turn model execution without rebuilding the control loop. Axon streams replies, executes tool calls, records results, and continues until the model is done.
   </Card>
-  <Card title="Bulletproof Execution" icon="rocket">
-    Built for real-world instability. Axon automatically handles SSE stream truncation, exponential backoffs, status-code routing, and even intercepts leaked XML markup from the model.
+  <Card title="Long-running context" icon="seti:db">
+    Keep extended sessions usable with a recency window plus optional model-assisted pruning that parks stale history instead of blindly dropping it.
   </Card>
-  <Card title="Asynchronous Tooling" icon="laptop">
-    Not all tools return instantly. Spawn long-running watchers, servers, or database clients as background processes. Axon tracks their process groups and streams their deltas.
+  <Card title="Real process execution" icon="laptop">
+    Run foreground commands or manage long-lived background processes such as dev servers, watchers, and database clients with tracked process groups and incremental output.
   </Card>
-  <Card title="Strict Security Boundaries" icon="shield">
-    The runtime never decides what to build. Tools are isolated via strict interfaces and flat limit caps. The agent cannot read your provider credentials or modify its own configuration.
+  <Card title="Provider resilience" icon="rocket">
+    Retries, SSE stream handling, status-aware failures, and malformed provider-output defenses live in the runtime instead of leaking into every agent built on top.
+  </Card>
+  <Card title="Sessions and events" icon="document">
+    Persist conversations and consume structured runtime events to build terminal, web, or custom interfaces without coupling UI code to the execution loop.
+  </Card>
+  <Card title="MCP without ceremony" icon="puzzle">
+    Attach MCP tool servers over stdio and expose them beside native tools through the same runtime surface.
   </Card>
 </CardGrid>
 
 ---
 
-## Dive In
+## The core is intentionally boring
+
+<div class="code-showcase">
+
+```go
+model, err := axon.OpenAI(axon.ClientConfig{
+    Provider: axon.Provider{
+        BaseURL: "https://openrouter.ai/api",
+        Model:   "deepseek/deepseek-v3.2",
+        APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "You are a careful coding agent.",
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close()
+
+result, err := agent.Step(ctx, "Find and fix the failing test.")
+```
+
+</div>
+
+That is the point: **the interesting code should be your agent, not its plumbing.**
+
+<div class="final-cta">
+  <div>
+    <span class="eyebrow">START HERE</span>
+    <h2>Build one turn. Then keep going.</h2>
+    <p>The quickstart covers a minimal agent, config-backed providers, pruning, events, and multi-turn execution.</p>
+  </div>
+  <div class="cta-links">
+    <a class="cta-primary" href="/axon/start/quickstart/">Read the quickstart →</a>
+    <a href="/axon/internals/architecture/">See the architecture</a>
+  </div>
+</div>
 
 <CardGrid>
   <LinkCard
-    title="Read the Quickstart"
-    description="Get an agent running in under 60 seconds."
-    href="/axon/start/quickstart/"
+    title="Configuration"
+    description="Providers, models, retries, limits, context, sessions, and the complete axon.yaml surface."
+    href="/axon/configuration/yaml/"
   />
   <LinkCard
-    title="Explore the Turn Loop"
-    description="See exactly how Axon drives models and executes tools."
+    title="Runtime concepts"
+    description="Understand the turn loop, context lifecycle, sessions, tools, and execution model."
     href="/axon/concepts/turn-loop/"
   />
 </CardGrid>
