@@ -499,7 +499,13 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 	sess := LoadOrCreateSession()
 	// Push the session over pruneFloor before the agent even starts, so the
 	// very first Step triggers ShouldFire.
-	sess.Append(Msg{Role: "user", Content: strings.Repeat("a", 45000)})
+	//
+	// Size alone is not enough: ShouldFire also requires a block the curator
+	// could actually park, and a lone block is inside the recency window. The
+	// tool blocks below leave one candidate outside a one-block window while
+	// the newest stays inside a two-block window and clears the floor on its own.
+	sess.Append(Msg{Role: "tool", ToolName: "read", Content: strings.Repeat("a", 5000)})
+	sess.Append(Msg{Role: "tool", ToolName: "read", Content: strings.Repeat("a", 45000)})
 
 	prunerModel := funcModel{fn: func(context.Context, Request) (*Msg, error) {
 		return nil, errors.New("pruner model is down")
@@ -512,6 +518,7 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 		ExcludeBuiltins: allBuiltins,
 		Session:         sess,
 		Pruner:          prunerModel,
+		Settings:        Settings{Pruner: PrunerSettings{WindowBlocks: 2}},
 	}
 	var log eventLog
 	cfg.OnEvent = log.record

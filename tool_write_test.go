@@ -468,3 +468,74 @@ func TestWriteModePreservedAcrossEdit(t *testing.T) {
 		t.Fatalf("mode = %o, want 0755 preserved", fi.Mode().Perm())
 	}
 }
+
+// A failed replace_string means the caller's picture of the file is stale.
+// The recovery advice must therefore send it back to the file. It used to
+// recommend replace_lines instead, and a traced run followed that advice with
+// line numbers derived from the same stale picture: it replaced a range that
+// stopped short of a docstring's closing quotes, destroyed the module, and
+// spent two further calls repairing the damage.
+func TestWriteReplaceStringNotFoundDoesNotRecommendLineNumbers(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("original"), 0644)
+	tool := WriteTool(newFakeWorkspace(dir))
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "replace_string", "old_str": "not present", "content": "y",
+	}))
+	if err == nil {
+		t.Fatal("zero matches should error")
+	}
+	if strings.Contains(err.Error(), "replace_lines") {
+		t.Errorf("not-found advice steers to line numbers computed from the same stale read: %v", err)
+	}
+	if !strings.Contains(err.Error(), "read the file again") {
+		t.Errorf("not-found advice should send the caller back to the file: %v", err)
+	}
+}
+
+// old_str identical to content is a distinct mistake with a distinct cause:
+// the caller wrote out the state it wants and used it for both fields. Left
+// to the match, it surfaces as "not found" and sends the caller hunting for a
+// whitespace problem that is not there.
+func TestWriteReplaceStringIdenticalHalvesErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	os.WriteFile(path, []byte("original"), 0644)
+	tool := WriteTool(newFakeWorkspace(dir))
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "replace_string", "old_str": "original", "content": "original",
+	}))
+	if err == nil {
+		t.Fatal("an edit that changes nothing should error")
+	}
+	if !strings.Contains(err.Error(), "identical") {
+		t.Errorf("error should name the real problem: %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "original" {
+		t.Fatalf("file mutated on a failed replace: %q", data)
+	}
+}
+
+// Every mode an error recommends must be a mode that exists. This one read
+// "use overwrite" for a while; a caller following it lands in the unknown-mode
+// branch and learns nothing.
+func TestWriteErrorsOnlyNameRealModes(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("original"), 0644)
+	tool := WriteTool(newFakeWorkspace(dir))
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "replace_string", "content": "y",
+	}))
+	if err == nil {
+		t.Fatal("missing old_str should error")
+	}
+	if strings.Contains(err.Error(), "overwrite") {
+		t.Errorf("error names a mode that does not exist: %v", err)
+	}
+	if !strings.Contains(err.Error(), writeSave) {
+		t.Errorf("error should name the real whole-file mode %q: %v", writeSave, err)
+	}
+}
