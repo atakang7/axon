@@ -53,8 +53,25 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
   </div>
 
   <figure class="cortex-terminal">
-    <img src="/axon/cortex-terminal.png" alt="Cortex terminal coding agent running on Axon, showing a completed code change, test verification, context size, and token usage." />
-    <figcaption>Real Cortex session: edit, verify, continue — with Axon driving the runtime underneath.</figcaption>
+    <div class="terminal-chrome">
+      <span></span><span></span><span></span>
+      <strong>cortex</strong>
+    </div>
+    <div class="terminal-screen" aria-label="Excerpt from a real Cortex coding session">
+      <span class="term-ok">✓ 8 lines</span>
+      <span class="term-dim">turn 2 · calling model...</span>
+      <strong>Both repos build, vet, and test green. Done.</strong>
+      <br />
+      <span class="term-heading">## What changed</span>
+      <span>axon: added an optional title model and kept the turn loop isolated.</span>
+      <span>cortex: wired the same model into the product without adding another config surface.</span>
+      <br />
+      <span class="term-heading">## Verified</span>
+      <span>axon: go build · go vet · go test ./... → pass</span>
+      <span>cortex: go build · go vet · go test ./... → pass</span>
+      <div class="terminal-status">z-ai/glm-5.2 · pruner: deepseek/v4-flash · cortex · turn 2 · ctx 13868</div>
+    </div>
+    <figcaption>Excerpt from a real Cortex session — with Axon driving the runtime underneath.</figcaption>
   </figure>
 </div>
 
