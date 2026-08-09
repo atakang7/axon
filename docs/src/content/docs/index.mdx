@@ -1,44 +1,96 @@
 ---
-title: Axon Go Runtime
-description: A minimalist, production-ready Go runtime for tool-using LLM agents.
+title: Axon | Build Agents, Not Infrastructure
+description: A production-ready Go runtime for tool-using LLM agents.
 template: splash
 hero:
-  title: Build Agents. Not Infrastructure.
-  tagline: Axon owns the execution machinery — turns, tools, sessions, context pressure, retries, streaming, and background processes. You own the product.
+  title: |
+    Build Agents.<br/>
+    <span class="text-accent">Not Infrastructure.</span>
+  tagline: Axon is the execution engine for modern LLM agents. We handle the turn loops, context pressure, retries, and background processes. You own the product.
   actions:
-    - text: Read the Quickstart
+    - text: Start Building
       link: /axon/start/quickstart/
       icon: right-arrow
       variant: primary
     - text: View on GitHub
       link: https://github.com/atakang7/axon
-      icon: github
       variant: secondary
+      icon: github
 ---
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-## Where to go next?
+## Powering Next-Gen Agents
+
+Axon is built for scale. It is the underlying engine powering **cortex**, a state-of-the-art terminal coding agent.
+
+<div class="cortex-showcase">
+  <div class="terminal-header">
+    <span class="dot red"></span>
+    <span class="dot yellow"></span>
+    <span class="dot green"></span>
+    <span class="title">cortex — built with axon</span>
+  </div>
+  <pre class="terminal-body">
+    <code>
+<span class="dim">✓ 96 lines (8 shown)</span>
+<span class="accent">read</span> /home/zperson/axon/settings.go
+package axon
+
+import (
+    "fmt"
+    "sort"
+    "time"
+)
+<span class="dim">✓ 200 lines (8 shown)</span>
+<span class="dim">turn 1 · calling model...</span>
+<span class="accent">read</span> /home/zperson/axon/setup.go
+...
+<span class="dim">turn 1 · calling model...</span>
+<span class="dim">∴ thinking 1m10s</span>
+
+<span class="prompt">❯</span> <span class="input">ask for a change, or /help</span>
+<span class="blinking-cursor">_</span>
+
+<span class="status-bar">z-ai/glm-5.2 · pruner: deepseek/deepseek-v4-flash-0731 · zperson/cortex · turn 1 · ctx 24692 · tokens 157415↑ 936↓</span>
+    </code>
+  </pre>
+</div>
+
+Axon provides the primitives to build powerful, long-running agent experiences like cortex without writing thousands of lines of boilerplate infrastructure.
+
+---
+
+## Why Top Teams Choose Axon
 
 <CardGrid stagger>
-  <Card title="Learn the Core Concepts" icon="open-book">
-    Understand how Axon manages the [Turn Loop](/axon/concepts/turn-loop/), handles [Context Pressure](/axon/concepts/context/), and emits [Events](/axon/concepts/events/) for your UI.
+  <Card title="Infinite Context via Pruning" icon="seti:db">
+    Context windows fill up. Axon's dual-tier memory system uses a free recency window combined with a secondary, flash-tier LLM to aggressively park stale context and keep your primary model fast and focused.
   </Card>
-  <Card title="Add Capabilities" icon="puzzle">
-    Equip your agent with the 7 [Built-in Tools](/axon/tools/builtins/), write [Custom Tools](/axon/tools/custom/) in pure Go, or connect to [MCP Servers](/axon/tools/mcp/).
+  <Card title="Bulletproof Execution" icon="rocket">
+    Built for real-world instability. Axon automatically handles SSE stream truncation, exponential backoffs, status-code routing, and even intercepts leaked XML markup from the model to force corrections.
   </Card>
-  <Card title="Configure Everything" icon="setting">
-    Learn the difference between [Agent Setup](/axon/configuration/setup/) and [Runtime Policies](/axon/configuration/yaml/), and how to manage [File Locations](/axon/configuration/locations/).
+  <Card title="Asynchronous Tooling" icon="laptop">
+    Not all tools return instantly. Spawn long-running watchers, servers, or database clients as background processes. Axon tracks their process groups and streams their deltas.
   </Card>
-  <Card title="Explore Internals" icon="magnifier">
-    Dive deep into Axon's [Architecture](/axon/internals/architecture/), [Security Boundaries](/axon/internals/security/), and automatic [Retry Logic](/axon/internals/retries/).
+  <Card title="Strict Security Boundaries" icon="shield">
+    The runtime never decides what to build. Tools are isolated via strict interfaces and flat limit caps. The agent cannot read your provider credentials or modify its own configuration.
   </Card>
 </CardGrid>
 
 ---
 
-<LinkCard
-  title="Need a full terminal agent?"
-  description="Check out Bouton, the official terminal client powered by Axon."
-  href="https://github.com/atakang7/bouton"
-/>
+## Start Your Journey
+
+<CardGrid>
+  <LinkCard
+    title="Read the Quickstart"
+    description="Get an agent running in under 60 seconds."
+    href="/axon/start/quickstart/"
+  />
+  <LinkCard
+    title="Explore the Turn Loop"
+    description="See exactly how Axon drives models and executes tools."
+    href="/axon/concepts/turn-loop/"
+  />
+</CardGrid>
