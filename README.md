@@ -91,29 +91,29 @@ The snippet above is the full agent loop — one client, one agent, one `Step`. 
 Full documentation lives at **[atakang7.github.io/axon](https://atakang7.github.io/axon/)**:
 
 **Getting Started**
-- [What is Axon?](https://atakang7.github.io/axon/start/overview/) — what the runtime is and why it exists
-- [Quickstart](https://atakang7.github.io/axon/start/quickstart/) — agent running in under a minute
+- [What is Axon?](https://atakang7.github.io/axon/start/overview/) — What Axon is and why it exists.
+- [Quickstart](https://atakang7.github.io/axon/start/quickstart/) — Get an agent running in under a minute.
 
 **Core Concepts**
-- [The Turn Loop](https://atakang7.github.io/axon/concepts/turn-loop/) — how a `Step` runs model → tools → model
-- [Context Management](https://atakang7.github.io/axon/concepts/context/) — how the pruner keeps long sessions stable
-- [Sessions & Memory](https://atakang7.github.io/axon/concepts/sessions/) — persistent, resumable sessions
-- [Events & UI](https://atakang7.github.io/axon/concepts/events/) — the structured event stream for any UI
+- [The Turn Loop](https://atakang7.github.io/axon/concepts/turn-loop/) — How `Step()` drives the agent through model calls and tool execution.
+- [Context Management](https://atakang7.github.io/axon/concepts/context/) — How Axon keeps the model's context window bounded.
+- [Sessions & Memory](https://atakang7.github.io/axon/concepts/sessions/) — Persistence, listing, switching, and undo.
+- [Events & UI](https://atakang7.github.io/axon/concepts/events/) — The structured event stream for building UIs.
 
 **Tools**
-- [Built-in Tools](https://atakang7.github.io/axon/tools/builtins/) — file I/O, search, shell exec, background processes
-- [Custom Tools](https://atakang7.github.io/axon/tools/custom/) — defining your own tools
-- [MCP Servers](https://atakang7.github.io/axon/tools/mcp/) — connecting external tool servers over stdio or HTTP
+- [Built-in Tools](https://atakang7.github.io/axon/tools/builtins/) — The seven tools that ship with every agent.
+- [Custom Tools](https://atakang7.github.io/axon/tools/custom/) — How to add your own tools to an agent.
+- [MCP Servers](https://atakang7.github.io/axon/tools/mcp/) — Integrate Model Context Protocol tool servers.
 
 **Configuration**
-- [Agent Setup](https://atakang7.github.io/axon/configuration/setup/) — wiring a model, system prompt, and tools in Go
-- [Runtime Policies](https://atakang7.github.io/axon/configuration/yaml/) — complete `axon.yaml` reference
-- [File Locations](https://atakang7.github.io/axon/configuration/locations/) — where sessions, logs, and state live
+- [Agent Setup](https://atakang7.github.io/axon/configuration/setup/) — The two configuration surfaces and why they are separate.
+- [Runtime Policies](https://atakang7.github.io/axon/configuration/yaml/) — Every field in the configuration file.
+- [File Locations](https://atakang7.github.io/axon/configuration/locations/) — Where Axon reads and writes files.
 
 **Under the Hood**
-- [Architecture](https://atakang7.github.io/axon/internals/architecture/) — internals and data flow
-- [Security Boundaries](https://atakang7.github.io/axon/internals/security/) — trust model and limits
-- [Retry Logic](https://atakang7.github.io/axon/internals/retries/) — how transient failures are handled
+- [Architecture](https://atakang7.github.io/axon/internals/architecture/) — Internal design reference for contributors.
+- [Security Boundaries](https://atakang7.github.io/axon/internals/security/) — How Axon protects credentials and configuration from tools.
+- [Retry Logic](https://atakang7.github.io/axon/internals/retries/) — How Axon handles transient failures.
 
 
 ---
