@@ -119,13 +119,54 @@ func (p *Pruner) ContextTokens(s *Session) int {
 	return n / 4
 }
 
+// prunableMessages returns the blocks a curator pass may park, in log order.
+//
+// This is the single definition of "up for decision", and both callers depend
+// on it agreeing with itself: prunerRequest shows the curator exactly these
+// blocks, and ShouldFire refuses to make a pass when there are none. When the
+// two rules were written out separately, ShouldFire fired on a session whose
+// blocks were all still inside the window, and prunerRequest then rendered an
+// empty log — so the curator was asked to choose from nothing, correctly
+// answered "nothing", and the pass cost a model call for no change.
+//
+// Excluded, in order: the system message, which is never parkable; anything
+// without an ID, which cannot be named in a reply; anything already parked,
+// which is not in the model's context any more; and anything still inside the
+// recency window, which is kept for free and would only make every judgment
+// call cost tokens on blocks nobody was going to ask about.
+func prunableMessages(s *Session, windowBlocks int) []Msg {
+	cut := windowCutoff(s, windowBlocks)
+
+	var out []Msg
+	for _, m := range s.Messages {
+		if m.Role == "system" || m.ID == "" || m.Parked {
+			continue
+		}
+		if windowBlocks > 0 && !cut[m.ID] {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // ShouldFire reports whether a curator pass is worth making now.
+//
+// Two conditions, and both are necessary. The thresholds say the context is
+// big enough to be worth curating; prunableMessages says there is something
+// there to curate. The second is not implied by the first: the thresholds are
+// measured in tokens and the window in blocks, so a session holding a handful
+// of very large blocks — a few big files read early in a task — crosses the
+// floor while every block it has is still inside the window.
 func (p *Pruner) ShouldFire(s *Session) bool {
 	if p == nil {
 		return false
 	}
 	tokens := p.ContextTokens(s)
 	if tokens < p.floor {
+		return false
+	}
+	if len(prunableMessages(s, p.window)) == 0 {
 		return false
 	}
 	if p.lastFire == 0 {
@@ -312,16 +353,8 @@ func prunerRequest(s *Session, windowBlocks int, reminder string) string {
 		b.WriteString("(none registered)")
 	}
 
-	cut := windowCutoff(s, windowBlocks)
-
 	b.WriteString("\n\n# LOG\n")
-	for _, m := range s.Messages {
-		if m.Role == "system" || m.ID == "" || m.Parked {
-			continue
-		}
-		if windowBlocks > 0 && !cut[m.ID] {
-			continue // inside the free window already; not up for curator judgment
-		}
+	for _, m := range prunableMessages(s, windowBlocks) {
 		label := m.Role
 		if m.ToolName != "" {
 			label = "tool:" + m.ToolName

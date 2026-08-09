@@ -447,10 +447,18 @@ func TestIntegrationCuratorCanOnlyParkBlocksThatAreAlreadyFree(t *testing.T) {
 	}
 }
 
-// A session whose active blocks all fit inside the window renders a log with
-// no candidates at all. ShouldFire still fires on it, so the runtime pays for
-// a full curator round trip whose only possible correct answer is {"park":[]}.
-func TestIntegrationCuratorIsCalledWithAnEmptyLog(t *testing.T) {
+// A session whose active blocks all fit inside the window has nothing the
+// curator could park, however large those blocks are. Firing on it bought a
+// model call whose only possible correct answer was {"park":[]}.
+//
+// The thresholds are measured in tokens and the window in blocks, so the two
+// disagree exactly here: a handful of very large blocks — a few big files read
+// early in a task — clears the floor while every block is still inside the
+// window. Traced against a real model this fired, rendered an empty log, was
+// answered {"park":[]}, and left the context byte for byte unchanged at 10229
+// tokens; having changed nothing, it then re-fired every GrowthTokens for the
+// rest of the session.
+func TestPrunerDoesNotFireWhenEveryBlockIsInsideTheWindow(t *testing.T) {
 	// Five blocks, window of thirty: nothing is ever outside it.
 	s := buildContext(t,
 		blockSpec{role: "user", bytes: 100, label: "USER: start"},
@@ -463,9 +471,43 @@ func TestIntegrationCuratorIsCalledWithAnEmptyLog(t *testing.T) {
 	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[]}`})
 	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 30, FloorTokens: 10000, GrowthTokens: 5000})
 
-	if !p.ShouldFire(s) {
-		t.Fatal("precondition broken: context should be over the floor")
+	if tokens := p.ContextTokens(s); tokens < p.floor {
+		t.Fatalf("precondition broken: context is %d tokens, under the %d floor", tokens, p.floor)
 	}
+
+	if p.ShouldFire(s) {
+		t.Fatalf("fired with nothing to park: context is %d tokens but all %d blocks "+
+			"are inside the %d-block window, so the curator would be billed for an empty log",
+			p.ContextTokens(s), len(s.Messages), p.window)
+	}
+}
+
+// The other half of the same rule: once a block falls outside the window,
+// there is something to decide and the pass is worth making.
+func TestPrunerFiresOnceABlockLeavesTheWindow(t *testing.T) {
+	// The two newest blocks stay in the window and carry enough content to
+	// clear the floor on their own. Weighting it the other way would put the
+	// bulk outside the window, where ContextMessages has already replaced it
+	// with a breadcrumb and ContextTokens no longer counts it.
+	//
+	// OLD FILE is the candidate, and it has to be a tool block: protectedIDs
+	// shields the most recent user and assistant message, so a session whose
+	// only out-of-window blocks are those two still has nothing to offer.
+	s := buildContext(t,
+		blockSpec{role: "user", bytes: 100, label: "USER: start"},
+		blockSpec{role: "assistant", bytes: 100, label: "ASSISTANT: done"},
+		blockSpec{role: "tool", toolName: "read", bytes: 5000, label: "OLD FILE"},
+		blockSpec{role: "tool", toolName: "read", bytes: 40000, label: "FILE ONE"},
+		blockSpec{role: "tool", toolName: "read", bytes: 40000, label: "FILE TWO"},
+	)
+
+	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[]}`})
+	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 2, FloorTokens: 10000, GrowthTokens: 5000})
+
+	if !p.ShouldFire(s) {
+		t.Fatal("blocks have left the window and the context is over the floor; the pass is worth making")
+	}
+
 	if _, err := p.Prune(context.Background(), s); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -477,12 +519,9 @@ func TestIntegrationCuratorIsCalledWithAnEmptyLog(t *testing.T) {
 	}
 	log, _, _ = strings.Cut(log, "\n\nCRITICAL REMINDER")
 
-	if strings.TrimSpace(log) != "" {
-		t.Fatalf("expected an empty log section, got %d bytes", len(log))
+	if strings.TrimSpace(log) == "" {
+		t.Fatal("fired but showed the curator an empty log — the two rules have drifted apart again")
 	}
-	t.Logf("WASTED CALL: context is %d tokens (over the %d floor) but every block "+
-		"is inside the window, so the curator was billed for a log containing "+
-		"zero candidates", p.ContextTokens(s), p.floor)
 }
 
 // The curator names blocks by the integer in "mN". Confirm the prompt it

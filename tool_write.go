@@ -13,13 +13,27 @@ import (
 // WRITE
 // ---------------------------------------------------------------------------
 
-const writeDescription = `Write to a file.
-  - save: set the file's full contents. Creates if absent, replaces if present. Use this whenever you have the whole file in hand — do not check existence first.
-  - replace_string: replace one exact occurrence of old_str.
-  - replace_lines: replace lines [start_line, end_line].
-  - insert_at_line: insert before start_line (1-based).
+// writeDescription is the model's only guidance on how to change a file, so
+// the mode ordering here is the mode ranking the model adopts.
+//
+// It used to lead with save and told the model to use it "whenever you have
+// the whole file in hand". Since a file is almost always changed right after
+// being read, that condition is nearly always true, and traced runs showed
+// the consequence: five consecutive full-file rewrites for a change touching
+// a few lines each, re-emitting every unchanged line as output tokens. The
+// targeted modes were never chosen once.
+//
+// Ordering now runs narrowest-first and names the condition for save in terms
+// of the edit rather than the model's context.
+const writeDescription = `Write to a file. Choose the mode by the size of the change, not by how much of the file you happen to have in hand.
+  - replace_string: replace one exact occurrence of old_str. This is the normal way to change a file that already exists. Include enough surrounding context in old_str for the match to be unique.
+  - replace_lines: replace lines [start_line, end_line]. Use when the text is long or awkward to quote exactly. Take the numbers from a fresh read of the file, not from memory, and include every line you intend to replace — a range that stops one line short silently deletes whatever closed the block.
+  - insert_at_line: insert before start_line (1-based). Use to add without disturbing what is already there.
+  - save: set the file's full contents. Correct for a new file, or when genuinely replacing nearly all of an existing one.
 
-Writes are atomic (tmp + rename) and reversible via /undo. A formatter runs after every write. For brace languages emit content flat (no indentation). For whitespace-significant languages (Python, YAML) emit indentation correctly.`
+Having just read a file is not a reason to rewrite it. A full rewrite costs output in proportion to the file's size instead of the change's, and it silently drops anything you did not carry over.
+
+Writes are atomic (tmp + rename) and each one is recorded so it can be reverted. A formatter runs after every write. For brace languages emit content flat (no indentation). For whitespace-significant languages (Python, YAML) emit indentation correctly.`
 
 type writeInput struct {
 	Path      string `json:"path"`
@@ -47,7 +61,11 @@ func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput,
 		// no extra validation needed
 	case writeReplaceStr:
 		if p.OldStr == "" {
-			return nil, "", fmt.Errorf("old_str is required for mode=replace_string (use overwrite if you mean to replace the whole file)")
+			// The mode named here must be one that exists. It read
+			// "use overwrite" for a while — there is no overwrite mode, and
+			// a caller following the advice gets a second, equally opaque
+			// error out of the default branch below.
+			return nil, "", fmt.Errorf("old_str is required for mode=replace_string (use mode=save if you mean to replace the whole file)")
 		}
 	case writeReplaceLn:
 		if p.StartLine < 1 || p.EndLine < p.StartLine {
@@ -68,8 +86,19 @@ func WriteTool(ws Workspace) Tool {
 		Name:        toolWrite,
 		Description: writeDescription,
 		Schema: obj("object", props{
-			"path":       strSchema("Relative or absolute file path."),
-			"mode":       enumSchema("save | replace_string | replace_lines | insert_at_line. Required.", writeSave, writeReplaceStr, writeReplaceLn, writeInsertAt),
+			"path": strSchema("Relative or absolute file path."),
+			// Order matters here, and it is the reason this line reads oddly
+			// against the constant block above. The enum led with save, and
+			// so did its description; traced runs showed the model picking
+			// save every single time, even after the prose in
+			// writeDescription was rewritten to argue against it. The
+			// structured schema is the stronger signal, so the narrow modes
+			// go first and save goes last, with the condition for each
+			// stated where the model reads the field.
+			"mode": enumSchema(
+				"replace_string | replace_lines | insert_at_line | save. Required. Use replace_string for an ordinary change to a file that already exists; use save only for a new file or a near-total rewrite.",
+				writeReplaceStr, writeReplaceLn, writeInsertAt, writeSave,
+			),
 			"content":    strSchema("New content. Required for all modes."),
 			"old_str":    strSchema("Exact text to replace. Required when mode=replace_string."),
 			"start_line": intSchema("1-based start line. Required when mode=replace_lines or insert_at_line."),
@@ -129,12 +158,30 @@ func writeReplaceStringMode(ws Workspace, abs, oldStr, newStr string) (string, e
 		return "", err
 	}
 	old := string(before)
+
+	// Caught before the match is attempted, because it explains a failure the
+	// not-found message below would describe misleadingly. A caller that sends
+	// the same text as both halves has written out the state it wants the file
+	// to be in and used it for both fields; old_str then describes a file that
+	// does not exist yet, so the match fails for a reason that has nothing to
+	// do with whitespace.
+	if oldStr == newStr {
+		return "", fmt.Errorf("old_str and content are identical, so this edit would change nothing — old_str must be the text as it appears in the file now, content the text that should replace it")
+	}
+
 	count := strings.Count(old, oldStr)
 	if count == 0 {
-		return "", fmt.Errorf("old_str not found — verify exact whitespace, or use mode=replace_lines for deterministic line-based edits")
+		// The recovery advice here used to point at replace_lines. That is
+		// the wrong direction and it caused real damage: old_str not matching
+		// means the caller's picture of this file is stale, and line numbers
+		// derived from that same stale picture are stale too. A traced run
+		// took the advice, replaced a line range computed from memory, and
+		// destroyed a docstring's closing quotes — then spent two more calls
+		// repairing it. Send the caller back to the file instead.
+		return "", fmt.Errorf("old_str not found in %s — read the file again and copy the exact text you mean to replace, including its whitespace, rather than reconstructing it from memory", abs)
 	}
 	if count > 1 {
-		return "", fmt.Errorf("old_str matches %d times — provide more surrounding context to make it unique, or use mode=replace_lines", count)
+		return "", fmt.Errorf("old_str matches %d times in %s — extend it with the surrounding lines that make the one you mean unique", count, abs)
 	}
 	after := strings.Replace(old, oldStr, newStr, 1)
 	ws.RecordEdit(abs, old)
