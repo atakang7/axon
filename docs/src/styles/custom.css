@@ -167,10 +167,73 @@
   box-shadow: 0 28px 60px -22px rgba(0, 0, 0, 0.75);
 }
 
-.cortex-terminal img {
-  display: block;
-  width: 100%;
-  height: auto;
+.terminal-chrome {
+  display: grid;
+  grid-template-columns: repeat(3, 9px) 1fr;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 11px;
+  background: #202020;
+  border-bottom: 1px solid #2d2d2d;
+}
+
+.terminal-chrome span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4b4b4b;
+}
+
+.terminal-chrome strong {
+  justify-self: center;
+  transform: translateX(-22px);
+  color: #f8fafc;
+  font-family: var(--sl-text-code);
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+}
+
+.terminal-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+  min-height: 340px;
+  padding: 1rem 1.05rem 0;
+  color: #b8c0ff;
+  font-family: var(--sl-text-code);
+  font-size: clamp(0.66rem, 1.2vw, 0.78rem);
+  line-height: 1.45;
+}
+
+.terminal-screen strong {
+  color: #b8c0ff;
+  font-size: inherit;
+}
+
+.term-ok {
+  color: #56d364;
+}
+
+.term-dim {
+  color: #7d8590;
+}
+
+.term-heading {
+  margin-top: 0.2rem;
+  color: #79c0ff;
+}
+
+.terminal-status {
+  margin-top: auto;
+  margin-left: -1.05rem;
+  margin-right: -1.05rem;
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid #30363d;
+  color: #6e7681;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cortex-terminal figcaption {
@@ -393,6 +456,10 @@
   .cortex-proof {
     padding: 1rem;
     border-radius: 16px;
+  }
+
+  .terminal-screen {
+    min-height: 300px;
   }
 
   .benchmark-grid {
