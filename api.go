@@ -46,6 +46,13 @@ type Config struct {
 
 	Pruner Model
 
+	// TitleModel, when set, is asked to name the session from the first
+	// user message. When nil, the deterministic deriveTitle truncation is
+	// used instead. The call is best-effort: any error or empty reply
+	// falls back to deriveTitle, so a title model that misbehaves cannot
+	// break a turn.
+	TitleModel Model
+
 	Cwd string
 
 	Session *Session

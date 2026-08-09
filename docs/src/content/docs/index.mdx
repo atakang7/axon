@@ -1,74 +1,61 @@
 ---
-title: Axon | Build Agents, Not Infrastructure
-description: A production-ready Go runtime for tool-using LLM agents.
+title: Axon | Go Runtime for LLM Agents
+description: A minimalist, production-ready Go runtime for tool-using LLM agents.
 template: splash
 hero:
-  title: |
-    Build Agents.<br/>
-    <span class="text-accent">Not Infrastructure.</span>
-  tagline: Axon is the execution engine for modern LLM agents. We handle the turn loops, context pressure, retries, and background processes. You own the product.
+  title: Build the Agent.<br/><span class="text-gradient">Not the Engine.</span>
+  tagline: Axon is the execution machinery for modern LLM agents. It owns the turn loops, tools, sessions, context pressure, retries, and streaming. You own the product.
   actions:
-    - text: Start Building
+    - text: Get Started
       link: /axon/start/quickstart/
       icon: right-arrow
       variant: primary
     - text: View on GitHub
       link: https://github.com/atakang7/axon
-      variant: secondary
       icon: github
+      variant: secondary
 ---
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-## Powering Next-Gen Agents
+## The Foundation for Autonomous Agents
 
-Axon is built for scale. It is the underlying engine powering **cortex**, a state-of-the-art terminal coding agent.
+Axon provides the hardened, production-ready primitives required to build agents like **cortex** without writing thousands of lines of boilerplate infrastructure.
 
-<div class="cortex-showcase">
-  <div class="terminal-header">
-    <span class="dot red"></span>
-    <span class="dot yellow"></span>
-    <span class="dot green"></span>
-    <span class="title">cortex — built with axon</span>
-  </div>
-  <pre class="terminal-body">
-    <code>
-<span class="dim">✓ 96 lines (8 shown)</span>
-<span class="accent">read</span> /home/zperson/axon/settings.go
-package axon
+<div class="code-showcase">
+```go
+package main
 
-{"import ("}
-    "fmt"
-    "sort"
-    "time"
+import (
+    "context"
+    "github.com/atakang7/axon/v2"
 )
-<span class="dim">✓ 200 lines (8 shown)</span>
-<span class="dim">turn 1 · calling model...</span>
-<span class="accent">read</span> /home/zperson/axon/setup.go
-...
-<span class="dim">turn 1 · calling model...</span>
-<span class="dim">∴ thinking 1m10s</span>
 
-<span class="prompt">❯</span> <span class="input">ask for a change, or /help</span>
-<span class="blinking-cursor">_</span>
+func main() {
+    agent, _ := axon.New(axon.Config{
+        Model:        axon.OpenAI(os.Getenv("OPENROUTER_API_KEY"), "deepseek/deepseek-v3.2"),
+        SystemPrompt: "You are a careful coding agent.",
+    })
+    defer agent.Close()
 
-<span class="status-bar">z-ai/glm-5.2 · pruner: deepseek/deepseek-v4-flash-0731 · zperson/cortex · turn 1 · ctx 24692 · tokens 157415↑ 936↓</span>
-    </code>
-  </pre>
+    agent.Run(context.Background(), func() (string, bool) {
+        // Your UI loop here. Axon handles the rest.
+        return getInput(), true
+    })
+}
+```
 </div>
-
-Axon provides the primitives to build powerful, long-running agent experiences like cortex without writing thousands of lines of boilerplate infrastructure.
 
 ---
 
-## Why Top Teams Choose Axon
+## Production-Grade Capabilities
 
 <CardGrid stagger>
   <Card title="Infinite Context via Pruning" icon="seti:db">
-    Context windows fill up. Axon's dual-tier memory system uses a free recency window combined with a secondary, flash-tier LLM to aggressively park stale context and keep your primary model fast and focused.
+    Dual-tier memory system. Uses a free recency window combined with a secondary, flash-tier LLM to aggressively park stale context and keep your primary model fast and focused.
   </Card>
   <Card title="Bulletproof Execution" icon="rocket">
-    Built for real-world instability. Axon automatically handles SSE stream truncation, exponential backoffs, status-code routing, and even intercepts leaked XML markup from the model to force corrections.
+    Built for real-world instability. Axon automatically handles SSE stream truncation, exponential backoffs, status-code routing, and even intercepts leaked XML markup from the model.
   </Card>
   <Card title="Asynchronous Tooling" icon="laptop">
     Not all tools return instantly. Spawn long-running watchers, servers, or database clients as background processes. Axon tracks their process groups and streams their deltas.
@@ -80,7 +67,7 @@ Axon provides the primitives to build powerful, long-running agent experiences l
 
 ---
 
-## Start Your Journey
+## Dive In
 
 <CardGrid>
   <LinkCard

@@ -47,6 +47,10 @@ type Agent struct {
 	// Settings this agent was constructed with, already defaulted.
 	settings Settings
 
+	// Optional model used to name the session from the first user message.
+	// nil means deriveTitle's truncation is used instead.
+	titleModel Model
+
 	// Config.MaxIterations; zero means the loop is unbounded.
 	maxIterations int
 }
