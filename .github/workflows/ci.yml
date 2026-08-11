@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Callable so release.yml can run this exact gate as a prerequisite rather
-  # than keeping a second copy of it. There is one definition of "green".
   workflow_call:
 
 permissions:
@@ -21,11 +19,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
       - run: go build ./...
-
       - run: go vet ./...
-
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)
@@ -34,8 +29,53 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
-
       - run: go test -race ./...
+
+  quickstart:
+    name: documented quickstart / compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Reproduce documented consumer setup
+        run: |
+          set -euxo pipefail
+          tmp=$(mktemp -d)
+          cd "$tmp"
+          go mod init example.com/axon-quickstart
+          go mod edit -replace=github.com/atakang7/axon/v2="$GITHUB_WORKSPACE"
+          go get github.com/atakang7/axon/v2
+          cat > main.go <<'EOF'
+          package main
+
+          import (
+              "context"
+              "fmt"
+              "log"
+              "os"
+
+              "github.com/atakang7/axon/v2"
+          )
+
+          func main() {
+              model, err := axon.OpenAI(axon.ClientConfig{Provider: axon.Provider{
+                  BaseURL: "https://openrouter.ai/api",
+                  Model: "deepseek/deepseek-v3.2",
+                  APIKey: os.Getenv("OPENROUTER_API_KEY"),
+              }})
+              if err != nil { log.Fatal(err) }
+              agent, err := axon.New(axon.Config{Model: model, SystemPrompt: "You are a careful coding agent."})
+              if err != nil { log.Fatal(err) }
+              defer agent.Close()
+              result, err := agent.Step(context.Background(), "List the files in this directory.")
+              if err != nil { log.Fatal(err) }
+              fmt.Println(result.Assistant)
+          }
+          EOF
+          go build .
 
   docs:
     name: docs / build
