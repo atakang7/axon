@@ -3,13 +3,20 @@ title: Quickstart
 description: Get an agent running in under a minute.
 ---
 
-## Install
+## Create a Go module
+
+Axon is a Go library, not a standalone CLI. `go get` must run inside a Go module:
 
 ```bash
-go get github.com/atakang7/axon/v2
+mkdir axon-quickstart
+cd axon-quickstart
+go mod init example.com/axon-quickstart
+go get github.com/atakang7/axon/v2@latest
 ```
 
-## Minimal agent (no config file)
+## Create the agent
+
+Save this as `main.go`:
 
 ```go
 package main
@@ -54,7 +61,26 @@ func main() {
 
 **Required:** `Config.Model` and `Config.SystemPrompt`. Everything else has defaults.
 
+## Compile before using an API key
+
+This verifies the documented program against the Axon version selected by Go:
+
+```bash
+go build .
+```
+
+## Run
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+go run .
+```
+
+The API call requires a valid OpenRouter key; the preceding `go build .` check does not.
+
 ## Multi-turn loop
+
+Once you have the agent above, you can replace the single `Step` with:
 
 ```go
 agent.Run(ctx, func() (string, bool) {
@@ -93,53 +119,12 @@ defer agent.Close()
 
 `Settings.NewClient(endpoint, model)` resolves the provider from config, applies model settings, and returns a working `Model` in one call.
 
-## With pruner
-
-```go
-prunerModel, _ := axon.OpenAI(axon.ClientConfig{
-    Provider: axon.Provider{
-        BaseURL: "https://openrouter.ai/api",
-        Model:   "qwen/qwen3.6-flash",    // cheap, fast
-        APIKey:  os.Getenv("OPENROUTER_API_KEY"),
-    },
-})
-
-agent, _ := axon.New(axon.Config{
-    Model:        mainModel,
-    Pruner:       prunerModel,
-    SystemPrompt: "...",
-})
-```
-
-The pruner is a secondary model that parks stale context. Use a cheap flash-tier model. See [Context Management](/axon/runtime/context/) for details.
-
-## With events
-
-```go
-agent, _ := axon.New(axon.Config{
-    Model:        model,
-    SystemPrompt: "...",
-    OnEvent: func(ctx context.Context, e axon.Event) {
-        switch e.Kind {
-        case axon.KindToken:
-            fmt.Print(e.Text)
-        case axon.KindToolCall:
-            fmt.Printf("→ %s\n", e.Tool.Name)
-        case axon.KindError:
-            fmt.Fprintf(os.Stderr, "err: %v\n", e.Err)
-        }
-    },
-})
-```
-
-See [Events](/axon/runtime/events/) for the full kind reference.
-
 ## Best practices
 
 1. **Always `defer agent.Close()`** — kills background shells, closes MCP subprocesses.
 2. **Use `Settings.NewClient()`** when loading from config.
 3. **Keep system prompts instructional** — Axon appends tool schemas automatically.
 4. **Enable the pruner for long sessions** — context grows unbounded without it.
-5. **Background all network commands** — if it *might* hang, set `run_in_background: true`.
+5. **Background network commands that may hang.**
 6. **Concurrency:** `Step`/`Run`/`Reset` are not concurrent-safe. `Interrupt()` is the only goroutine-safe method.
 7. **Tool schema is always required** — even for no-arg tools use `map[string]any{"type": "object"}`.
