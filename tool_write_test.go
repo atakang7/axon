@@ -87,6 +87,47 @@ func TestWriteSaveReplacesExistingFile(t *testing.T) {
 	}
 }
 
+func TestWriteSaveRejectsSuspiciousShrinkOfExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	os.WriteFile(path, []byte(strings.Repeat("line\n", 30)), 0644)
+	ws := newFakeWorkspace(dir)
+	tool := WriteTool(ws)
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "save", "content": "line\nline\n",
+	}))
+	if err == nil {
+		t.Fatal("expected suspicious shrink to error")
+	}
+	if !strings.Contains(err.Error(), "much shorter") || !strings.Contains(err.Error(), "replace_lines") {
+		t.Fatalf("error is not actionable: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != strings.Repeat("line\n", 30) {
+		t.Fatal("file mutated on rejected save")
+	}
+}
+
+func TestWriteSaveAllowsSmallExistingFileReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	os.WriteFile(path, []byte("old\nsmall\nfile\n"), 0644)
+	ws := newFakeWorkspace(dir)
+	tool := WriteTool(ws)
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "save", "content": "new\n",
+	}))
+	if err != nil {
+		t.Fatalf("Fn: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "new\n" {
+		t.Fatalf("content = %q, want new", data)
+	}
+}
+
 // replace_string with an empty old_str is meaningless (replace nothing with
 // something?) and must be rejected at validation, before any file is opened.
 func TestWriteReplaceStringEmptyOldStrErrors(t *testing.T) {
@@ -144,9 +185,58 @@ func TestWriteReplaceStringMultipleMatchesErrors(t *testing.T) {
 	if !strings.Contains(err.Error(), "2") {
 		t.Fatalf("error does not name the match count: %v", err)
 	}
+	if !strings.Contains(err.Error(), "line 1") || !strings.Contains(err.Error(), "use replace_lines") {
+		t.Fatalf("error does not include actionable match locations: %v", err)
+	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "foo bar foo" {
 		t.Fatalf("file mutated on a failed replace: %q", data)
+	}
+}
+
+func TestWriteReplaceStringMultipleMatchesSummarizesFirstFiveLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	os.WriteFile(path, []byte("x\nx\nx\nx\nx\nx\n"), 0644)
+	ws := newFakeWorkspace(dir)
+	tool := WriteTool(ws)
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "replace_string", "old_str": "x", "content": "y",
+	}))
+	if err == nil {
+		t.Fatal("multiple matches should error")
+	}
+	for _, want := range []string{"line 1", "line 5", "..."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestWriteReplaceStringRejectsReplacementCarryingFileHeader(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "api.py")
+	original := "from .model import User\n\n\ndef public_user(user):\n    return {\n        \"name\": user.name,\n    }\n"
+	os.WriteFile(path, []byte(original), 0644)
+	ws := newFakeWorkspace(dir)
+	tool := WriteTool(ws)
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path":    "api.py",
+		"mode":    "replace_string",
+		"old_str": "    return {\n        \"name\": user.name,\n    }",
+		"content": "from .model import User\n\n\ndef public_user(user):\n    return {\n        \"display_name\": user.name,\n    }\n",
+	}))
+	if err == nil {
+		t.Fatal("expected replacement carrying file header to error")
+	}
+	if !strings.Contains(err.Error(), "duplicate top-level code") {
+		t.Fatalf("error is not actionable: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != original {
+		t.Fatal("file mutated on rejected replace")
 	}
 }
 
@@ -537,5 +627,36 @@ func TestWriteErrorsOnlyNameRealModes(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), writeSave) {
 		t.Errorf("error should name the real whole-file mode %q: %v", writeSave, err)
+	}
+}
+
+// A replace_string call that omits content unmarshals to the empty string and
+// silently deletes the matched text. A traced cortex run lost a line of source
+// that way and spent two calls putting it back. An absent key is a malformed
+// call; a deliberate deletion has to be written as content:"".
+func TestWriteReplaceStringRequiresContentToBePresent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	os.WriteFile(path, []byte("alpha\nbeta\n"), 0644)
+	ws := newFakeWorkspace(dir)
+	tool := WriteTool(ws)
+
+	_, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "replace_string", "old_str": "alpha",
+	}))
+	if err == nil {
+		t.Fatal("missing content should error at validation")
+	}
+	if data, _ := os.ReadFile(path); string(data) != "alpha\nbeta\n" {
+		t.Fatalf("file mutated by a rejected call: %q", data)
+	}
+
+	if _, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"path": "f.txt", "mode": "replace_string", "old_str": "alpha\n", "content": "",
+	})); err != nil {
+		t.Fatalf("explicit empty content should delete the match: %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "beta\n" {
+		t.Fatalf("explicit deletion did not apply: %q", data)
 	}
 }
