@@ -111,7 +111,7 @@ agent, _ := axon.New(axon.Config{
 })
 ```
 
-The pruner is a secondary model that parks stale context. Use a cheap flash-tier model. See [Context Management](/axon/runtime/context/) for details.
+The pruner is a secondary model that parks stale context. Use a cheap flash-tier model. See [Context Management](/axon/concepts/context/) for details.
 
 ## With events
 
@@ -132,7 +132,7 @@ agent, _ := axon.New(axon.Config{
 })
 ```
 
-See [Events](/axon/runtime/events/) for the full kind reference.
+See [Events](/axon/concepts/events/) for the full kind reference.
 
 ## Best practices
 
