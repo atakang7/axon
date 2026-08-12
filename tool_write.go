@@ -50,6 +50,16 @@ func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput,
 		return nil, "", err
 	}
 
+	// content is in the schema's required list, but nothing enforces that
+	// before the call arrives, and an absent key unmarshals to "" — which is
+	// indistinguishable from a deliberate deletion. A traced run dropped a
+	// line of source that way and spent two calls putting it back. Absent is
+	// a malformed call; empty is a deletion the caller has to ask for.
+	var supplied map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &supplied); err != nil {
+		return nil, "", err
+	}
+
 	if strings.TrimSpace(p.Path) == "" {
 		return nil, "", fmt.Errorf("path is required")
 	}
@@ -66,6 +76,9 @@ func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput,
 			// a caller following the advice gets a second, equally opaque
 			// error out of the default branch below.
 			return nil, "", fmt.Errorf("old_str is required for mode=replace_string (use mode=save if you mean to replace the whole file)")
+		}
+		if _, ok := supplied["content"]; !ok {
+			return nil, "", fmt.Errorf("content is required for mode=replace_string — send the replacement text, or content:\"\" if you really mean to delete the matched text")
 		}
 	case writeReplaceLn:
 		if p.StartLine < 1 || p.EndLine < p.StartLine {
@@ -141,6 +154,9 @@ func writeSaveMode(ws Workspace, abs, content string) (string, error) {
 	priorContent := ""
 	if existed {
 		priorContent = string(before)
+		if err := rejectSuspiciousSaveShrink(abs, priorContent, content); err != nil {
+			return "", err
+		}
 	}
 	ws.RecordEdit(abs, priorContent)
 	if err := WriteFileAtomic(abs, []byte(content)); err != nil {
@@ -150,6 +166,29 @@ func writeSaveMode(ws Workspace, abs, content string) (string, error) {
 		return "saved " + abs + " (replaced)", nil
 	}
 	return "saved " + abs + " (created)", nil
+}
+
+func rejectSuspiciousSaveShrink(abs, oldContent, newContent string) error {
+	oldLines := lineCount(oldContent)
+	newLines := lineCount(newContent)
+	if oldLines < 20 {
+		return nil
+	}
+	if oldLines-newLines < 5 {
+		return nil
+	}
+	if len(newContent)*100 >= len(oldContent)*80 {
+		return nil
+	}
+
+	return fmt.Errorf("save would replace existing %s with much shorter content (%d -> %d lines) — this often means the file was only partially carried over; use replace_string or replace_lines for a targeted edit, or re-read the file before saving a near-total rewrite", abs, oldLines, newLines)
+}
+
+func lineCount(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(content, "\n") + 1
 }
 
 func writeReplaceStringMode(ws Workspace, abs, oldStr, newStr string) (string, error) {
@@ -181,11 +220,59 @@ func writeReplaceStringMode(ws Workspace, abs, oldStr, newStr string) (string, e
 		return "", fmt.Errorf("old_str not found in %s — read the file again and copy the exact text you mean to replace, including its whitespace, rather than reconstructing it from memory", abs)
 	}
 	if count > 1 {
-		return "", fmt.Errorf("old_str matches %d times in %s — extend it with the surrounding lines that make the one you mean unique", count, abs)
+		return "", fmt.Errorf("old_str matches %d times in %s at %s — extend it with the surrounding lines that make the one you mean unique, or use replace_lines with a fresh line number", count, abs, matchLineSummary(old, oldStr))
+	}
+	start := strings.Index(old, oldStr)
+	if start > 0 && replacementStartsWithFileHeader(old, newStr) {
+		return "", fmt.Errorf("content appears to include the beginning of %s while old_str matches later in the file — this would duplicate top-level code; replace only the matched block, or use mode=save only for a genuine whole-file rewrite", abs)
 	}
 	after := strings.Replace(old, oldStr, newStr, 1)
 	ws.RecordEdit(abs, old)
 	return "replaced 1 occurrence in " + abs, WriteFileAtomic(abs, []byte(after))
+}
+
+func replacementStartsWithFileHeader(oldContent, replacement string) bool {
+	oldFirst := firstMeaningfulLine(oldContent)
+	replacementFirst := firstMeaningfulLine(replacement)
+	return oldFirst != "" && replacementFirst == oldFirst
+}
+
+func firstMeaningfulLine(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func matchLineSummary(content, needle string) string {
+	if needle == "" {
+		return "unknown lines"
+	}
+
+	var lines []string
+	for offset := 0; ; {
+		idx := strings.Index(content[offset:], needle)
+		if idx < 0 {
+			break
+		}
+		start := offset + idx
+		line := 1 + strings.Count(content[:start], "\n")
+		lines = append(lines, fmt.Sprintf("line %d", line))
+		offset = start + len(needle)
+		if len(lines) == 5 {
+			if strings.Contains(content[offset:], needle) {
+				lines = append(lines, "...")
+			}
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return "unknown lines"
+	}
+	return strings.Join(lines, ", ")
 }
 
 func writeReplaceLinesMode(ws Workspace, abs string, startLine, endLine int, content string) (string, error) {
