@@ -91,6 +91,7 @@ func main() {
 	defer agent.Close()
 
 	last := readLastCheck()
+	scanStarted := time.Now()
 	gmailQuery := fmt.Sprintf("is:unread after:%s", last.Local().Format("2006/01/02"))
 	query := fmt.Sprintf(`Run the startup attention check. The previous successful check was %s.
 
@@ -111,10 +112,11 @@ Only report things plausibly new since the previous successful check. If one of 
 	}
 	fmt.Println(brief)
 
-	// Advance the checkpoint only after a successful complete run. A reported
-	// CHECK FAILED is intentionally not considered a successful complete scan.
+	// Checkpoint at scan start, not scan end. Anything that arrives while the
+	// scan is running remains eligible on the next boot instead of falling into
+	// a small race window between the browser snapshots and this write.
 	if !strings.Contains(brief, "CHECK FAILED") {
-		if err := writeLastCheck(time.Now()); err != nil {
+		if err := writeLastCheck(scanStarted); err != nil {
 			log.Printf("warning: could not save checkpoint: %v", err)
 		}
 	}
