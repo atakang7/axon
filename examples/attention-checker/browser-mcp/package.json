@@ -1,0 +1,12 @@
+{
+  "name": "axon-attention-browser-mcp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "login": "node login.mjs",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.62.1"
+  }
+}
