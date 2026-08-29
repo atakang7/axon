@@ -321,7 +321,7 @@ var chunk struct {
 		// usage arrives on the stream's final chunk, keyed separately from the
 		// per-choice delta. Providers disagree on the field names, so collect
 		// it verbatim and normalize below.
-		usage *struct {
+		Usage *struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
 			// OpenRouter sends cost as a plain float, not an object.
@@ -337,10 +337,10 @@ var chunk struct {
 	// array. Parse it before the choices-length guard below, or a usage-only
 	// chunk is dropped on the floor and the caller never sees token totals or
 	// cost.
-	if chunk.usage != nil {
-		r.usage.PromptTokens = chunk.usage.PromptTokens
-		r.usage.CompletionTokens = chunk.usage.CompletionTokens
-		r.usage.Cost = chunk.usage.Cost
+	if chunk.Usage != nil {
+		r.usage.PromptTokens = chunk.Usage.PromptTokens
+		r.usage.CompletionTokens = chunk.Usage.CompletionTokens
+		r.usage.Cost = chunk.Usage.Cost
 	}
 
 	if len(chunk.Choices) == 0 {
