@@ -189,10 +189,11 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 	}
 
 	body := map[string]any{
-		"model":      c.cfg.Provider.Model,
-		"messages":   req.Messages,
-		"stream":     true,
-		"max_tokens": maxTokens,
+		"model":          c.cfg.Provider.Model,
+		"messages":       req.Messages,
+		"stream":         true,
+		"stream_options": map[string]any{"include_usage": true},
+		"max_tokens":     maxTokens,
 	}
 
 	if len(tools) > 0 {
