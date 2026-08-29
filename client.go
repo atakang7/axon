@@ -329,16 +329,24 @@ var chunk struct {
 		} `json:"usage"`
 	}
 
-	if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Choices) == 0 {
+	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		return
 	}
 
+	// usage arrives on the stream's final chunk, often with an empty choices
+	// array. Parse it before the choices-length guard below, or a usage-only
+	// chunk is dropped on the floor and the caller never sees token totals or
+	// cost.
 	if chunk.usage != nil {
 		r.usage.PromptTokens = chunk.usage.PromptTokens
 		r.usage.CompletionTokens = chunk.usage.CompletionTokens
 		if chunk.usage.Cost != nil {
 			r.usage.Cost = chunk.usage.Cost.TotalCost
 		}
+	}
+
+	if len(chunk.Choices) == 0 {
+		return
 	}
 
 	delta := chunk.Choices[0].Delta
