@@ -34,7 +34,7 @@ OUTSIDE WINDOW          │      INSIDE WINDOW
 The `window_blocks` most recent active blocks are shown in full. Everything older is collapsed to a one-line breadcrumb:
 
 ```
-[#m1 parked | reason: outside recency window | gist: user: List the files]
+[#m1 parked | gist: user: List the files]
 ```
 
 No model call. No cost. Blocks that age out are automatically back to full content the moment they re-enter the window (e.g., the pruner parks enough that the window recedes).

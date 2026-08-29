@@ -32,6 +32,28 @@ func TestSearchBlankQueryErrors(t *testing.T) {
 	}
 }
 
+// A traced Cortex run called search with {"literal":"needle"} instead of
+// {"query":"needle","mode":"literal"}. Treating that as a hard error cost a
+// full model round trip even though the intent was unambiguous.
+func TestSearchAcceptsLiteralAliasForQuery(t *testing.T) {
+	requireRipgrep(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("needle\n"), 0644)
+	ws := newFakeWorkspace(dir)
+	tool := SearchTool(ws, testLimits())
+
+	out, err := tool.Fn(context.Background(), mustJSON(t, map[string]any{
+		"literal": "needle",
+		"path":    "f.txt",
+	}))
+	if err != nil {
+		t.Fatalf("Fn: %v", err)
+	}
+	if !strings.Contains(out, "needle") {
+		t.Fatalf("literal alias did not search as query: %q", out)
+	}
+}
+
 // mode defaults to literal — the safer, more predictable choice for a model
 // that has not deliberately opted into regex semantics — and an unrecognised
 // mode must error.

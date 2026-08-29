@@ -97,7 +97,20 @@ func (a *Agent) Interrupt() bool {
 }
 
 func (a *Agent) initSessionMessages() {
-	a.session.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(a.systemPrompt, a.tools)}}
+	sys := Msg{Role: "system", Content: buildSystemPrompt(a.systemPrompt, a.tools)}
+
+	// SwitchSession loads the full conversation from disk before calling
+	// here; resetting the slice would throw that history away and the model
+	// would see a fresh session. Rebuild the leading system message in place
+	// and keep everything after it.
+	//
+	// Reset() calls here after wiping the session itself, so there is no
+	// tail to preserve in that case.
+	if len(a.session.Messages) == 0 {
+		a.session.Messages = []Msg{sys}
+		return
+	}
+	a.session.Messages[0] = sys
 }
 
 func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
@@ -111,6 +124,20 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 	for attempt := range policy.MaxAttempts {
 		if attempt > 0 {
 			backoff := backoffFor(attempt, policy.BackoffCap.Std())
+
+			// A 429 with a Retry-After hint carries the server's own
+			// estimate of how long the congestion will last. When that hint
+			// exceeds our computed backoff, trust it — it knows its queue
+			// better than we do. When it's shorter, our tripling policy is
+			// already waiting longer than the server asked, which is fine:
+			// the hint is a minimum, not a cap.
+			if server := retryAfterHint(lastErr); server > backoff {
+				backoff = server
+				if cap := policy.BackoffCap.Std(); cap > 0 && backoff > cap {
+					backoff = cap
+				}
+			}
+
 			a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("retry %d/%d in %s", attempt+1, policy.MaxAttempts, backoff)})
 			select {
 			case <-ctx.Done():
@@ -133,8 +160,8 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 				ToolArgs: func(name, delta string) {
 					a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
 				},
-				Usage: func(prompt, completion int) {
-					a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion}})
+				Usage: func(prompt, completion int, cost float64) {
+					a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion, Cost: cost}})
 				},
 			},
 		})
@@ -254,19 +281,44 @@ func (a *Agent) runTool(ctx context.Context, tc ToolCall) Msg {
 
 // backoffFor returns how long to wait before the given attempt: exponential,
 // ceilinged by the configured cap.
+//
+// The base triples on each attempt rather than doubling. A steeper curve is
+// what shared, rate-limited pools — OpenRouter's free tier among them — call
+// for: the next open slot is usually minutes away, and a backoff that crawls
+// up one second at a time spends its attempts before it reaches the wait that
+// would succeed. Tripling reaches a minute inside four attempts and the cap
+// soon after, so the policy still fails fast on a genuinely broken endpoint
+// while giving a congested free pool a real chance to clear.
 func backoffFor(attempt int, cap time.Duration) time.Duration {
 	if cap <= 0 {
 		cap = DefaultSettings().Retry.BackoffCap.Std()
 	}
 
-	// Shift on a duration rather than a second count so the cap can be any
-	// duration, not just a whole number of seconds.
-	wait := time.Second << attempt
+	// Multiply out 3^attempt on a duration rather than a second count so the
+	// cap can be any duration, not just a whole number of seconds.
+	wait := time.Second
+	for range attempt {
+		wait *= 3
+	}
 	if wait <= 0 || wait > cap {
 		return cap
 	}
 
 	return wait
+}
+
+// retryAfterHint extracts a server-provided Retry-After wait from an error, if
+// present. Returns zero when the error carries no hint, so the caller falls
+// back to its own backoff.
+func retryAfterHint(err error) time.Duration {
+	if err == nil {
+		return 0
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.RetryAfter
+	}
+	return 0
 }
 
 // retryable reports whether a failed request is worth another attempt.

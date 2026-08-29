@@ -104,7 +104,7 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
 	defer cancel()
 
-	cmd := exec.Command("sh", "-lc", p.Command)
+	cmd := foregroundShellCommand(p.Command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if resolvedDir != "" {
 		cmd.Dir = resolvedDir
@@ -170,6 +170,13 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 	captured, truncated := buf.snapshot()
 	tailed, hidden := tailN(captured, p.TailLines)
 	return formatExec(p.Command, cmd.Dir, code, p.ExpectedOutcome, tailed, hidden, truncated, note), nil
+}
+
+func foregroundShellCommand(command string) *exec.Cmd {
+	if bash, err := exec.LookPath("bash"); err == nil {
+		return exec.Command(bash, "-o", "pipefail", "-lc", command)
+	}
+	return exec.Command("sh", "-lc", command)
 }
 
 const bashOutputDescription = `Read new output from a background shell since the last read. Status is "running" or the exit summary. Returns only the delta — calling this in a poll loop is cheap; rereading the same bytes is not.

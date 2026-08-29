@@ -57,10 +57,10 @@ func (s *Session) ContextMessages(windowBlocks int) []Msg {
 		toolCalls := m.ToolCalls
 		switch {
 		case m.Parked:
-			content = breadcrumb(m.ID, m.ParkReason, m.ParkSummary)
+			content = breadcrumb(m.ID, m.ParkSummary)
 			toolCalls = nil
 		case cut[m.ID]:
-			content = breadcrumb(m.ID, "outside recency window", gist(s, m.ID))
+			content = breadcrumb(m.ID, gist(s, m.ID))
 			toolCalls = nil
 		}
 
@@ -110,9 +110,11 @@ func windowCutoff(s *Session, windowBlocks int) map[string]bool {
 	return cut
 }
 
-// breadcrumb is the one-line in-context replacement for a parked block.
-func breadcrumb(id, reason, summary string) string {
-	return fmt.Sprintf("[#%s parked | reason: %s | gist: %s]", id, reason, summary)
+// breadcrumb is the one-line in-context replacement for a parked block. Park
+// reasons remain in session metadata for auditability; the provider only needs
+// the block id and gist.
+func breadcrumb(id, summary string) string {
+	return fmt.Sprintf("[#%s parked | gist: %s]", id, summary)
 }
 
 // -----------------------------------------------------------------------------

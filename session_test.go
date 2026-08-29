@@ -1,6 +1,7 @@
 package axon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -723,5 +724,47 @@ func TestTaskBlockRendering(t *testing.T) {
 	}
 	if strings.Contains(done, "CURRENT STEP") {
 		t.Fatalf("completed block should not still show a current step: %q", done)
+	}
+}
+
+func TestLooksLikeTitle(t *testing.T) {
+	cases := []struct {
+		title string
+		want  bool
+	}{
+		{"Fix refund reconciliation bug", true},
+		{"Investigate and fix ops bug report", true},
+		{"I'll start by reading the CORTEX_TASK.md file to understand the task.", false},
+		{"I'll start by reading the file to understand the task", false},
+		{"", false},
+		{strings.Repeat("x", 81), false},
+	}
+	for _, c := range cases {
+		if got := looksLikeTitle(c.title); got != c.want {
+			t.Errorf("looksLikeTitle(%q) = %v, want %v", c.title, got, c.want)
+		}
+	}
+}
+
+func TestDeriveTitleWithModelRejectsNarration(t *testing.T) {
+	a := &Agent{titleModel: funcModel{fn: func(context.Context, Request) (*Msg, error) {
+		return &Msg{Role: "assistant", Content: "I'll start by reading the file to understand the task."}, nil
+	}}}
+
+	got := a.deriveTitleWithModel(context.Background(), "fix the refund bug")
+	want := deriveTitle("fix the refund bug")
+	if got != want {
+		t.Errorf("deriveTitleWithModel() = %q, want fallback %q", got, want)
+	}
+}
+
+func TestDeriveTitleWithModelAcceptsShortTitle(t *testing.T) {
+	a := &Agent{titleModel: funcModel{fn: func(context.Context, Request) (*Msg, error) {
+		return &Msg{Role: "assistant", Content: `"Fix refund reconciliation bug"`}, nil
+	}}}
+
+	got := a.deriveTitleWithModel(context.Background(), "fix the refund bug")
+	if got != "Fix refund reconciliation bug" {
+		t.Errorf("deriveTitleWithModel() = %q, want quotes trimmed", got)
 	}
 }

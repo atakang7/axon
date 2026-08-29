@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 480" width="1280" height="480" role="img" aria-label="Axon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1026"/>
+      <stop offset="55%" stop-color="#131a3f"/>
+      <stop offset="100%" stop-color="#05070f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="52%" r="42%">
+      <stop offset="0%" stop-color="#6ea8ff" stop-opacity="0.55"/>
+      <stop offset="45%" stop-color="#7c5cff" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#05070f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9ecbff"/>
+      <stop offset="100%" stop-color="#7c5cff"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5ad1ff"/>
+      <stop offset="100%" stop-color="#b388ff"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="480" fill="url(#bg)"/>
+  <rect width="1280" height="480" fill="url(#glow)"/>
+
+  <g opacity="0.10" stroke="#8fb6ff" stroke-width="1">
+    <path d="M0 360 H1280"/>
+    <path d="M0 300 H1280"/>
+    <path d="M0 240 H1280"/>
+    <path d="M0 180 H1280"/>
+    <path d="M0 120 H1280"/>
+    <path d="M160 0 V480"/>
+    <path d="M320 0 V480"/>
+    <path d="M480 0 V480"/>
+    <path d="M800 0 V480"/>
+    <path d="M960 0 V480"/>
+    <path d="M1120 0 V480"/>
+  </g>
+
+  <g transform="translate(640 250)">
+    <circle r="150" fill="#7c5cff" opacity="0.16" filter="url(#soft)"/>
+    <circle r="118" fill="none" stroke="url(#ring)" stroke-width="2.5" opacity="0.55"/>
+    <circle r="142" fill="none" stroke="url(#ring)" stroke-width="1.2" opacity="0.28"/>
+    <g fill="url(#mark)">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M81 36 64 0 47 36l-1 2-9-10a6 6 0 0 0-9 9l10 10h-2L0 64l36 17h2L28 91a6 6 0 1 0 9 9l9-10 1 2 17 36 17-36v-2l9 10a6 6 0 1 0 9-9l-9-9 2-1 36-17-36-17-2-1 9-9a6 6 0 1 0-9-9l-9 10v-2Zm-17 2-2 5c-4 8-11 15-19 19l-5 2 5 2c8 4 15 11 19 19l2 5 2-5c4-8 11-15 19-19l5-2-5-2c-8-4-15-11-19-19l-2-5Z" transform="scale(1.6)"/>
+      <path d="M118 19a6 6 0 0 0-9-9l-3 3a6 6 0 1 0 9 9l3-3Zm-96 4c-2 2-6 2-9 0l-3-3a6 6 0 1 1 9-9l3 3c3 2 3 6 0 9Zm0 82c-2-2-6-2-9 0l-3 3a6 6 0 1 0 9 9l3-3c3-2 3-6 0-9Zm96 4a6 6 0 0 1-9 9l-3-3a6 6 0 1 1 9-9l3 3Z" transform="scale(1.6)"/>
+    </g>
+  </g>
+
+  <text x="640" y="412" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="58" font-weight="700" fill="#eaf0ff" letter-spacing="2">Axon</text>
+  <text x="640" y="446" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="400" fill="#8fa6d8" letter-spacing="1">A Go runtime for tool-using LLM agents</text>
+</svg>

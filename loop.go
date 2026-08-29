@@ -17,7 +17,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	a.session.Turn++
 	a.emit(ctx, Event{Kind: KindTurnStart})
 	if a.session.Turn == 1 && a.session.Title == "" {
-		a.session.Title = deriveTitle(userInput)
+		a.session.Title = a.deriveTitleWithModel(ctx, userInput)
 	}
 	a.session.Append(Msg{Role: "user", Content: userInput})
 	if err := a.session.Save(); err != nil {

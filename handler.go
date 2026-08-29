@@ -117,10 +117,13 @@ type PruneInfo struct {
 	Rejected []string
 }
 
-// UsageInfo carries token accounting for a single completed API call.
+// UsageInfo carries token accounting for a single completed API call. Cost is
+// the USD charge for the call when the provider reports one (OpenRouter fills
+// it); zero when the provider does not.
 type UsageInfo struct {
 	PromptTokens     int
 	CompletionTokens int
+	Cost             float64
 }
 
 // SessionInfo carries session-start/end metadata.

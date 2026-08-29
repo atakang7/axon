@@ -262,45 +262,28 @@ func TestIntegrationCuratorReclaimsTokensWithWindowOff(t *testing.T) {
 		before, after, parked, before-after)
 }
 
-// With the window ON — the shipped default — parking cannot reclaim anything,
-// and in fact makes the context slightly LARGER.
-//
-// The two mechanisms compose into a dead end. The window already collapsed
-// every block the curator is allowed to see into
-//
-//	[#mN parked | reason: outside recency window | gist: ...]
-//
-// and parking one only rewrites that same breadcrumb with a different reason
-// string. "pruner: not needed to continue" is longer than "outside recency
-// window", so each park costs a handful of characters and saves none.
-//
-// Every curator call under the default configuration is therefore pure loss:
-// the money, the latency, and a net increase in the thing it was called to
-// reduce.
-func TestIntegrationCuratorCannotReclaimTokensWithWindowOn(t *testing.T) {
+// With the window ON — the shipped default — the free recency collapse already
+// turns pruner candidates into breadcrumbs. Since the curator returns IDs, not
+// summaries, parking those same blocks would produce the same projection. The
+// runtime gate must skip that paid no-op.
+func TestIntegrationCuratorSkipsZeroSavingsWithWindowOn(t *testing.T) {
 	s := explorationSession(t, 12, 4000)
 
-	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[3,5,7]}`})
+	provider := newPrunerProvider(t)
 	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 6, FloorTokens: 1, GrowthTokens: 1})
 
-	before := p.ContextTokens(s)
-	after, err := p.Prune(context.Background(), s)
-	if err != nil {
-		t.Fatalf("Prune: %v", err)
+	if got := len(prunableMessages(s, p.window)); got == 0 {
+		t.Fatal("precondition broken: expected windowed candidates")
 	}
-
-	if len(parkedIDs(s)) != 3 {
-		t.Fatalf("parked %v, want 3 blocks", parkedIDs(s))
+	if savings := potentialPruneSavings(s, p.window); savings != 0 {
+		t.Fatalf("potentialPruneSavings = %d, want 0 for already-windowed blocks", savings)
 	}
-	if after < before {
-		t.Fatalf("context shrank by %d tokens — the window/curator overlap "+
-			"documented here has been fixed; update this test", before-after)
+	if p.ShouldFire(s) {
+		t.Fatal("ShouldFire true even though pruning can only rewrite existing breadcrumbs")
 	}
-
-	t.Logf("NET LOSS: parked 3 blocks and context went %d -> %d tokens (+%d). "+
-		"Every candidate the curator sees was already collapsed by the window; "+
-		"parking only swaps one breadcrumb reason for a longer one.",
-		before, after, after-before)
+	if len(provider.requests) != 0 {
+		t.Fatalf("curator was called %d time(s), want 0", len(provider.requests))
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -483,8 +466,9 @@ func TestPrunerDoesNotFireWhenEveryBlockIsInsideTheWindow(t *testing.T) {
 }
 
 // The other half of the same rule: once a block falls outside the window,
-// there is something to decide and the pass is worth making.
-func TestPrunerFiresOnceABlockLeavesTheWindow(t *testing.T) {
+// there is something to decide, but no reason to pay for that decision unless
+// parking can reduce the next projected context.
+func TestPrunerSkipsWindowedBlockWhenParkingCannotShrinkContext(t *testing.T) {
 	// The two newest blocks stay in the window and carry enough content to
 	// clear the floor on their own. Weighting it the other way would put the
 	// bulk outside the window, where ContextMessages has already replaced it
@@ -504,8 +488,8 @@ func TestPrunerFiresOnceABlockLeavesTheWindow(t *testing.T) {
 	provider := newPrunerProvider(t, sseDelta{Content: `{"park":[]}`})
 	p := livePruner(t, provider, PrunerSettings{WindowBlocks: 2, FloorTokens: 10000, GrowthTokens: 5000})
 
-	if !p.ShouldFire(s) {
-		t.Fatal("blocks have left the window and the context is over the floor; the pass is worth making")
+	if p.ShouldFire(s) {
+		t.Fatal("ShouldFire true even though the block has already been collapsed by the window")
 	}
 
 	if _, err := p.Prune(context.Background(), s); err != nil {
