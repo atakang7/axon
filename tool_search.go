@@ -37,6 +37,12 @@ func SearchTool(ws Workspace, lim Limits) Tool {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return "", err
 			}
+			if strings.TrimSpace(p.Query) == "" && strings.TrimSpace(p.Literal) != "" {
+				p.Query = p.Literal
+				if p.Mode == "" {
+					p.Mode = searchLiteral
+				}
+			}
 			if strings.TrimSpace(p.Query) == "" {
 				return "", fmt.Errorf("query is required")
 			}
@@ -63,6 +69,7 @@ func SearchTool(ws Workspace, lim Limits) Tool {
 
 type searchInput struct {
 	Query         string   `json:"query"`
+	Literal       string   `json:"literal"`
 	Mode          string   `json:"mode"`
 	Path          string   `json:"path"`
 	Globs         []string `json:"globs"`

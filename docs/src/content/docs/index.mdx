@@ -1,83 +1,12 @@
 ---
-title: Axon | Go Runtime for LLM Agents
-description: A minimalist, production-ready Go runtime for tool-using LLM agents.
+title: Axon | Go Agent Runtime
+description: The Go execution runtime behind Cortex and specialized agents for coding, Kubernetes, SRE, cloud operations, security, data, and release engineering.
 template: splash
-hero:
-  title: Build the Agent.<br/><span class="text-gradient">Not the Engine.</span>
-  tagline: Axon is the execution machinery for modern LLM agents. It owns the turn loops, tools, sessions, context pressure, retries, and streaming. You own the product.
-  actions:
-    - text: Get Started
-      link: /axon/start/quickstart/
-      icon: right-arrow
-      variant: primary
-    - text: View on GitHub
-      link: https://github.com/atakang7/axon
-      icon: github
-      variant: secondary
+tableOfContents: false
 ---
 
-import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import Home from '../../components/Home.astro';
+import SpecializedAgents from '../../components/SpecializedAgents.astro';
 
-## The Foundation for Autonomous Agents
-
-Axon provides the hardened, production-ready primitives required to build agents like **cortex** without writing thousands of lines of boilerplate infrastructure.
-
-<div class="code-showcase">
-```go
-package main
-
-import (
-    "context"
-    "github.com/atakang7/axon/v2"
-)
-
-func main() {
-    agent, _ := axon.New(axon.Config{
-        Model:        axon.OpenAI(os.Getenv("OPENROUTER_API_KEY"), "deepseek/deepseek-v3.2"),
-        SystemPrompt: "You are a careful coding agent.",
-    })
-    defer agent.Close()
-
-    agent.Run(context.Background(), func() (string, bool) {
-        // Your UI loop here. Axon handles the rest.
-        return getInput(), true
-    })
-}
-```
-</div>
-
----
-
-## Production-Grade Capabilities
-
-<CardGrid stagger>
-  <Card title="Infinite Context via Pruning" icon="seti:db">
-    Dual-tier memory system. Uses a free recency window combined with a secondary, flash-tier LLM to aggressively park stale context and keep your primary model fast and focused.
-  </Card>
-  <Card title="Bulletproof Execution" icon="rocket">
-    Built for real-world instability. Axon automatically handles SSE stream truncation, exponential backoffs, status-code routing, and even intercepts leaked XML markup from the model.
-  </Card>
-  <Card title="Asynchronous Tooling" icon="laptop">
-    Not all tools return instantly. Spawn long-running watchers, servers, or database clients as background processes. Axon tracks their process groups and streams their deltas.
-  </Card>
-  <Card title="Strict Security Boundaries" icon="shield">
-    The runtime never decides what to build. Tools are isolated via strict interfaces and flat limit caps. The agent cannot read your provider credentials or modify its own configuration.
-  </Card>
-</CardGrid>
-
----
-
-## Dive In
-
-<CardGrid>
-  <LinkCard
-    title="Read the Quickstart"
-    description="Get an agent running in under 60 seconds."
-    href="/axon/start/quickstart/"
-  />
-  <LinkCard
-    title="Explore the Turn Loop"
-    description="See exactly how Axon drives models and executes tools."
-    href="/axon/concepts/turn-loop/"
-  />
-</CardGrid>
+<Home />
+<SpecializedAgents />

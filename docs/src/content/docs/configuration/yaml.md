@@ -88,7 +88,7 @@ tools:
 # ──────────────────────────────────────────
 pruner:
   mode: moderate                            # low | moderate | extreme
-  window_blocks: 30                         # free recency window
+  window_blocks: 30                         # free recency window; -1 disables
   floor_tokens: 10000                       # below = skip prune
   growth_tokens: 5000                       # accumulate before re-prune
   max_tokens: 16000                         # curator reply cap

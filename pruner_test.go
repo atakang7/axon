@@ -44,6 +44,22 @@ func TestNilPrunerIsSafe(t *testing.T) {
 	}
 }
 
+func TestNewPrunerPreservesNegativeWindow(t *testing.T) {
+	p := NewPruner(PrunerConfig{
+		Model:    funcModel{},
+		Settings: PrunerSettings{WindowBlocks: -1},
+	})
+	if p == nil {
+		t.Fatal("NewPruner returned nil")
+	}
+	if p.window != -1 {
+		t.Fatalf("window = %d, want -1 to disable windowing", p.window)
+	}
+	if p.floor <= 0 || p.growth <= 0 {
+		t.Fatalf("other pruner defaults were not filled: %+v", p)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // M2: ContextTokens
 // ---------------------------------------------------------------------------
@@ -500,10 +516,9 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 	// Push the session over pruneFloor before the agent even starts, so the
 	// very first Step triggers ShouldFire.
 	//
-	// Size alone is not enough: ShouldFire also requires a block the curator
-	// could actually park, and a lone block is inside the recency window. The
-	// tool blocks below leave one candidate outside a one-block window while
-	// the newest stays inside a two-block window and clears the floor on its own.
+	// Size alone is not enough: ShouldFire also requires a block whose parking
+	// can shrink the next projection. With the recency window disabled here, the
+	// old tool output is still visible in full and therefore worth pruning.
 	sess.Append(Msg{Role: "tool", ToolName: "read", Content: strings.Repeat("a", 5000)})
 	sess.Append(Msg{Role: "tool", ToolName: "read", Content: strings.Repeat("a", 45000)})
 
@@ -518,7 +533,7 @@ func TestStepContinuesWhenPruneFails(t *testing.T) {
 		ExcludeBuiltins: allBuiltins,
 		Session:         sess,
 		Pruner:          prunerModel,
-		Settings:        Settings{Pruner: PrunerSettings{WindowBlocks: 2}},
+		Settings:        Settings{Pruner: PrunerSettings{WindowBlocks: -1}},
 	}
 	var log eventLog
 	cfg.OnEvent = log.record

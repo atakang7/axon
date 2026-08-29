@@ -79,7 +79,7 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 	if s.Mode == "" {
 		s.Mode = d.Mode
 	}
-	fillInt(&s.WindowBlocks, d.WindowBlocks)
+	fillWindowBlocks(&s.WindowBlocks, d.WindowBlocks)
 	fillInt(&s.FloorTokens, d.FloorTokens)
 	fillInt(&s.GrowthTokens, d.GrowthTokens)
 	fillInt(&s.MaxTokens, d.MaxTokens)
@@ -169,10 +169,37 @@ func (p *Pruner) ShouldFire(s *Session) bool {
 	if len(prunableMessages(s, p.window)) == 0 {
 		return false
 	}
+	if potentialPruneSavings(s, p.window) <= 0 {
+		return false
+	}
 	if p.lastFire == 0 {
 		return true
 	}
 	return tokens-p.lastFire >= p.growth
+}
+
+// potentialPruneSavings estimates the prompt characters reclaimed if every
+// currently prunable block were parked. With a recency window enabled, old
+// blocks may already be shown as the same compact breadcrumb that Park would
+// produce; in that case a curator call cannot improve the next request.
+func potentialPruneSavings(s *Session, windowBlocks int) int {
+	cut := windowCutoff(s, windowBlocks)
+
+	savings := 0
+	for _, m := range prunableMessages(s, windowBlocks) {
+		current := len(m.Content)
+		if cut[m.ID] {
+			current = len(breadcrumb(m.ID, gist(s, m.ID)))
+		} else {
+			for _, tc := range m.ToolCalls {
+				current += len(tc.Function.Arguments) + len(tc.Function.Name)
+			}
+		}
+
+		parked := len(breadcrumb(m.ID, gist(s, m.ID)))
+		savings += current - parked
+	}
+	return savings
 }
 
 // Prune runs one curator pass and parks whatever the model names, returning

@@ -91,6 +91,7 @@ func New(cfg Config) (*Agent, error) {
 		excludeBuiltins: cfg.ExcludeBuiltins,
 		mcpClients:      mcpClients,
 		settings:        settings,
+		titleModel:      cfg.TitleModel,
 		maxIterations:   cfg.MaxIterations,
 	}
 

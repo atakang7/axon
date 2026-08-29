@@ -495,6 +495,17 @@ func TestWithDefaultsIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestWithDefaultsPreservesNegativePrunerWindow(t *testing.T) {
+	settings := Settings{Pruner: PrunerSettings{WindowBlocks: -1}}.WithDefaults()
+
+	if settings.Pruner.WindowBlocks != -1 {
+		t.Fatalf("WindowBlocks = %d, want -1 to disable windowing", settings.Pruner.WindowBlocks)
+	}
+	if settings.Pruner.FloorTokens <= 0 {
+		t.Fatalf("other pruner defaults were not filled: %+v", settings.Pruner)
+	}
+}
+
 // The zero Settings is what an embedder that never calls Load gets, so it has
 // to produce a working agent.
 func TestZeroSettingsAreUsable(t *testing.T) {

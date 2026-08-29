@@ -81,6 +81,24 @@ func TestContextMessagesStripsInternalFields(t *testing.T) {
 	}
 }
 
+func TestContextMessagesKeepsParkReasonOutOfBreadcrumb(t *testing.T) {
+	s := newAt(t, "s.json")
+	s.Append(Msg{Role: "assistant", Content: "a long answer"})
+
+	id := s.Messages[0].ID
+	if err := s.Park(id, "answer gist", "pruner: not needed to continue"); err != nil {
+		t.Fatal(err)
+	}
+
+	out := s.ContextMessages(0)
+	if got := out[0].Content; got != "[#"+id+" parked | gist: answer gist]" {
+		t.Fatalf("breadcrumb = %q, want compact id+gist form", got)
+	}
+	if strings.Contains(out[0].Content, "reason:") || strings.Contains(out[0].Content, "not needed") {
+		t.Fatalf("breadcrumb leaked internal park reason: %q", out[0].Content)
+	}
+}
+
 // A parked assistant message that carried tool_calls must present as
 // content-only (a large tool call's arguments would otherwise still cost
 // tokens even though the block was parked to save them) — but the

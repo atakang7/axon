@@ -1,0 +1,490 @@
+---
+const install = `go get github.com/atakang7/axon/v2`;
+
+const quickstart = `model, err := settings.NewClient("openrouter", "deepseek/deepseek-v3.2")
+if err != nil { log.Fatal(err) }
+
+agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: "You are a careful coding agent.",
+    OnEvent:      render,
+})
+if err != nil { log.Fatal(err) }
+defer agent.Close()
+
+result, err := agent.Step(ctx, "Find and fix the failing test.")`;
+
+const cortexWiring = `return axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: cfg.SystemPrompt,
+    MCPServers:   servers,
+    OnEvent:      onEvent,
+    Settings:     settings,
+    Pruner:       prunerModel,
+})`;
+
+const eventExample = `switch e.Kind {
+case axon.KindToken:
+    fmt.Print(e.Text)
+case axon.KindToolCall:
+    drawTool(e.Tool)
+case axon.KindUsage:
+    updateTokens(e.Usage)
+case axon.KindPruneEnd:
+    updateContext(e.Prune)
+}`;
+
+const retryPolicy = `retry:
+  max_attempts: 10
+  backoff_cap: 60s
+  on_status: [429, 500, 502, 503, 504]`;
+
+const tools = [
+  { name: 'read', mode: 'slice · full', desc: 'Read files or list directories. Binary-aware, byte-capped, line-addressable.' },
+  { name: 'write', mode: '4 edit modes', desc: 'Atomic tmp + rename writes. Every edit is recorded so agent.Undo() can restore it.' },
+  { name: 'exec', mode: 'fg · bg', desc: 'Run sh -lc commands with timeout control or detach long-lived processes into managed groups.' },
+  { name: 'bash_output', mode: 'delta', desc: 'Poll only output produced since the previous read, with offset and file-identity tracking.' },
+  { name: 'kill_shell', mode: 'lifecycle', desc: 'Terminate a whole process group: SIGTERM, grace period, then SIGKILL when needed.' },
+  { name: 'search', mode: 'literal · regex', desc: 'Ripgrep-backed workspace search with globs, case control, and bounded results.' },
+  { name: 'task', mode: 'plan state', desc: 'Register, advance, or replan a compact multi-step goal injected into context.' },
+];
+
+const events = [
+  'session_start', 'turn_start', 'user_input', 'api_call', 'token', 'reasoning',
+  'tool_arg_delta', 'tool_call', 'tool_result', 'usage', 'prune_start', 'prune_end', 'turn_end'
+];
+---
+
+<div class="axon-home">
+  <section class="home-hero" id="top">
+    <div class="hero-glow hero-glow-one"></div>
+    <div class="hero-glow hero-glow-two"></div>
+    <div class="hero-copy">
+      <div class="hero-kicker"><span class="pulse-dot"></span> OPEN-SOURCE · GO AGENT RUNTIME</div>
+      <h1>Build the agent.<br /><span>Don’t rebuild the runtime.</span></h1>
+      <p class="hero-lede">
+        Axon is the execution layer underneath <strong>Cortex</strong>, a real terminal coding agent.
+        It owns the long-running loop between models, tools, sessions, context, processes, and events —
+        while your product stays in control of behavior and UX.
+      </p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="/axon/start/quickstart/">Start building <span>→</span></a>
+        <a class="button button-secondary" href="https://github.com/atakang7/cortex">Explore Cortex <span>↗</span></a>
+      </div>
+      <div class="install-line" aria-label="Go install command">
+        <span class="install-prompt">$</span>
+        <code>{install}</code>
+      </div>
+      <div class="hero-signals">
+        <span><b>7</b> built-in tools</span>
+        <span><b>OpenAI-compatible</b> models</span>
+        <span><b>MCP</b> over stdio</span>
+        <span><b>Append-only</b> sessions</span>
+        <span><b>MIT</b> licensed</span>
+      </div>
+    </div>
+
+    <div class="hero-demo" aria-label="Cortex terminal demonstration">
+      <div class="demo-orbit orbit-one"></div>
+      <div class="demo-orbit orbit-two"></div>
+      <div class="terminal-window">
+        <div class="terminal-bar">
+          <div class="terminal-dots"><i></i><i></i><i></i></div>
+          <span>cortex</span>
+          <span class="terminal-branch">axon · main</span>
+        </div>
+        <div class="terminal-body">
+          <div class="terminal-row muted"><span class="gutter">›</span><span>turn 2 · calling model...</span></div>
+          <div class="terminal-row success"><span class="gutter">✓</span><span>Both repos build, vet, and test green. Done.</span></div>
+          <div class="terminal-space"></div>
+          <div class="terminal-row heading"><span>## What changed</span></div>
+          <div class="terminal-row"><span><b>axon</b> — runtime wiring stays isolated from the product.</span></div>
+          <div class="terminal-row"><span><b>cortex</b> — model, prompt, and terminal behavior stay above the line.</span></div>
+          <div class="terminal-space"></div>
+          <div class="terminal-row heading"><span>## Verified</span></div>
+          <div class="terminal-row muted"><span class="gutter">•</span><span>axon: go build · go vet · go test ./...</span><span class="pass">PASS</span></div>
+          <div class="terminal-row muted"><span class="gutter">•</span><span>cortex: go build · go vet · go test ./...</span><span class="pass">PASS</span></div>
+          <div class="terminal-input"><span class="prompt-mark">❯</span><span>ask for a change, or /help</span><i></i></div>
+        </div>
+        <div class="terminal-status">
+          <span>z-ai/glm-5.2</span>
+          <span>pruner: deepseek/v4-flash</span>
+          <span>turn 2</span>
+          <span>ctx 13,868</span>
+        </div>
+      </div>
+      <div class="demo-caption"><span>REFERENCE PRODUCT</span> Cortex uses Axon as its execution runtime.</div>
+    </div>
+  </section>
+
+  <nav class="section-rail" aria-label="Landing page sections">
+    <a href="#proof">Cortex</a>
+    <a href="#boundary">Boundary</a>
+    <a href="#turn">Turn loop</a>
+    <a href="#tools">Tools</a>
+    <a href="#context">Context</a>
+    <a href="#reliability">Reliability</a>
+    <a href="#events">Events</a>
+    <a href="#benchmark">Benchmark</a>
+  </nav>
+
+  <section class="home-section proof-section" id="proof">
+    <div class="section-heading narrow-heading">
+      <span class="section-kicker">01 · REAL PRODUCT PROOF</span>
+      <h2>Cortex is not a demo for Axon.<br />It is a product built on Axon.</h2>
+      <p>
+        The cleanest way to understand the runtime is to look at what Cortex does <em>not</em> implement.
+        Cortex owns the coding-agent product. Axon owns the generic execution machinery underneath it.
+      </p>
+    </div>
+
+    <div class="proof-grid">
+      <article class="proof-card proof-cortex">
+        <div class="proof-card-head">
+          <span class="repo-icon">C</span>
+          <div><b>github.com/atakang7/cortex</b><small>the coding agent</small></div>
+        </div>
+        <ul>
+          <li><span>01</span> Model + provider selection</li>
+          <li><span>02</span> Coding-agent system prompt</li>
+          <li><span>03</span> Bubble Tea terminal UI</li>
+          <li><span>04</span> Slash commands + UX policy</li>
+          <li><span>05</span> Interactive and one-shot modes</li>
+        </ul>
+      </article>
+
+      <div class="proof-connector">
+        <span>BUILT ON</span>
+        <i></i>
+        <b>↓</b>
+      </div>
+
+      <article class="proof-card proof-axon">
+        <div class="proof-card-head">
+          <span class="repo-icon">A</span>
+          <div><b>github.com/atakang7/axon</b><small>the runtime</small></div>
+        </div>
+        <ul>
+          <li><span>01</span> Model / tool turn loop</li>
+          <li><span>02</span> Session persistence + undo</li>
+          <li><span>03</span> Context projection + pruning</li>
+          <li><span>04</span> Foreground + background execution</li>
+          <li><span>05</span> Streaming + retries + events</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="wiring-proof">
+      <div class="wiring-copy">
+        <span class="mini-kicker">THE ACTUAL SEAM</span>
+        <h3>Cortex wires the runtime once.</h3>
+        <p>
+          Its <code>newAgent</code> function converts product configuration into an <code>axon.Config</code>.
+          The interactive TUI and non-interactive CLI both go through that same constructor, so the product cannot quietly grow a second agent loop.
+        </p>
+        <a href="https://github.com/atakang7/cortex/blob/main/cmd/cortex/main.go">Read Cortex wiring on GitHub ↗</a>
+      </div>
+      <pre class="code-panel code-panel-compact"><code>{cortexWiring}</code></pre>
+    </div>
+  </section>
+
+  <section class="home-section boundary-section" id="boundary">
+    <div class="section-heading">
+      <span class="section-kicker">02 · THE BOUNDARY</span>
+      <h2>Three layers. One direction.</h2>
+      <p>Product intent flows down. Runtime events flow back up. Axon is the seam that keeps those concerns from collapsing into one codebase.</p>
+    </div>
+
+    <div class="layer-stack">
+      <div class="layer layer-product">
+        <div class="layer-index">PRODUCT</div>
+        <div class="layer-title"><strong>Cortex / your agent</strong><span>what makes the agent yours</span></div>
+        <div class="layer-pills"><span>Prompt</span><span>UI</span><span>Policy</span><span>Custom tools</span><span>Model choice</span></div>
+      </div>
+      <div class="layer-arrow"><span>calls Step()</span><i></i><span>receives Events</span></div>
+      <div class="layer layer-runtime">
+        <div class="layer-index">RUNTIME</div>
+        <div class="layer-title"><strong>Axon</strong><span>the reusable execution substrate</span></div>
+        <div class="layer-pills"><span>Turn loop</span><span>Session</span><span>Context</span><span>Tool dispatch</span><span>Retries</span><span>Streaming</span><span>Processes</span></div>
+      </div>
+      <div class="layer-arrow"><span>drives</span><i></i><span>observes</span></div>
+      <div class="layer layer-environment">
+        <div class="layer-index">ENVIRONMENT</div>
+        <div class="layer-title"><strong>Machine + providers</strong><span>where work actually happens</span></div>
+        <div class="layer-pills"><span>LLM API</span><span>Filesystem</span><span>Shell</span><span>ripgrep</span><span>MCP servers</span></div>
+      </div>
+    </div>
+
+    <div class="boundary-notes">
+      <div><b>Small public surface</b><span><code>New</code>, <code>Step</code>, <code>Run</code>, <code>Interrupt</code>, <code>Reset</code>, <code>Undo</code>, runtime controls.</span></div>
+      <div><b>Config stays frozen</b><span>Settings are resolved at construction. Axon does not silently reread configuration mid-session.</span></div>
+      <div><b>Two agents can differ</b><span>Model, tools, settings, working directory, pruner, MCP servers, and event sinks are instance-level.</span></div>
+    </div>
+  </section>
+
+  <section class="home-section turn-section" id="turn">
+    <div class="section-heading split-heading">
+      <div>
+        <span class="section-kicker">03 · ONE TURN, END TO END</span>
+        <h2><code>Step()</code> is the engine room.</h2>
+      </div>
+      <p>One user message can become many model calls and many tool executions. Axon owns that continuation until the model finally returns with no more tool calls.</p>
+    </div>
+
+    <div class="turn-layout">
+      <div class="turn-timeline">
+        <div class="turn-step active"><span>01</span><div><b>Append user input</b><small>Increment turn, persist message, save session.</small></div></div>
+        <div class="turn-step"><span>02</span><div><b>Project context</b><small>Recency window + parked breadcrumbs determine what the model sees.</small></div></div>
+        <div class="turn-step"><span>03</span><div><b>Call model</b><small>Stream content, reasoning, tool-argument fragments, and token usage.</small></div></div>
+        <div class="turn-step"><span>04</span><div><b>Resolve tool calls</b><small>Match the tool name, parse args, execute, emit events.</small></div></div>
+        <div class="turn-step"><span>05</span><div><b>Persist tool results</b><small>Append results to the same session history and continue.</small></div></div>
+        <div class="turn-step loop"><span>↻</span><div><b>Repeat when tools remain</b><small>The runtime goes back to the model with the new evidence.</small></div></div>
+        <div class="turn-step done"><span>✓</span><div><b>Return StepResult</b><small>Final assistant text, all tool calls, and the turn number.</small></div></div>
+      </div>
+      <div class="turn-code">
+        <div class="code-window-head"><span>minimal.go</span><span>20 lines of product wiring</span></div>
+        <pre class="code-panel"><code>{quickstart}</code></pre>
+        <div class="code-foot">Your UI can call <code>Step</code> itself or hand Axon an input function through <code>Run</code>.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-section tools-section" id="tools">
+    <div class="section-heading split-heading">
+      <div>
+        <span class="section-kicker">04 · BUILT-IN CAPABILITIES</span>
+        <h2>Seven tools. Replace any of them.</h2>
+      </div>
+      <p>Axon ships the mundane capabilities coding agents repeatedly need. Exclude a built-in to free its name, then supply your own implementation behind the same tool surface.</p>
+    </div>
+
+    <div class="tool-grid">
+      {tools.map((tool, i) => (
+        <article class:list={['tool-card', i === 2 && 'tool-card-wide']}>
+          <div class="tool-top"><span class="tool-num">0{i + 1}</span><code>{tool.name}</code><small>{tool.mode}</small></div>
+          <p>{tool.desc}</p>
+        </article>
+      ))}
+    </div>
+
+    <div class="process-strip">
+      <div class="process-copy">
+        <span class="mini-kicker">BACKGROUND PROCESS LIFECYCLE</span>
+        <h3>Long-running commands are first-class.</h3>
+        <p>Servers, watchers, network clients, and anything that may hang can leave the foreground turn without leaving Axon’s lifecycle.</p>
+      </div>
+      <div class="process-flow">
+        <div><code>exec</code><small>run_in_background=true</small></div><b>→</b>
+        <div><code>bash_1</code><small>process group + logfile</small></div><b>→</b>
+        <div><code>bash_output</code><small>read only new bytes</small></div><b>→</b>
+        <div><code>kill_shell</code><small>TERM → grace → KILL</small></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-section context-section" id="context">
+    <div class="section-heading">
+      <span class="section-kicker">05 · LONG-SESSION CONTEXT</span>
+      <h2>Keep history. Change the view.</h2>
+      <p>Axon does not rewrite the session to make context smaller. The historical log stays intact; <code>ContextMessages()</code> derives a bounded projection for each model call.</p>
+    </div>
+
+    <div class="context-visual">
+      <div class="history-column">
+        <div class="visual-label">IMMUTABLE SESSION LOG</div>
+        <div class="message-stack">
+          <span class="message old">m1 <i>tool result</i></span>
+          <span class="message old">m2 <i>assistant</i></span>
+          <span class="message parked">m3 <i>parked</i></span>
+          <span class="message old">m4 <i>tool result</i></span>
+          <span class="message active">m5 <i>user</i></span>
+          <span class="message active">m6 <i>assistant</i></span>
+          <span class="message active">m7 <i>tool result</i></span>
+        </div>
+      </div>
+      <div class="projection-arrow"><span>ContextMessages()</span><b>→</b><small>projection, never mutation</small></div>
+      <div class="model-column">
+        <div class="visual-label">WHAT THE MODEL SEES</div>
+        <div class="context-window">
+          <div class="breadcrumb">[#m1 gist: earlier tool result]</div>
+          <div class="breadcrumb">[#m2 gist: earlier assistant work]</div>
+          <div class="breadcrumb parked-breadcrumb">[#m3 parked · stale context]</div>
+          <div class="breadcrumb">[#m4 gist: earlier tool result]</div>
+          <div class="full-message">m5 · full content</div>
+          <div class="full-message">m6 · full content</div>
+          <div class="full-message">m7 · full content</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="context-facts">
+      <div><strong>30</strong><span>default recent blocks kept in full</span></div>
+      <div><strong>10k</strong><span>default token floor before the pruner is worth firing</span></div>
+      <div><strong>+5k</strong><span>default growth before another pruning pass</span></div>
+      <div><strong>3 modes</strong><span>low · moderate · extreme</span></div>
+    </div>
+
+    <div class="context-details">
+      <article><span>FREE LINE OF DEFENSE</span><h3>Recency window</h3><p>Old blocks collapse to one-line breadcrumbs without a model call. Recent active blocks stay complete.</p></article>
+      <article><span>OPTIONAL SECOND LINE</span><h3>Model-assisted pruner</h3><p>A cheaper secondary model can park stale blocks. Protected messages and edited-file evidence stay available.</p></article>
+      <article><span>RECOVERABLE BY DESIGN</span><h3>Full history survives</h3><p>Parking changes the request projection, not the session record. The runtime can still reason from durable history.</p></article>
+    </div>
+  </section>
+
+  <section class="home-section reliability-section" id="reliability">
+    <div class="section-heading split-heading">
+      <div>
+        <span class="section-kicker">06 · PROVIDER REALITY</span>
+        <h2>200 OK does not always mean “good reply.”</h2>
+      </div>
+      <p>LLM APIs fail in ways ordinary request wrappers do not cover: truncated SSE streams, stalled connections, partial tool-call fragments, retryable statuses, and even tool markup leaked as plain text.</p>
+    </div>
+
+    <div class="reliability-grid">
+      <article class="reliability-card stream-card">
+        <div class="card-index">STREAM</div>
+        <h3>SSE is reassembled, not assumed.</h3>
+        <div class="stream-lines">
+          <span><i></i>delta.content</span>
+          <span><i></i>delta.reasoning_content</span>
+          <span><i></i>delta.tool_calls[index]</span>
+          <span><i></i>usage</span>
+          <span class="stream-done"><i></i>[DONE]</span>
+        </div>
+        <p>Tool-call fragments are accumulated by index and emitted in stable order when the stream finishes.</p>
+      </article>
+
+      <article class="reliability-card retry-card">
+        <div class="card-index">RETRY POLICY</div>
+        <h3>Transport and HTTP policy are separate.</h3>
+        <pre><code>{retryPolicy}</code></pre>
+        <p>EOFs, resets, DNS failures, and timeouts are transport failures. HTTP statuses follow explicit policy.</p>
+      </article>
+
+      <article class="reliability-card malformed-card">
+        <div class="card-index">UNUSABLE REPLIES</div>
+        <h3>Success responses can still be invalid.</h3>
+        <div class="bad-reply">&lt;tool_call&gt;…&lt;/tool_call&gt;</div>
+        <div class="bad-arrow">↓ detected as leaked tool markup</div>
+        <div class="good-reply">retry once → real tool call or explicit error</div>
+        <p>Axon refuses to silently end a turn on provider markup that should have been parsed as a tool call.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="home-section events-section" id="events">
+    <div class="section-heading split-heading">
+      <div>
+        <span class="section-kicker">07 · UI WITHOUT RUNTIME COUPLING</span>
+        <h2>Everything important becomes an event.</h2>
+      </div>
+      <p>Cortex’s terminal is not inside Axon. It subscribes to ordered runtime events, converts them into UI messages, and owns presentation on its own goroutine.</p>
+    </div>
+
+    <div class="events-layout">
+      <div class="event-bus">
+        <div class="event-bus-title"><span>axon.Event</span><small>ordered · synchronous on the turn goroutine</small></div>
+        <div class="event-chips">
+          {events.map((event) => <code>{event}</code>)}
+        </div>
+        <div class="event-routes">
+          <div><span>↳</span><b>Terminal UI</b><small>Bubble Tea bridge</small></div>
+          <div><span>↳</span><b>Plain CLI</b><small>stdout / stderr</small></div>
+          <div><span>↳</span><b>Trace log</b><small>full runtime telemetry</small></div>
+          <div><span>↳</span><b>Your app</b><small>websocket, metrics, audit</small></div>
+        </div>
+      </div>
+      <div class="event-code-wrap">
+        <div class="code-window-head"><span>render.go</span><span>presentation stays yours</span></div>
+        <pre class="code-panel"><code>{eventExample}</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-section security-section">
+    <div class="section-heading">
+      <span class="section-kicker">08 · CAPABILITY BOUNDARIES</span>
+      <h2>Tools get capabilities, not the Agent.</h2>
+      <p>Built-ins are constructed with narrow interfaces and flat limits. They do not receive the settings object, model credentials, conversation history, or the registry of other tools.</p>
+    </div>
+
+    <div class="security-map">
+      <div class="security-core">
+        <span class="security-label">AGENT CORE</span>
+        <div class="secret-box"><b>Settings</b><small>provider config · API keys · runtime policy</small></div>
+        <div class="security-divider"><span>extract only what is needed</span></div>
+        <div class="limits-box"><b>Limits</b><small>read bytes · exec timeout · search caps · process limits</small></div>
+      </div>
+      <div class="security-arrow">→</div>
+      <div class="security-tools">
+        <span class="security-label">TOOL CAPABILITIES</span>
+        <div class="capability"><b>Workspace</b><small>Dir · ResolvePath · RecordEdit</small></div>
+        <div class="capability"><b>Plan</b><small>Register · Advance · Replan</small></div>
+        <div class="capability"><b>BackgroundShells</b><small>spawn · poll · kill</small></div>
+        <div class="capability"><b>Limits</b><small>flat caps only</small></div>
+      </div>
+      <div class="security-denied">
+        <span>NOT HANDED TO BUILT-INS</span>
+        <b>✕ API keys</b><b>✕ session history</b><b>✕ provider config</b><b>✕ tool registry</b>
+      </div>
+    </div>
+    <p class="security-note"><strong>Important:</strong> the working directory is routing, not a sandbox. Axon narrows runtime interfaces; OS-level sandboxing remains an embedder decision.</p>
+  </section>
+
+  <section class="home-section benchmark-section" id="benchmark">
+    <div class="benchmark-shell">
+      <div class="benchmark-copy">
+        <span class="section-kicker">09 · FALSIFIABLE, NOT VIBES</span>
+        <h2>Cortex proves the architecture.<br />SWE-rebench tests the performance.</h2>
+        <p>
+          The first Axon/Cortex benchmark is intentionally boring: the complete frozen February 2026 SWE-rebench split,
+          one deterministic trajectory per task, the same model family, no web, and hidden PASS / FAIL evaluation.
+        </p>
+        <div class="benchmark-freeze">
+          <span>FROZEN BEFORE RUN #1</span>
+          <code>commit SHA</code><code>model</code><code>reasoning</code><code>system prompt</code><code>settings</code><code>instance IDs</code><code>limits</code><code>web=off</code>
+        </div>
+      </div>
+      <div class="benchmark-board">
+        <div class="board-head"><span>SWE-rebench · 2026_02</span><b>RESULTS PENDING</b></div>
+        <div class="board-row board-labels"><span>SYSTEM</span><span>TASKS</span><span>TRIALS</span><span>RESULT</span></div>
+        <div class="board-row focus"><span>Cortex + Axon + GPT-5.4</span><span>57 / 57</span><span>1×</span><span>—</span></div>
+        <div class="board-row"><span>Published Codex baseline</span><span>same split</span><span>existing</span><span>published</span></div>
+        <div class="board-row"><span>Reference scaffold</span><span>same split</span><span>existing</span><span>published</span></div>
+        <div class="board-metrics">
+          <div><b>Resolved@1</b><span>primary outcome</span></div>
+          <div><b>tokens / task</b><span>inference footprint</span></div>
+          <div><b>tokens / resolved</b><span>efficiency</span></div>
+          <div><b>median wall time</b><span>runtime latency</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="benchmark-principle">No cherry-picked 20-task sample. No tuning after seeing failures. No fake dollar comparison without equivalent cache accounting.</div>
+  </section>
+
+  <section class="home-section start-section">
+    <div class="start-grid">
+      <div class="start-copy">
+        <span class="section-kicker">10 · START WITH ONE TURN</span>
+        <h2>The runtime is the part you should be able to stop thinking about.</h2>
+        <p>Wire one model and one prompt. Then add the pieces your product actually needs: events, a pruner, MCP, custom tools, or a UI.</p>
+        <div class="start-actions">
+          <a class="button button-primary" href="/axon/start/quickstart/">Read the quickstart <span>→</span></a>
+          <a class="button button-secondary" href="/axon/internals/architecture/">Read the architecture</a>
+        </div>
+      </div>
+      <div class="start-links">
+        <a href="/axon/concepts/turn-loop/"><span>01</span><div><b>Turn loop</b><small>Step, Run, Interrupt, runtime controls</small></div><i>→</i></a>
+        <a href="/axon/concepts/context/"><span>02</span><div><b>Context management</b><small>window, breadcrumbs, parking, pruner</small></div><i>→</i></a>
+        <a href="/axon/tools/builtins/"><span>03</span><div><b>Built-in tools</b><small>all seven tools and exact parameters</small></div><i>→</i></a>
+        <a href="/axon/concepts/events/"><span>04</span><div><b>Events</b><small>build terminal, web, logs, metrics</small></div><i>→</i></a>
+        <a href="/axon/configuration/yaml/"><span>05</span><div><b>Runtime policy</b><small>providers, retries, limits, context</small></div><i>→</i></a>
+      </div>
+    </div>
+  </section>
+
+  <footer class="home-footer">
+    <div class="footer-mark"><b>AXON</b><span>Go runtime for tool-using LLM agents.</span></div>
+    <div class="footer-links"><a href="https://github.com/atakang7/axon">GitHub</a><a href="https://github.com/atakang7/cortex">Cortex</a><a href="/axon/start/quickstart/">Docs</a></div>
+  </footer>
+</div>

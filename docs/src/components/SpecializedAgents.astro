@@ -1,0 +1,618 @@
+---
+const agents = [
+  {
+    code: 'K8S',
+    title: 'Kubernetes operator',
+    role: 'Cluster diagnosis + guarded remediation',
+    mission: 'Investigate unhealthy workloads across pods, events, deployments, services, ingress, Helm state, and metrics — then propose or execute a bounded fix.',
+    tools: ['kubectl', 'helm', 'prometheus', 'git', 'cloud API'],
+    flow: ['detect', 'inspect', 'correlate', 'patch', 'verify'],
+    example: 'CrashLoopBackOff → inspect events + logs → find bad config → patch manifest → rollout status → verify recovery',
+  },
+  {
+    code: 'SRE',
+    title: 'Incident responder',
+    role: 'From page to evidence to mitigation',
+    mission: 'Take an alert, gather logs and metrics, follow a runbook, build a timeline, test hypotheses, and drive a reversible mitigation while emitting an audit trail.',
+    tools: ['PagerDuty', 'Grafana', 'Loki', 'shell', 'runbooks'],
+    flow: ['page', 'triage', 'hypothesize', 'mitigate', 'report'],
+    example: 'Latency alert → correlate deploy + traces → isolate failing dependency → rollback → watch SLO recover → write incident summary',
+  },
+  {
+    code: 'OPS',
+    title: 'Cloud / DevOps engineer',
+    role: 'Infrastructure work across APIs and repositories',
+    mission: 'Reason across IaC, CI/CD, cloud inventory, IAM, runtime state, and deployment history without baking those vendor decisions into the agent runtime.',
+    tools: ['OpenTofu', 'AWS/Azure/GCP', 'GitHub', 'CI/CD', 'cost APIs'],
+    flow: ['inventory', 'plan', 'diff', 'apply', 'validate'],
+    example: 'Service needs private S3 access → inspect VPC + IAM → patch IaC → plan → approval → apply → connectivity check',
+  },
+  {
+    code: 'SEC',
+    title: 'Security analyst',
+    role: 'Evidence-driven investigation + remediation',
+    mission: 'Join scanner findings with repository context, IAM configuration, SBOM data, deployment state, and policy — then turn a finding into a concrete, reviewable change.',
+    tools: ['Trivy/SBOM', 'IAM APIs', 'git', 'policy engine', 'ticketing'],
+    flow: ['find', 'scope', 'trace', 'remediate', 'prove'],
+    example: 'Critical image CVE → locate deployed versions → find owning Dockerfile → update base → test → rescan → open remediation PR',
+  },
+  {
+    code: 'DATA',
+    title: 'Database / data operator',
+    role: 'Operational reasoning over live data systems',
+    mission: 'Inspect schemas, query plans, replication state, jobs, migrations, and backups while keeping destructive actions behind explicit product-level controls.',
+    tools: ['SQL', 'migration CLI', 'metrics', 'backup API', 'runbooks'],
+    flow: ['observe', 'explain', 'plan', 'change', 'measure'],
+    example: 'Slow endpoint → inspect query plan → find missing index → generate migration → validate on staging → observe p95 after rollout',
+  },
+  {
+    code: 'REL',
+    title: 'Release engineer',
+    role: 'Repository-to-production orchestration',
+    mission: 'Own the mechanical path from a repository state to a verified release: tests, versioning, changelog, artifacts, deployment, smoke checks, and rollback evidence.',
+    tools: ['git', 'GitHub', 'CI', 'registry', 'deploy API'],
+    flow: ['prepare', 'test', 'package', 'ship', 'verify'],
+    example: 'Release request → inspect commits → run test matrix → cut version → publish artifact → deploy canary → verify health',
+  },
+];
+
+const operatorCode = `agent, err := axon.New(axon.Config{
+    Model:        model,
+    SystemPrompt: kubernetesOperatorPrompt,
+    Tools: []axon.Tool{
+        kubectlTool,
+        helmTool,
+        prometheusTool,
+        approvalTool,
+    },
+    Pruner:  cheapContextModel,
+    OnEvent: audit,
+})`;
+---
+
+<section class="specialists home-section" id="specialists">
+  <div class="specialist-glow"></div>
+
+  <div class="specialist-heading">
+    <div>
+      <span class="specialist-kicker">SPECIALIZE THE PRODUCT, NOT THE RUNTIME</span>
+      <h2>Cortex is one agent.<br /><span>Axon is the factory underneath.</span></h2>
+    </div>
+    <p>
+      A coding agent is only one specialization. Keep Axon’s loop, sessions, context, retries,
+      processes, and events — then change the <strong>role, tools, model, and policy</strong> to build an expert for a completely different operational domain.
+    </p>
+  </div>
+
+  <div class="specialization-formula" aria-label="Axon specialization formula">
+    <div class="formula-runtime">
+      <span>UNCHANGED</span>
+      <b>Axon runtime</b>
+      <small>loop · context · sessions · retries · streaming · processes · events</small>
+    </div>
+    <div class="formula-plus">+</div>
+    <div class="formula-variable">
+      <span>SPECIALIZE</span>
+      <b>Role + capabilities</b>
+      <small>system prompt · custom tools · MCP · model · product policy</small>
+    </div>
+    <div class="formula-equals">=</div>
+    <div class="formula-result">
+      <span>YOUR PRODUCT</span>
+      <b>Domain expert agent</b>
+      <small>Kubernetes · SRE · cloud · security · data · releases · anything tool-addressable</small>
+    </div>
+  </div>
+
+  <div class="agent-grid">
+    {agents.map((agent, index) => (
+      <article class:list={['agent-card', index < 3 && 'agent-card-featured']}>
+        <div class="agent-card-top">
+          <span class="agent-code">{agent.code}</span>
+          <span class="agent-index">0{index + 1}</span>
+        </div>
+        <h3>{agent.title}</h3>
+        <div class="agent-role">{agent.role}</div>
+        <p>{agent.mission}</p>
+
+        <div class="agent-tools">
+          <span>CAPABILITIES</span>
+          <div>{agent.tools.map((tool) => <code>{tool}</code>)}</div>
+        </div>
+
+        <div class="agent-flow" aria-label={`${agent.title} workflow`}>
+          {agent.flow.map((step, i) => (
+            <><span>{step}</span>{i < agent.flow.length - 1 && <b>→</b>}</>
+          ))}
+        </div>
+
+        <div class="agent-example">
+          <span>EXAMPLE TRAJECTORY</span>
+          <p>{agent.example}</p>
+        </div>
+      </article>
+    ))}
+  </div>
+
+  <div class="operator-deep-dive">
+    <div class="operator-copy">
+      <span class="specialist-kicker">EXAMPLE · KUBERNETES ADMINISTRATOR</span>
+      <h3>Give the model cluster capabilities. Keep the runtime generic.</h3>
+      <p>
+        The Kubernetes knowledge lives in the role and tool descriptions. Cluster access lives inside your tool closures or MCP servers.
+        Axon still only sees ordinary tools and ordinary results, which means the same runtime mechanics used by Cortex can drive a completely different expert.
+      </p>
+
+      <div class="operator-path">
+        <div><span>01</span><b>Observe</b><small>pods · events · metrics · logs</small></div>
+        <i>→</i>
+        <div><span>02</span><b>Reason</b><small>history + live evidence</small></div>
+        <i>→</i>
+        <div><span>03</span><b>Act</b><small>bounded custom tools</small></div>
+        <i>→</i>
+        <div><span>04</span><b>Verify</b><small>rollout + health checks</small></div>
+      </div>
+    </div>
+
+    <div class="operator-code-wrap">
+      <div class="operator-code-head"><span>kubernetes-agent.go</span><span>same Axon constructor</span></div>
+      <pre><code>{operatorCode}</code></pre>
+      <div class="operator-code-note">
+        <b>Policy stays above Axon.</b>
+        <span><code>approvalTool</code> is your capability gate — for example, read-only by default and explicit approval before mutations.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="why-specialists">
+    <div class="why-title">
+      <span class="specialist-kicker">WHY THIS SHAPE WORKS</span>
+      <h3>Specialized agents need depth, not a giant framework.</h3>
+    </div>
+    <div class="why-grid">
+      <div><b>Long-running state</b><span>Operational work takes many calls. Sessions and context projection keep the investigation coherent.</span></div>
+      <div><b>Real execution</b><span>Foreground and managed background processes let agents work with CLIs, watchers, servers, and diagnostics.</span></div>
+      <div><b>Domain tools</b><span><code>Config.Tools</code> and MCP let you expose exactly the capabilities an expert needs — no more.</span></div>
+      <div><b>Observable behavior</b><span>The event stream gives a UI, audit log, approval system, or metrics pipeline every important runtime transition.</span></div>
+      <div><b>Replaceable intelligence</b><span>Swap the primary model or pruner without rewriting the product’s execution machinery.</span></div>
+      <div><b>Narrow boundaries</b><span>Tools receive their own closures and capabilities. Provider settings and conversation internals are not handed to built-ins.</span></div>
+    </div>
+  </div>
+
+  <div class="specialist-warning">
+    <span>RUNTIME ≠ PERMISSION MODEL</span>
+    <p>
+      Axon gives you the execution substrate. Production authorization, approval gates, credentials, sandboxing, and blast-radius controls remain product/tool decisions — exactly where a specialized agent should make them explicit.
+    </p>
+  </div>
+</section>
+
+<script>
+  const specialists = document.getElementById('specialists');
+  const proof = document.getElementById('proof');
+  if (specialists && proof) proof.insertAdjacentElement('afterend', specialists);
+
+  const rail = document.querySelector('.section-rail');
+  if (rail && !rail.querySelector('a[href="#specialists"]')) {
+    const link = document.createElement('a');
+    link.href = '#specialists';
+    link.textContent = 'Use cases';
+    const cortex = rail.querySelector('a[href="#proof"]');
+    cortex?.insertAdjacentElement('afterend', link);
+  }
+</script>
+
+<style>
+  .specialists {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  .specialist-glow {
+    position: absolute;
+    z-index: -1;
+    width: 38rem;
+    height: 38rem;
+    top: 4rem;
+    right: -15rem;
+    border-radius: 999px;
+    background: radial-gradient(circle, color-mix(in srgb, #8b5cf6 14%, transparent), transparent 68%);
+    pointer-events: none;
+  }
+
+  .specialist-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(18rem, .75fr);
+    gap: 4rem;
+    align-items: end;
+    margin-bottom: 2.5rem;
+  }
+
+  .specialist-kicker {
+    display: block;
+    margin-bottom: .8rem;
+    font-family: var(--sl-text-code);
+    font-size: .7rem;
+    font-weight: 750;
+    letter-spacing: .14em;
+    color: var(--sl-color-accent-high);
+  }
+
+  .specialist-heading h2 {
+    margin: 0;
+    font-size: clamp(2rem, 5vw, 4.1rem);
+    line-height: .98;
+    letter-spacing: -.045em;
+  }
+
+  .specialist-heading h2 span {
+    color: var(--sl-color-gray-2);
+  }
+
+  .specialist-heading > p {
+    margin: 0 0 .2rem;
+    color: var(--sl-color-gray-2);
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+
+  .specialist-heading strong { color: var(--sl-color-white); }
+
+  .specialization-formula {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.15fr);
+    align-items: stretch;
+    gap: .7rem;
+    margin: 2.5rem 0 3rem;
+  }
+
+  .specialization-formula > div:not(.formula-plus):not(.formula-equals) {
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+    min-height: 126px;
+    justify-content: center;
+    padding: 1.15rem 1.2rem;
+    border: 1px solid color-mix(in srgb, var(--sl-color-gray-4) 45%, transparent);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--sl-color-gray-6) 58%, transparent);
+  }
+
+  .specialization-formula span,
+  .agent-tools > span,
+  .agent-example > span {
+    font-family: var(--sl-text-code);
+    font-size: .62rem;
+    font-weight: 750;
+    letter-spacing: .12em;
+    color: var(--sl-color-gray-3);
+  }
+
+  .specialization-formula b { font-size: 1rem; }
+  .specialization-formula small { color: var(--sl-color-gray-2); line-height: 1.45; }
+
+  .specialization-formula .formula-runtime {
+    border-color: color-mix(in srgb, var(--sl-color-accent) 58%, transparent) !important;
+    box-shadow: inset 0 2px 0 color-mix(in srgb, var(--sl-color-accent) 55%, transparent);
+  }
+
+  .specialization-formula .formula-result {
+    background: linear-gradient(145deg, color-mix(in srgb, #8b5cf6 13%, var(--sl-color-gray-6)), color-mix(in srgb, var(--sl-color-gray-6) 55%, transparent)) !important;
+  }
+
+  .formula-plus, .formula-equals {
+    display: grid;
+    place-items: center;
+    color: var(--sl-color-gray-3);
+    font-family: var(--sl-text-code);
+    font-size: 1.4rem;
+  }
+
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .85rem;
+  }
+
+  .agent-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 440px;
+    padding: 1.25rem;
+    border: 1px solid color-mix(in srgb, var(--sl-color-gray-4) 42%, transparent);
+    border-radius: 18px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--sl-color-gray-6) 76%, transparent), color-mix(in srgb, var(--sl-color-black) 72%, transparent));
+    overflow: hidden;
+  }
+
+  .agent-card::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--sl-color-accent) 42%, transparent), transparent);
+    opacity: .4;
+  }
+
+  .agent-card-featured {
+    border-color: color-mix(in srgb, var(--sl-color-accent) 42%, var(--sl-color-gray-5));
+  }
+
+  .agent-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+  }
+
+  .agent-code {
+    display: inline-grid;
+    place-items: center;
+    min-width: 2.75rem;
+    height: 1.75rem;
+    padding: 0 .55rem;
+    border: 1px solid color-mix(in srgb, var(--sl-color-accent) 55%, transparent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--sl-color-accent) 9%, transparent);
+    color: var(--sl-color-accent-high);
+    font-family: var(--sl-text-code);
+    font-size: .67rem;
+    font-weight: 800;
+    letter-spacing: .08em;
+  }
+
+  .agent-index {
+    color: var(--sl-color-gray-4);
+    font-family: var(--sl-text-code);
+    font-size: .72rem;
+  }
+
+  .agent-card h3 {
+    margin: 0;
+    font-size: 1.35rem;
+    letter-spacing: -.025em;
+  }
+
+  .agent-role {
+    margin-top: .25rem;
+    color: var(--sl-color-accent-high);
+    font-size: .78rem;
+    font-weight: 650;
+  }
+
+  .agent-card > p {
+    min-height: 6.4rem;
+    margin: .85rem 0 1rem;
+    color: var(--sl-color-gray-2);
+    font-size: .86rem;
+    line-height: 1.6;
+  }
+
+  .agent-tools {
+    padding-top: .9rem;
+    border-top: 1px solid color-mix(in srgb, var(--sl-color-gray-4) 34%, transparent);
+  }
+
+  .agent-tools > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+    margin-top: .55rem;
+  }
+
+  .agent-tools code {
+    padding: .2rem .42rem;
+    border: 1px solid color-mix(in srgb, var(--sl-color-gray-4) 44%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--sl-color-black) 42%, transparent);
+    font-size: .67rem;
+  }
+
+  .agent-flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .3rem;
+    margin: .95rem 0;
+    color: var(--sl-color-gray-3);
+    font-family: var(--sl-text-code);
+    font-size: .62rem;
+  }
+
+  .agent-flow span { color: var(--sl-color-gray-2); }
+  .agent-flow b { color: var(--sl-color-gray-4); font-weight: 400; }
+
+  .agent-example {
+    margin-top: auto;
+    padding: .75rem .8rem;
+    border-left: 2px solid color-mix(in srgb, var(--sl-color-accent) 60%, transparent);
+    background: color-mix(in srgb, var(--sl-color-accent) 5%, transparent);
+  }
+
+  .agent-example p {
+    margin: .35rem 0 0;
+    color: var(--sl-color-gray-2);
+    font-size: .72rem;
+    line-height: 1.5;
+  }
+
+  .operator-deep-dive {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(24rem, .9fr);
+    gap: 2.5rem;
+    align-items: center;
+    margin: 4rem 0 1.2rem;
+    padding: 1.5rem;
+    border: 1px solid color-mix(in srgb, #22c55e 28%, var(--sl-color-gray-5));
+    border-radius: 22px;
+    background:
+      radial-gradient(circle at 5% 100%, color-mix(in srgb, #22c55e 9%, transparent), transparent 28%),
+      color-mix(in srgb, var(--sl-color-gray-6) 54%, transparent);
+  }
+
+  .operator-copy h3 {
+    margin: .3rem 0 .8rem;
+    font-size: clamp(1.5rem, 3vw, 2.2rem);
+    letter-spacing: -.035em;
+  }
+
+  .operator-copy > p {
+    margin: 0;
+    color: var(--sl-color-gray-2);
+    line-height: 1.7;
+  }
+
+  .operator-path {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    margin-top: 1.4rem;
+  }
+
+  .operator-path > div {
+    min-width: 0;
+    display: grid;
+    gap: .12rem;
+  }
+
+  .operator-path span {
+    color: #4ade80;
+    font-family: var(--sl-text-code);
+    font-size: .58rem;
+  }
+
+  .operator-path b { font-size: .78rem; }
+  .operator-path small { color: var(--sl-color-gray-3); font-size: .62rem; line-height: 1.3; }
+  .operator-path i { color: var(--sl-color-gray-4); font-style: normal; }
+
+  .operator-code-wrap {
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--sl-color-gray-4) 50%, transparent);
+    border-radius: 14px;
+    background: #090d15;
+    box-shadow: 0 26px 60px -28px rgba(0,0,0,.7);
+  }
+
+  .operator-code-head {
+    display: flex;
+    justify-content: space-between;
+    padding: .65rem .8rem;
+    border-bottom: 1px solid #1e293b;
+    color: #64748b;
+    font-family: var(--sl-text-code);
+    font-size: .62rem;
+  }
+
+  .operator-code-wrap pre {
+    margin: 0;
+    padding: 1rem;
+    overflow-x: auto;
+    background: transparent;
+    color: #cbd5e1;
+    font-size: .72rem;
+    line-height: 1.55;
+  }
+
+  .operator-code-note {
+    display: grid;
+    gap: .2rem;
+    padding: .75rem .9rem;
+    border-top: 1px solid #1e293b;
+    background: #0d1320;
+    color: #94a3b8;
+    font-size: .7rem;
+  }
+
+  .operator-code-note b { color: #4ade80; }
+
+  .why-specialists {
+    display: grid;
+    grid-template-columns: .72fr 1.5fr;
+    gap: 2.4rem;
+    margin: 3.5rem 0 1.5rem;
+  }
+
+  .why-title h3 {
+    margin: .2rem 0 0;
+    font-size: 1.65rem;
+    letter-spacing: -.03em;
+  }
+
+  .why-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    border: 1px solid color-mix(in srgb, var(--sl-color-gray-4) 40%, transparent);
+    border-radius: 15px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--sl-color-gray-4) 32%, transparent);
+  }
+
+  .why-grid > div {
+    display: grid;
+    gap: .35rem;
+    padding: 1rem;
+    background: var(--sl-color-black);
+  }
+
+  .why-grid b { font-size: .8rem; }
+  .why-grid span { color: var(--sl-color-gray-2); font-size: .75rem; line-height: 1.5; }
+
+  .specialist-warning {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1.2rem;
+    align-items: center;
+    margin-top: 1.5rem;
+    padding: .9rem 1rem;
+    border: 1px solid color-mix(in srgb, #f59e0b 28%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, #f59e0b 5%, transparent);
+  }
+
+  .specialist-warning > span {
+    color: #fbbf24;
+    font-family: var(--sl-text-code);
+    font-size: .63rem;
+    font-weight: 800;
+    letter-spacing: .1em;
+    white-space: nowrap;
+  }
+
+  .specialist-warning p {
+    margin: 0;
+    color: var(--sl-color-gray-2);
+    font-size: .73rem;
+    line-height: 1.55;
+  }
+
+  :global([data-theme='light']) .agent-card,
+  :global([data-theme='light']) .specialization-formula > div:not(.formula-plus):not(.formula-equals),
+  :global([data-theme='light']) .operator-deep-dive {
+    background: rgba(255,255,255,.7);
+  }
+
+  :global([data-theme='light']) .why-grid > div { background: #fff; }
+
+  @media (max-width: 1000px) {
+    .specialist-heading,
+    .operator-deep-dive,
+    .why-specialists { grid-template-columns: 1fr; gap: 1.4rem; }
+    .agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .specialization-formula { grid-template-columns: 1fr; }
+    .formula-plus, .formula-equals { min-height: 1.5rem; }
+  }
+
+  @media (max-width: 650px) {
+    .agent-grid,
+    .why-grid { grid-template-columns: 1fr; }
+    .agent-card { min-height: auto; }
+    .agent-card > p { min-height: 0; }
+    .operator-path { display: grid; grid-template-columns: 1fr; }
+    .operator-path i { transform: rotate(90deg); justify-self: center; }
+    .specialist-warning { grid-template-columns: 1fr; gap: .5rem; }
+  }
+</style>

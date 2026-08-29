@@ -121,6 +121,7 @@ type PruneInfo struct {
 type UsageInfo struct {
     PromptTokens     int
     CompletionTokens int
+    Cost             float64        // USD charge for the call; OpenRouter fills this, most providers leave it 0
 }
 
 type SessionInfo struct {

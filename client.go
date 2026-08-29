@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -62,6 +63,11 @@ type APIError struct {
 	// the actual reason here — an unknown model, an expired key — and
 	// discarding it costs hours.
 	Body string
+
+	// RetryAfter is the duration the server asked us to wait before retrying,
+	// parsed from the Retry-After response header. Zero means the server did
+	// not provide one, so the caller should fall back to its own backoff.
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -154,7 +160,11 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 
 	if resp.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
-		return nil, &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(detail))}
+		return nil, &APIError{
+			Status:     resp.StatusCode,
+			Body:       strings.TrimSpace(string(detail)),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 
 	return readStream(ctx, resp.Body, req.Stream, cancel, c.cfg.IdleTimeout)
@@ -228,16 +238,18 @@ type reply struct {
 
 // usage is the token accounting carried by a stream's final chunk, when the
 // provider includes it. Providers disagree on field names, so this is the
-// normalized shape; parsing normalizes into it.
+// normalized shape; parsing normalizes into it. Cost is the USD charge for
+// the call when the provider reports one (OpenRouter fills it), zero otherwise.
 type usage struct {
 	PromptTokens     int
 	CompletionTokens int
+	Cost             float64
 }
 
 // reportUsage delivers any usage the stream carried to the caller, once.
 func (r *reply) reportUsage(stream Stream) {
-	if stream.Usage != nil && (r.usage.PromptTokens != 0 || r.usage.CompletionTokens != 0) {
-		stream.Usage(r.usage.PromptTokens, r.usage.CompletionTokens)
+	if stream.Usage != nil && (r.usage.PromptTokens != 0 || r.usage.CompletionTokens != 0 || r.usage.Cost != 0) {
+		stream.Usage(r.usage.PromptTokens, r.usage.CompletionTokens, r.usage.Cost)
 	}
 }
 
@@ -308,9 +320,12 @@ var chunk struct {
 		// usage arrives on the stream's final chunk, keyed separately from the
 		// per-choice delta. Providers disagree on the field names, so collect
 		// it verbatim and normalize below.
-		Usage *struct {
+		usage *struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
+			Cost             *struct {
+				TotalCost float64 `json:"total_cost"`
+			} `json:"cost"`
 		} `json:"usage"`
 	}
 
@@ -318,9 +333,12 @@ var chunk struct {
 		return
 	}
 
-	if chunk.Usage != nil {
-		r.usage.PromptTokens = chunk.Usage.PromptTokens
-		r.usage.CompletionTokens = chunk.Usage.CompletionTokens
+	if chunk.usage != nil {
+		r.usage.PromptTokens = chunk.usage.PromptTokens
+		r.usage.CompletionTokens = chunk.usage.CompletionTokens
+		if chunk.usage.Cost != nil {
+			r.usage.Cost = chunk.usage.Cost.TotalCost
+		}
 	}
 
 	delta := chunk.Choices[0].Delta
@@ -393,4 +411,30 @@ func (r *reply) message() *Msg {
 		Reasoning: finalReasoning,
 		ToolCalls: calls,
 	}
+}
+
+// parseRetryAfter converts a Retry-After header value to a duration. Most
+// providers send seconds ("5"), some send an HTTP-date; either way a value
+// we cannot parse yields zero so the caller falls back to its own backoff.
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+		return 0
+	}
+
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d > 0 {
+			return d
+		}
+	}
+
+	return 0
 }

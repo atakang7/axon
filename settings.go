@@ -267,7 +267,8 @@ type PrunerSettings struct {
 	// free, no model call. Only blocks older than the window are ever
 	// candidates for parking — by the window itself (recency, free) or by
 	// the curator (judgment, costs a call). This is the first and cheapest
-	// line of defense; the curator only ever sees what falls outside it.
+	// line of defense; the curator only ever sees what falls outside it. The
+	// zero value takes the default; set a negative value to disable windowing.
 	WindowBlocks int `yaml:"window_blocks"`
 
 	// FloorTokens is the context size below which pruning is not worth a
@@ -315,8 +316,8 @@ func DefaultSettings() Settings {
 		},
 
 		Retry: RetryConfig{
-			MaxAttempts: 10,
-			BackoffCap:  Duration(60 * time.Second),
+			MaxAttempts: 12,
+			BackoffCap:  Duration(5 * time.Minute),
 			OnStatus:    []int{429, 500, 502, 503, 504},
 		},
 
@@ -401,7 +402,7 @@ func (r Settings) WithDefaults() Settings {
 	if r.Pruner.Mode == "" {
 		r.Pruner.Mode = d.Pruner.Mode
 	}
-	fillInt(&r.Pruner.WindowBlocks, d.Pruner.WindowBlocks)
+	fillWindowBlocks(&r.Pruner.WindowBlocks, d.Pruner.WindowBlocks)
 	fillInt(&r.Pruner.FloorTokens, d.Pruner.FloorTokens)
 	fillInt(&r.Pruner.GrowthTokens, d.Pruner.GrowthTokens)
 	fillInt(&r.Pruner.MaxTokens, d.Pruner.MaxTokens)
@@ -418,6 +419,12 @@ func fillString(dst *string, fallback string) {
 
 func fillInt(dst *int, fallback int) {
 	if *dst <= 0 {
+		*dst = fallback
+	}
+}
+
+func fillWindowBlocks(dst *int, fallback int) {
+	if *dst == 0 {
 		*dst = fallback
 	}
 }
