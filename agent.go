@@ -161,6 +161,9 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 					a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
 				},
 				Usage: func(prompt, completion int, cost float64) {
+					a.session.PromptTokens += prompt
+					a.session.CompletionTokens += completion
+					a.session.Cost += cost
 					a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion, Cost: cost}})
 				},
 			},

@@ -117,8 +117,17 @@ type Session struct {
 	CurrentTask *Task     `json:"current_task,omitempty"`
 	NextBlockID int       `json:"next_block_id,omitempty"`
 	Turn        int       `json:"turn,omitempty"`
-	path        string
-	editsMu     sync.Mutex
+
+	// TokenUsage accumulates the session's token accounting and cost across
+	// all API calls. On session restart (cortex resumes), these persisted
+	// totals re-seed the UI so the status line continues from where the
+	// previous run left off, rather than resetting to zero.
+	PromptTokens     int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"`
+	Cost             float64 `json:"cost,omitempty"`
+
+	path    string
+	editsMu sync.Mutex
 }
 
 func (s *Session) TaskBlock() string {
