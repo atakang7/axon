@@ -324,9 +324,8 @@ var chunk struct {
 		usage *struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
-			Cost             *struct {
-				TotalCost float64 `json:"total_cost"`
-			} `json:"cost"`
+			// OpenRouter sends cost as a plain float, not an object.
+			Cost float64 `json:"cost"`
 		} `json:"usage"`
 	}
 
@@ -341,9 +340,7 @@ var chunk struct {
 	if chunk.usage != nil {
 		r.usage.PromptTokens = chunk.usage.PromptTokens
 		r.usage.CompletionTokens = chunk.usage.CompletionTokens
-		if chunk.usage.Cost != nil {
-			r.usage.Cost = chunk.usage.Cost.TotalCost
-		}
+		r.usage.Cost = chunk.usage.Cost
 	}
 
 	if len(chunk.Choices) == 0 {
