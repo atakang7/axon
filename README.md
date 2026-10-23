@@ -23,7 +23,14 @@
 go get github.com/atakang7/axon/v2
 ```
 
-That's it. Axon has zero third-party runtime dependencies — only `gopkg.in/yaml.v3`, pulled in lazily when you load a `axon.yaml`.
+Axon uses `gopkg.in/yaml.v3` for configuration and `golang.org/x/sys/windows`
+for native Windows process jobs.
+
+On Windows, shell tools use Git for Windows Bash when installed, with a
+PowerShell fallback. Background commands and foreground cancellation use
+Windows Job Objects to terminate the whole process tree. Windows does not
+provide POSIX SIGTERM, so job termination is immediate. Linux and macOS
+continue to use POSIX process groups.
 
 Point it at any OpenAI-compatible endpoint and drive a turn:
 

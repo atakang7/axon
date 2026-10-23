@@ -93,6 +93,7 @@ func (a *Agent) SessionPath() string {
 	}
 	return a.session.Path()
 }
+
 // SessionsDir returns the directory holding this agent's session files, or
 // the default location when the agent was constructed without an explicit one.
 // Intended for embedders that list sessions for a switcher alongside

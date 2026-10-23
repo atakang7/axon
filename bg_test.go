@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -69,12 +70,13 @@ func TestFormatBgStart(t *testing.T) {
 	shells := NewBackgroundShells()
 	defer shells.KillAll()
 
-	sh, err := shells.start("true", "/tmp")
+	dir := t.TempDir()
+	sh, err := shells.start("true", dir)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	out := formatBgStart(sh)
-	for _, want := range []string{"true", "dir: /tmp", "shell_id: bash_1", "status: running"} {
+	for _, want := range []string{"true", "dir: " + dir, "shell_id: bash_1", "status: running"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("formatBgStart missing %q: %q", want, out)
 		}
@@ -197,6 +199,9 @@ func TestBashOutputStatusTransitionsOnExit(t *testing.T) {
 // which signal, distinct from a plain exit — the model needs to tell "the
 // command finished" from "something killed it".
 func TestBashOutputStatusSignaled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows job termination has no POSIX signal status; covered by native job tests")
+	}
 	t.Setenv("AXON_DATA_DIR", t.TempDir())
 	shells := NewBackgroundShells()
 	defer shells.KillAll()
@@ -439,6 +444,9 @@ func TestKillAlreadyFinishedShellIsNoop(t *testing.T) {
 // elapses — otherwise kill_shell could hang forever on an uncooperative
 // child, and the model would have no way to actually free the resource.
 func TestKillSIGKILLsAfterGracePeriod(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows jobs terminate immediately; covered by native job tests")
+	}
 	t.Setenv("AXON_DATA_DIR", t.TempDir())
 	shells := NewBackgroundShells()
 	defer shells.KillAll()
@@ -585,7 +593,11 @@ func TestBackgroundShellStartExecutionContract(t *testing.T) {
 	defer shells.KillAll()
 
 	workdir := t.TempDir()
-	sh, err := shells.start(`pwd; echo stdout-line; echo stderr-line >&2; if read x; then echo unexpected-stdin; else echo stdin-eof; fi`, workdir)
+	pwd := "pwd"
+	if runtime.GOOS == "windows" {
+		pwd = "pwd -W"
+	}
+	sh, err := shells.start(pwd+`; echo stdout-line; echo stderr-line >&2; if read x; then echo unexpected-stdin; else echo stdin-eof; fi`, workdir)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -595,7 +607,7 @@ func TestBackgroundShellStartExecutionContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readNew: %v", err)
 	}
-	for _, want := range []string{workdir, "stdout-line", "stderr-line", "stdin-eof"} {
+	for _, want := range []string{filepath.ToSlash(workdir), "stdout-line", "stderr-line", "stdin-eof"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("combined log missing %q: %q", want, out)
 		}

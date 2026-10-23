@@ -696,12 +696,12 @@ func TestSaveFailureMidTurnContinues(t *testing.T) {
 	t.Setenv("AXON_SESSION_PATH", sessionPath)
 
 	breaker := fnTool("breaker", func(context.Context, json.RawMessage) (string, error) {
-		// Make the session directory unwritable so the Save() right after
-		// this tool's result (and every one after) fails.
-		// Zero permissions on the directory blocks path traversal into it
-		// entirely (not just creating new entries), so the existing
-		// session.json becomes unreachable even though its own mode is 0600.
-		if err := os.Chmod(sessDir, 0); err != nil {
+		// Replace the parent directory with a file: deterministic on Windows
+		// and Unix, including when tests run with elevated privileges.
+		if err := os.Rename(sessDir, sessDir+".saved"); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(sessDir, []byte("blocked"), 0600); err != nil {
 			return "", err
 		}
 		return "broke it", nil
@@ -719,7 +719,6 @@ func TestSaveFailureMidTurnContinues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(sessDir, 0o755) }) // let TempDir clean up
 	defer a.Close()
 
 	res, err := a.Step(context.Background(), "go")

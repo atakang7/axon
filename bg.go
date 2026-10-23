@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -22,6 +21,7 @@ type bgShell struct {
 	LogPath   string
 
 	cmd     *exec.Cmd
+	group   *processGroup
 	logFile *os.File
 	doneCh  chan struct{}
 
@@ -32,8 +32,7 @@ type bgShell struct {
 
 	readOffset int64
 
-	logDev uint64
-	logIno uint64
+	logInfo os.FileInfo
 }
 
 type BackgroundShells struct {
@@ -87,7 +86,7 @@ func (r *BackgroundShells) start(command, workdir string) (*bgShell, error) {
 		return nil, fmt.Errorf("create log: %w", err)
 	}
 
-	cmd := exec.Command("sh", "-lc", command)
+	cmd := backgroundShellCommand(command)
 	if workdir != "" {
 		cmd.Dir = workdir
 	}
@@ -102,11 +101,8 @@ func (r *BackgroundShells) start(command, workdir string) (*bgShell, error) {
 
 	// New process group so we can SIGTERM the whole tree (servers often
 	// spawn children — killing only the shell leaves them orphaned).
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
-
-	if err := cmd.Start(); err != nil {
+	group, err := startManagedProcess(cmd)
+	if err != nil {
 		if dn != nil {
 			_ = dn.Close()
 		}
@@ -129,6 +125,7 @@ func (r *BackgroundShells) start(command, workdir string) (*bgShell, error) {
 		StartedAt: time.Now(),
 		LogPath:   logPath,
 		cmd:       cmd,
+		group:     group,
 		logFile:   logFile,
 		doneCh:    make(chan struct{}),
 	}
@@ -144,6 +141,7 @@ func (r *BackgroundShells) start(command, workdir string) (*bgShell, error) {
 
 func (s *bgShell) wait() {
 	err := s.cmd.Wait()
+	s.group.close()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,11 +154,7 @@ func (s *bgShell) wait() {
 	} else if exitErr, ok := err.(*exec.ExitError); ok {
 		s.exitCode = exitErr.ExitCode()
 
-		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-			s.exitNote = "signaled: " + status.Signal().String()
-		} else {
-			s.exitNote = "exited"
-		}
+		s.exitNote = processExitNote(exitErr)
 	} else {
 		s.exitCode = -1
 		s.exitNote = "wait error: " + err.Error()
@@ -214,17 +208,10 @@ func (s *bgShell) readNew(maxBytes int) (string, bool, error) {
 	// min(readOffset, size) would incorrectly start at byte 10 of the
 	// completely new file. Device + inode identify whether this is still
 	// the same filesystem object.
-	if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
-		dev := uint64(stat.Dev)
-		ino := uint64(stat.Ino)
-
-		if s.logIno != 0 && (s.logDev != dev || s.logIno != ino) {
-			off = 0
-		}
-
-		s.logDev = dev
-		s.logIno = ino
+	if s.logInfo != nil && !os.SameFile(s.logInfo, fi) {
+		off = 0
 	}
+	s.logInfo = fi
 
 	// Same file, but shortened in place.
 	//
@@ -284,23 +271,21 @@ func (s *bgShell) kill(grace time.Duration) error {
 		return nil
 	}
 
-	pgid, err := syscall.Getpgid(s.cmd.Process.Pid)
 	s.mu.Unlock()
-
-	if err != nil {
-		pgid = s.cmd.Process.Pid
-	}
-
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	_ = s.group.terminate(false)
 
 	select {
 	case <-s.doneCh:
 		return nil
 
 	case <-time.After(grace):
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		<-s.doneCh
-		return nil
+		_ = s.group.terminate(true)
+		select {
+		case <-s.doneCh:
+			return nil
+		case <-time.After(grace):
+			return fmt.Errorf("process tree did not exit after termination")
+		}
 	}
 }
 

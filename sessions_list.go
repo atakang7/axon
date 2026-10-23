@@ -25,6 +25,7 @@ type SessionMeta struct {
 	Path      string    `json:"-"`
 	Current   bool      `json:"-"`
 }
+
 // sessionHeader is the subset of Session we unmarshal while scanning. Keeping
 // it small means listing a directory of large transcripts reads only the first
 // page of each file before json.Unmarshal stops needing more.

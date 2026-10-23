@@ -301,7 +301,7 @@ func (r *reply) consume(text string, stream Stream) {
 		return
 	}
 
-var chunk struct {
+	var chunk struct {
 		Choices []struct {
 			Delta struct {
 				Content          string `json:"content"`

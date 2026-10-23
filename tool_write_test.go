@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -554,7 +555,7 @@ func TestWriteModePreservedAcrossEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if fi.Mode().Perm() != 0755 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0755 {
 		t.Fatalf("mode = %o, want 0755 preserved", fi.Mode().Perm())
 	}
 }
