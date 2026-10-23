@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -105,7 +104,6 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 	defer cancel()
 
 	cmd := foregroundShellCommand(p.Command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if resolvedDir != "" {
 		cmd.Dir = resolvedDir
 	}
@@ -118,9 +116,11 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 
-	if err := cmd.Start(); err != nil {
+	group, err := startManagedProcess(cmd)
+	if err != nil {
 		return "", err
 	}
+	defer group.close()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
@@ -129,7 +129,7 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 	select {
 	case runErr = <-done:
 	case <-runCtx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = group.terminate(true)
 		// Do not wait on Wait indefinitely. Because Stdout is an io.Writer
 		// rather than a file, os/exec pipes the output through a copier
 		// goroutine, and Wait blocks until that copier sees EOF. A grandchild
@@ -170,13 +170,6 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 	captured, truncated := buf.snapshot()
 	tailed, hidden := tailN(captured, p.TailLines)
 	return formatExec(p.Command, cmd.Dir, code, p.ExpectedOutcome, tailed, hidden, truncated, note), nil
-}
-
-func foregroundShellCommand(command string) *exec.Cmd {
-	if bash, err := exec.LookPath("bash"); err == nil {
-		return exec.Command(bash, "-o", "pipefail", "-lc", command)
-	}
-	return exec.Command("sh", "-lc", command)
 }
 
 const bashOutputDescription = `Read new output from a background shell since the last read. Status is "running" or the exit summary. Returns only the delta — calling this in a poll loop is cheap; rereading the same bytes is not.

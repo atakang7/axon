@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -343,7 +344,7 @@ func TestSaveCreatesDirsWithPrivateMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session file missing after Save: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0600 {
 		t.Fatalf("mode = %o, want 0600", perm)
 	}
 }
@@ -376,12 +377,13 @@ func TestEnsureFillsCwdWithoutOverwriting(t *testing.T) {
 // must resolve against the session's Cwd, not the process's.
 func TestResolvePath(t *testing.T) {
 	s := newAt(t, "s.json")
-	s.Cwd = "/work/dir"
+	s.Cwd = t.TempDir()
+	absolute := filepath.Join(t.TempDir(), "already", "absolute")
 
-	if got := s.ResolvePath("/already/absolute"); got != "/already/absolute" {
+	if got := s.ResolvePath(absolute); got != absolute {
 		t.Fatalf("absolute path was rewritten: %q", got)
 	}
-	want := filepath.Join("/work/dir", "sub/file.go")
+	want := filepath.Join(s.Cwd, "sub/file.go")
 	if got := s.ResolvePath("sub/file.go"); got != want {
 		t.Fatalf("relative path = %q, want %q", got, want)
 	}

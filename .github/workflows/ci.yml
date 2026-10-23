@@ -37,6 +37,19 @@ jobs:
 
       - run: go test -race ./...
 
+  windows:
+    name: Windows / build / vet / test
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -timeout 5m ./...
+
   docs:
     name: docs / build
     runs-on: ubuntu-latest

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,7 +33,7 @@ func TestWriteFileAtomicCreatesNewFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if fi.Mode().Perm() != 0644 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0644 {
 		t.Fatalf("mode = %o, want 0644", fi.Mode().Perm())
 	}
 }
@@ -54,7 +55,7 @@ func TestWriteFileAtomicPreservesExistingMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if fi.Mode().Perm() != 0755 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0755 {
 		t.Fatalf("mode after rewrite = %o, want 0755 preserved", fi.Mode().Perm())
 	}
 }
