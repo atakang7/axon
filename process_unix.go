@@ -44,3 +44,12 @@ func foregroundShellCommand(command string) *exec.Cmd {
 	}
 	return backgroundShellCommand(command)
 }
+
+// ShellName names the shell the exec tool runs commands in, so a prompt can
+// tell the model which syntax to use.
+func ShellName() string {
+	if _, err := exec.LookPath("bash"); err == nil {
+		return "bash"
+	}
+	return "sh"
+}

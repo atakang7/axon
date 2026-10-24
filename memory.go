@@ -145,7 +145,7 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 		})
 	}
 
-	if tb := s.TaskBlock(); tb != "" {
+	if tb := s.GoalBlock(); tb != "" {
 		out = append(out, Msg{Role: "system", Content: tb})
 	}
 

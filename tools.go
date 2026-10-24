@@ -48,6 +48,7 @@ const (
 	toolBashOutput = "bash_output"
 	toolKillShell  = "kill_shell"
 	toolSearch     = "search"
+	toolGoal       = "goal"
 	toolTask       = "task"
 )
 

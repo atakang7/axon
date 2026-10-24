@@ -188,7 +188,7 @@ func enrichRequest(s *Session, batch []Msg) Request {
 			}
 		}
 	}
-	if task := s.TaskBlock(); task != "" {
+	if task := s.GoalBlock(); task != "" {
 		fmt.Fprintf(&b, "\nGOAL TREE:\n%s\n", task)
 	}
 	uses := toolUses(s)

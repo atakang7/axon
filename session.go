@@ -125,6 +125,9 @@ type Session struct {
 	// closed the step. Trims holds the enricher's per-block selections.
 	Steps map[string]bool  `json:"steps,omitempty"`
 	Trims map[string]*Trim `json:"trims,omitempty"`
+	// Goals is the conversation's contract, keyed by the user message that
+	// opened each goal. See GOALS.md.
+	Goals map[string]*Goal `json:"goals,omitempty"`
 
 	// TokenUsage accumulates the session's token accounting and cost across
 	// all API calls. On session restart (cortex resumes), these persisted

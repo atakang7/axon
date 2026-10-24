@@ -59,6 +59,10 @@ type Agent struct {
 	// the agent is fetching context one item per round; see gather.go.
 	nudge string
 
+	// One-shot note appended as a user message to the next request, for when
+	// the last message is the assistant's own answer; see goalTurnNote.
+	turnNote string
+
 	// Background notes for finished runs; see run_notes.go.
 	notesMu     sync.Mutex
 	notes       []runNoteResult
@@ -168,7 +172,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 
 		a.emit(ctx, Event{Kind: KindAPICall})
 		msg, err := a.model.Complete(ctx, Request{
-			Messages: withNudge(a.session.ContextMessages(a.settings.Pruner.ContextWindow()), a.nudge),
+			Messages: withTurnNote(withNudge(a.session.ContextMessages(a.settings.Pruner.ContextWindow()), a.nudge), a.turnNote),
 			Tools:    toolSpecs(tools),
 			Stream: Stream{
 				Route: func(model, reason string) {

@@ -60,14 +60,14 @@ Return ONLY {"categories":[{"name":"...","ids":["m2","m4"],"contributes":true,"k
 
 func categoryRequest(s *Session, candidates []Msg, mode PruneMode) Request {
 	var b strings.Builder
-	fmt.Fprintf(&b, "MODE: %s\nCURRENT TASK:\n%s\nCANDIDATE IDs:", mode, s.TaskBlock())
+	fmt.Fprintf(&b, "MODE: %s\nCURRENT TASK:\n%s\nCANDIDATE IDs:", mode, s.GoalBlock())
 	for _, m := range candidates {
 		b.WriteString(" " + m.ID)
 	}
 	b.WriteString("\nFULL ACTIVE CONTEXT (no excerpts):\n")
 	// The same view the main model gets: folded runs as cards, stale results
 	// as stubs. Reviewers judge what is actually in context, not the log.
-	task := s.TaskBlock()
+	task := s.GoalBlock()
 	for _, m := range s.contextView(-1) {
 		if m.Role == "system" && task != "" && m.Content == task {
 			continue

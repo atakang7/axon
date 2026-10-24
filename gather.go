@@ -108,12 +108,30 @@ func gatherNudge(rounds int) string {
 }
 
 // withNudge returns messages with note appended to the final tool result, on
-// a copy: the session's own messages are never modified.
+// a copy: the session's own messages are never modified. Trailing system
+// messages (the goal block) are skipped; they used to make every note vanish
+// once a task was registered.
 func withNudge(messages []Msg, note string) []Msg {
-	if note == "" || len(messages) == 0 || messages[len(messages)-1].Role != "tool" {
+	if note == "" {
+		return messages
+	}
+	i := len(messages) - 1
+	for i >= 0 && messages[i].Role == "system" {
+		i--
+	}
+	if i < 0 || messages[i].Role != "tool" {
 		return messages
 	}
 	out := append([]Msg(nil), messages...)
-	out[len(out)-1].Content += note
+	out[i].Content += note
 	return out
+}
+
+// withTurnNote appends a one-shot runtime note as a user message. It is never
+// saved, so the session records only what the agent and user actually said.
+func withTurnNote(messages []Msg, note string) []Msg {
+	if note == "" {
+		return messages
+	}
+	return append(append([]Msg(nil), messages...), Msg{Role: "user", Content: note})
 }

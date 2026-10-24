@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Step submits one user message and drives the loop until the
@@ -35,6 +36,8 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	var assistantText string
 	var gather gatherTracker
 	a.nudge = ""
+	a.turnNote = ""
+	goalNotes, criteriaNoted, wrote := 0, false, false
 
 	for iteration := 1; ; iteration++ {
 		// Checked before the model call, not after, so the cap is a bound on
@@ -81,6 +84,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 		msg, err := a.chat(turnCtx, a.tools)
 		a.nudge = ""
+		a.turnNote = ""
 		if err != nil {
 			a.turnCancel.Store(nil)
 			cancel()
@@ -101,6 +105,25 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 		}
 
 		if len(msg.ToolCalls) == 0 {
+			// The contract is checked before a turn may end: an unproven goal
+			// gets one more request naming what is open, and a second one
+			// only if a criterion is outright failed or stale. Two at most,
+			// so an uncheckable criterion cannot trap the turn.
+			open := a.session.openCriteria()
+			if len(open) > 0 && !a.settings.Goals.DisableNudges && (goalNotes == 0 || (goalNotes == 1 && hasBrokenCriterion(open))) {
+				goalNotes++
+				a.turnNote = a.session.goalTurnNote()
+				if goalNotes == 2 {
+					a.turnNote = brokenGoalNote(open)
+				}
+				a.turnCancel.Store(nil)
+				cancel()
+				a.emit(ctx, Event{Kind: KindInfo, Text: "goal not proven yet: " + strings.Join(open, ", ")})
+				continue
+			}
+			if len(open) > 0 {
+				a.emit(ctx, Event{Kind: KindInfo, Text: "turn ended with the goal unproven: " + strings.Join(open, ", ")})
+			}
 			a.turnCancel.Store(nil)
 			cancel()
 			a.emit(ctx, Event{Kind: KindTurnEnd})
@@ -145,8 +168,18 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 				a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
 					ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
 				}})
+				if tc.Function.Name == toolWrite && !result.ToolFailed {
+					wrote = true
+				}
 			}
 		}
+		// The contract belongs before the change: the first edit without
+		// criteria gets a note on its result, not only at the end.
+		if wrote && !criteriaNoted && !a.settings.Goals.DisableNudges && a.session.needsCriteria() {
+			criteriaNoted = true
+			a.nudge += "\n\n[runtime note: you changed files, but this goal has no criteria yet. Record them now with goal criteria: the check the user would accept, with the exact oracle command, and the baseline you observed. Then continue.]"
+		}
+		wrote = false
 
 		a.turnCancel.Store(nil)
 		interrupted := turnCtx.Err() != nil

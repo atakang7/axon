@@ -143,6 +143,7 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 		KillShellTool(shells, lim),
 		SearchTool(ws, lim),
 		TaskTool(ws),
+		GoalTool(ws),
 	}
 
 	if len(semantic) > 0 && semantic[0] {

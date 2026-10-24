@@ -50,6 +50,17 @@ type Settings struct {
 
 	// Pruner tunes the secondary model that parks stale context.
 	Pruner PrunerSettings `yaml:"pruner"`
+
+	// Goals tunes how the conversation's contract is enforced. See GOALS.md.
+	Goals GoalSettings `yaml:"goals"`
+}
+
+// GoalSettings controls the goal contract. Status and the goal block are
+// always on; only the turn-end note can be turned off.
+type GoalSettings struct {
+	// DisableNudges stops the one-time note sent when the agent is about to
+	// end a turn with the goal's criteria unproven.
+	DisableNudges bool `yaml:"disable_nudges"`
 }
 
 // ---------------------------------------------------------------------------
