@@ -14,25 +14,41 @@ import (
 // READ
 // ---------------------------------------------------------------------------
 
-const readDescription = `Read one file, or list a directory.
+const readDescription = `Read files, or list a directory.
   - slice: lines [offset, offset+limit).
   - full: entire file.
 If path is a directory, returns its entries (subdirs marked with trailing '/'); mode is ignored.
+To read several files or ranges at once, pass them all in "files" instead of
+"path": one call, one round trip. Decide everything you need first, then fetch
+it together.
 To see only a file's signatures, search it with a regex for the declaration
 keywords of that language — you know which language it is, so you can write a
 pattern that actually fits it.`
 
+// maxReadBatch bounds one batched read so a single call cannot flood context.
+const maxReadBatch = 20
+
 type readInput struct {
-	Path   string `json:"path"`
-	Mode   string `json:"mode"`
-	Offset int    `json:"offset"`
-	Limit  int    `json:"limit"`
+	Path   string      `json:"path"`
+	Mode   string      `json:"mode"`
+	Offset int         `json:"offset"`
+	Limit  int         `json:"limit"`
+	Files  []readInput `json:"files"`
 }
 
 func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, string, error) {
 	var p readInput
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "", err
+	}
+	if len(p.Files) > 0 {
+		if strings.TrimSpace(p.Path) != "" {
+			return nil, "", fmt.Errorf("pass either path or files, not both")
+		}
+		if len(p.Files) > maxReadBatch {
+			return nil, "", fmt.Errorf("at most %d files per read", maxReadBatch)
+		}
+		return &p, "", nil
 	}
 	if strings.TrimSpace(p.Path) == "" {
 		return nil, "", fmt.Errorf("path is required")
@@ -47,40 +63,80 @@ func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, s
 
 func ReadTool(ws Workspace, lim Limits) Tool {
 	limit := lim.ReadLines
+	one := func(p readInput, abs string) (string, error) {
+		if info, err := os.Stat(abs); err == nil && info.IsDir() {
+			return readDirListing(abs)
+		}
+		if msg, binary := binaryFileRefusal(abs); binary {
+			return msg, nil
+		}
+		switch p.Mode {
+		case readSlice:
+			if p.Offset < 1 {
+				p.Offset = 1
+			}
+			if p.Limit <= 0 {
+				p.Limit = limit
+			}
+			return readSliceMode(abs, p.Offset, p.Limit)
+		case readFull:
+			return readFullMode(abs, lim.ReadMaxBytes)
+		default:
+			return "", fmt.Errorf("unknown mode %q: slice | full", p.Mode)
+		}
+	}
 	return Tool{
 		Name:        toolRead,
 		Description: readDescription,
 		Schema: obj("object", props{
-			"path":   strSchema("Relative or absolute file path."),
+			"path":   strSchema("Relative or absolute file path. Omit when using files."),
 			"mode":   enumSchema("slice | full. Optional; defaults to slice.", readSlice, readFull),
 			"offset": intSchema("1-based start line. Used when mode=slice."),
 			"limit":  intSchema(fmt.Sprintf("Lines to return. Used when mode=slice. Default %d if omitted.", limit)),
-		}, []string{"path"}),
+			"files": arr(obj("object", props{
+				"path":   strSchema("Relative or absolute file path."),
+				"mode":   enumSchema("slice | full. Optional; defaults to slice.", readSlice, readFull),
+				"offset": intSchema("1-based start line. Used when mode=slice."),
+				"limit":  intSchema("Lines to return. Used when mode=slice."),
+			}, []string{"path"})),
+		}, nil),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			p, abs, err := parseAndValidateReadInput(raw, ws)
 			if err != nil {
 				return "", err
 			}
-			if info, err := os.Stat(abs); err == nil && info.IsDir() {
-				return readDirListing(abs)
+			if len(p.Files) == 0 {
+				return one(*p, abs)
 			}
-			if msg, binary := binaryFileRefusal(abs); binary {
-				return msg, nil
-			}
-			switch p.Mode {
-			case readSlice:
-				if p.Offset < 1 {
-					p.Offset = 1
+			// One failed entry is reported in place; it must not discard the
+			// files that did read.
+			var b strings.Builder
+			for i, f := range p.Files {
+				if ctx.Err() != nil {
+					return "", ctx.Err()
 				}
-				if p.Limit <= 0 {
-					p.Limit = limit
+				if i > 0 {
+					b.WriteString("\n\n")
 				}
-				return readSliceMode(abs, p.Offset, p.Limit)
-			case readFull:
-				return readFullMode(abs, lim.ReadMaxBytes)
-			default:
-				return "", fmt.Errorf("unknown mode %q: slice | full", p.Mode)
+				label := f.Path
+				if f.Mode != readFull && f.Offset > 0 {
+					label += fmt.Sprintf(" (from line %d)", f.Offset)
+				}
+				fmt.Fprintf(&b, "=== %s ===\n", label)
+				if strings.TrimSpace(f.Path) == "" {
+					b.WriteString("[error: path is required]")
+					continue
+				}
+				if f.Mode == "" {
+					f.Mode = readSlice
+				}
+				out, err := one(f, ws.ResolvePath(f.Path))
+				if err != nil {
+					out = "[error: " + err.Error() + "]"
+				}
+				b.WriteString(out)
 			}
+			return b.String(), nil
 		},
 	}
 }

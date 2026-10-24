@@ -108,15 +108,16 @@ type TaskStep struct {
 }
 
 type Session struct {
-	ID          string    `json:"id"`
-	StartedAt   time.Time `json:"started_at"`
-	Cwd         string    `json:"cwd,omitempty"`
-	Title       string    `json:"title,omitempty"`
-	Messages    []Msg     `json:"messages"`
-	Edits       []Edit    `json:"edits"`
-	CurrentTask *Task     `json:"current_task,omitempty"`
-	NextBlockID int       `json:"next_block_id,omitempty"`
-	Turn        int       `json:"turn,omitempty"`
+	CategoryAudit *CategoryAudit `json:"category_review,omitempty"`
+	ID            string         `json:"id"`
+	StartedAt     time.Time      `json:"started_at"`
+	Cwd           string         `json:"cwd,omitempty"`
+	Title         string         `json:"title,omitempty"`
+	Messages      []Msg          `json:"messages"`
+	Edits         []Edit         `json:"edits"`
+	CurrentTask   *Task          `json:"current_task,omitempty"`
+	NextBlockID   int            `json:"next_block_id,omitempty"`
+	Turn          int            `json:"turn,omitempty"`
 
 	// TokenUsage accumulates the session's token accounting and cost across
 	// all API calls. On session restart (cortex resumes), these persisted

@@ -10,6 +10,7 @@ import (
 // Step submits one user message and drives the loop until the
 // assistant emits text with no further tool calls.
 func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) {
+	defer func() { a.categoryBoundary(ctx, false); a.pruner.stopCategoryJob() }()
 	if userInput == "" {
 		return StepResult{}, fmt.Errorf("agent: empty input")
 	}
@@ -28,6 +29,8 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 	var calls []ToolCall
 	var assistantText string
+	var gather gatherTracker
+	a.nudge = ""
 
 	for iteration := 1; ; iteration++ {
 		// Checked before the model call, not after, so the cap is a bound on
@@ -41,11 +44,20 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			}, fmt.Errorf("%w: %d", ErrMaxIterations, a.maxIterations)
 		}
 
-		if a.pruner.ShouldFire(a.session) {
+		a.categoryBoundary(ctx, true)
+		if a.pruner.ShouldFire(a.session) && !a.pruner.categories {
 			before := a.pruner.ContextTokens(a.session)
 			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
 
-			after, err := a.pruner.Prune(ctx, a.session)
+			pruneCtx, pruneCancel := context.WithCancel(ctx)
+			pruneCF := context.CancelFunc(pruneCancel)
+			a.turnCancel.Store(&pruneCF)
+			after, err := a.pruner.Prune(pruneCtx, a.session)
+			a.turnCancel.Store(nil)
+			pruneCancel()
+			if errors.Is(err, context.Canceled) {
+				return StepResult{Turn: a.session.Turn, ToolCalls: calls}, ErrInterrupted
+			}
 			if err != nil {
 				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
 			} else {
@@ -62,6 +74,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 		a.turnCancel.Store(&cf)
 
 		msg, err := a.chat(turnCtx, a.tools)
+		a.nudge = ""
 		if err != nil {
 			a.turnCancel.Store(nil)
 			cancel()
@@ -92,31 +105,41 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			}, nil
 		}
 
-		for _, tc := range msg.ToolCalls {
+		if rounds := gather.observe(msg.ToolCalls); rounds > 0 {
+			a.nudge = gatherNudge(rounds)
+			a.emit(ctx, Event{Kind: KindInfo, Text: "context gathered one item per round; asking the model to plan and batch its next lookups"})
+		}
+
+		// Consecutive read-only calls run concurrently; see toolGroups.
+		for _, group := range toolGroups(msg.ToolCalls) {
 			if turnCtx.Err() != nil {
 				break
 			}
 
-			calls = append(calls, tc)
-			a.emit(ctx, Event{Kind: KindToolCall, Tool: &ToolEvent{
-				ID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments),
-			}})
-
-			result := a.runTool(turnCtx, tc)
-			a.session.Append(result)
-
-			blockID := a.session.Messages[len(a.session.Messages)-1].ID
-			if blockID != "" {
-				a.session.Messages[len(a.session.Messages)-1].Content = "[#" + blockID + "]\n" + result.Content
+			for _, tc := range group {
+				calls = append(calls, tc)
+				a.emit(ctx, Event{Kind: KindToolCall, Tool: &ToolEvent{
+					ID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments),
+				}})
 			}
 
-			if err := a.session.Save(); err != nil {
-				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
-			}
+			for i, result := range a.runToolGroup(turnCtx, group) {
+				tc := group[i]
+				a.session.Append(result)
 
-			a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
-				ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
-			}})
+				blockID := a.session.Messages[len(a.session.Messages)-1].ID
+				if blockID != "" {
+					a.session.Messages[len(a.session.Messages)-1].Content = "[#" + blockID + "]\n" + result.Content
+				}
+
+				if err := a.session.Save(); err != nil {
+					a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
+				}
+
+				a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
+					ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
+				}})
+			}
 		}
 
 		a.turnCancel.Store(nil)

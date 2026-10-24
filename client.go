@@ -80,9 +80,10 @@ func (e *APIError) Error() string {
 
 // Client is an OpenAI-compatible streaming Model. Safe for concurrent use.
 type Client struct {
-	http    *http.Client
-	baseURL string
-	cfg     ClientConfig
+	requireCompleteStream bool
+	http                  *http.Client
+	baseURL               string
+	cfg                   ClientConfig
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +127,19 @@ func (c *Client) Model() string {
 
 // Complete sends one request and assembles the reply, invoking req.Stream as output arrives.
 func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
+	if err := checkRequestBudget(req, c.Model()); err != nil {
+		return nil, err
+	}
+	// Every reply's prompt_tokens calibrates the meter for this model.
+	if payload, err := requestPayloadBytes(req); err == nil {
+		report := req.Stream.Usage
+		req.Stream.Usage = func(prompt, completion int, cost float64) {
+			meter.observe(c.Model(), payload, prompt)
+			if report != nil {
+				report(prompt, completion, cost)
+			}
+		}
+	}
 	body, err := c.requestBody(req)
 	if err != nil {
 		return nil, err
@@ -167,7 +181,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 		}
 	}
 
-	return readStream(ctx, resp.Body, req.Stream, cancel, c.cfg.IdleTimeout)
+	return readStream(ctx, resp.Body, req.Stream, cancel, c.cfg.IdleTimeout, c.requireCompleteStream)
 }
 
 func (c *Client) requestBody(req Request) ([]byte, error) {
@@ -230,6 +244,9 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 
 // reply accumulates a streamed response. Tool calls arrive as fragments keyed by index.
 type reply struct {
+	streamErr        error
+	complete         bool
+	truncated        bool
 	content          strings.Builder
 	reasoningContent strings.Builder
 	toolArgs         map[int]*strings.Builder
@@ -256,7 +273,7 @@ func (r *reply) reportUsage(stream Stream) {
 
 // readStream consumes the SSE body until the server closes it, applying an
 // idle timeout so a silent provider fails fast instead of hanging the turn.
-func readStream(ctx context.Context, body io.Reader, stream Stream, cancel context.CancelFunc, idleTimeout time.Duration) (*Msg, error) {
+func readStream(ctx context.Context, body io.Reader, stream Stream, cancel context.CancelFunc, idleTimeout time.Duration, requireComplete ...bool) (*Msg, error) {
 	out := &reply{
 		toolArgs: map[int]*strings.Builder{},
 		toolMeta: map[int]ToolCall{},
@@ -290,6 +307,12 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 	}
 
 	out.reportUsage(stream)
+	if out.streamErr != nil {
+		return nil, out.streamErr
+	}
+	if len(requireComplete) > 0 && requireComplete[0] && (!out.complete || out.truncated) {
+		return nil, fmt.Errorf("incomplete provider response")
+	}
 	return out.message(), nil
 }
 
@@ -297,13 +320,19 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 // keep-alive or comment must not abort an otherwise healthy stream.
 func (r *reply) consume(text string, stream Stream) {
 	data := strings.TrimPrefix(text, "data: ")
-	if data == "" || data == "[DONE]" {
+	if data == "[DONE]" {
+		r.complete = true
+		return
+	}
+	if data == "" {
 		return
 	}
 
 	var chunk struct {
+		Error   json.RawMessage `json:"error"`
 		Choices []struct {
-			Delta struct {
+			FinishReason string `json:"finish_reason"`
+			Delta        struct {
 				Content          string `json:"content"`
 				ReasoningContent string `json:"reasoning_content"`
 				ToolCalls        []struct {
@@ -332,6 +361,14 @@ func (r *reply) consume(text string, stream Stream) {
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		return
 	}
+	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+		detail := string(chunk.Error)
+		if len(detail) > errorBodyLimit {
+			detail = detail[:errorBodyLimit]
+		}
+		r.streamErr = fmt.Errorf("provider stream error: %s", detail)
+		return
+	}
 
 	// usage arrives on the stream's final chunk, often with an empty choices
 	// array. Parse it before the choices-length guard below, or a usage-only
@@ -345,6 +382,12 @@ func (r *reply) consume(text string, stream Stream) {
 
 	if len(chunk.Choices) == 0 {
 		return
+	}
+	if reason := chunk.Choices[0].FinishReason; reason != "" {
+		r.complete = true
+		if reason == "length" || reason == "content_filter" {
+			r.truncated = true
+		}
 	}
 
 	delta := chunk.Choices[0].Delta

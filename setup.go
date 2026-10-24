@@ -49,7 +49,7 @@ func New(cfg Config) (*Agent, error) {
 		cfg.Tools = append(cfg.Tools, mcpTools...)
 	}
 
-	toolset := builtinTools(sess, shells, limits, cfg.ExcludeBuiltins)
+	toolset := builtinTools(sess, shells, limits, cfg.ExcludeBuiltins, settings.Pruner.Semantic)
 	seen := map[string]bool{}
 	for _, t := range toolset {
 		seen[t.Name] = true
@@ -134,7 +134,7 @@ func missingToolFields(t Tool) string {
 // shell registry for the process tools, a Plan for the task tool, and the caps
 // it must obey. None of them gets the Session itself, and none of them reads
 // the environment — this is the single place those decisions are made.
-func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []string) []Tool {
+func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []string, semantic ...bool) []Tool {
 	all := []Tool{
 		ReadTool(ws, lim),
 		WriteTool(ws),
@@ -145,6 +145,9 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 		TaskTool(ws),
 	}
 
+	if len(semantic) > 0 && semantic[0] {
+		all = append(all, RecallTool(ws), CompactTool(ws))
+	}
 	if len(exclude) == 0 {
 		return all
 	}
@@ -167,13 +170,14 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 // Reset wipes the session and rebuilds the system prompt and tool set.
 // Background shells are killed.
 func (a *Agent) Reset() {
+	a.pruner.stopCategoryJob()
 	a.shells.KillAll()
 
 	a.session.Reset()
 
 	a.initSessionMessages()
 
-	a.tools = append(builtinTools(a.session, a.shells, a.limits, a.excludeBuiltins), a.customTools...)
+	a.tools = append(builtinTools(a.session, a.shells, a.limits, a.excludeBuiltins, a.settings.Pruner.Semantic), a.customTools...)
 }
 
 // Undo reverts the last recorded file edit and tells the model it happened.
@@ -216,6 +220,7 @@ func (a *Agent) Cd(target string) (string, error) {
 // Close releases resources held by the agent: background shells, file
 // handles, etc. Idempotent.
 func (a *Agent) Close() error {
+	a.pruner.stopCategoryJob()
 	a.emit(context.Background(), Event{Kind: KindSessionEnd, Session: &SessionInfo{
 		ID:       a.session.ID,
 		Cwd:      a.session.Cwd,

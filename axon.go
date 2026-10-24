@@ -61,11 +61,18 @@ type Request struct {
 	// caller can parse it without scraping prose for braces.
 	ResponseFormat json.RawMessage
 
+	// InputLimit is this request's estimated input-token ceiling. Zero means
+	// HardContextLimit, the main agent's budget. Curator calls raise it: their
+	// job is to see the whole context at once.
+	InputLimit int
+
 	// Stream receives output as it arrives. The zero value discards it.
 	Stream Stream
 }
 
 type Stream struct {
+	// Route reports the concrete attempted model and routing reason.
+	Route func(model, reason string)
 	Token func(text string)
 
 	Reasoning func(text string)
@@ -125,6 +132,9 @@ type Msg struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
 
 	ToolName string `json:"tool_name,omitempty"`
+
+	// ToolFailed is historical metadata, stripped from provider projections.
+	ToolFailed bool `json:"tool_failed,omitempty"`
 
 	ID string `json:"id,omitempty"`
 

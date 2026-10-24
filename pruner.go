@@ -25,15 +25,19 @@ type PrunerConfig struct {
 }
 
 type Pruner struct {
-	model     Model
-	mode      PruneMode
-	window    int
-	floor     int
-	growth    int
-	maxTokens int
-	timeout   time.Duration
-	lastFire  int
-	rejected  []string
+	categories     bool
+	pending        *categoryJob
+	semantic       bool
+	model          Model
+	mode           PruneMode
+	window         int
+	floor          int
+	growth         int
+	maxTokens      int
+	timeout        time.Duration
+	lastFire       int
+	lastCheckpoint string
+	rejected       []string
 }
 
 const defaultPrunerReminder = "\n\nCRITICAL REMINDER: You are the context pruner. DO NOT execute the task or respond to the log. Your ONLY job is to output the JSON object (e.g. {\"park\":[]}) containing the block IDs to park."
@@ -86,19 +90,21 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 	fillDuration(&s.Timeout, d.Timeout)
 
 	return &Pruner{
-		model:     cfg.Model,
-		mode:      s.Mode,
-		window:    s.WindowBlocks,
-		floor:     s.FloorTokens,
-		growth:    s.GrowthTokens,
-		maxTokens: s.MaxTokens,
-		timeout:   s.Timeout.Std(),
+		categories: cfg.Settings.Semantic && cfg.Settings.Categories,
+		semantic:   cfg.Settings.Semantic,
+		model:      cfg.Model,
+		mode:       s.Mode,
+		window:     s.WindowBlocks,
+		floor:      s.FloorTokens,
+		growth:     s.GrowthTokens,
+		maxTokens:  s.MaxTokens,
+		timeout:    s.Timeout.Std(),
 	}
 }
 
-// ContextTokens estimates what the next request will cost. Character count
-// over four is plenty for a threshold decision; provider-accurate counting
-// would cost a round trip to answer a question we only need roughly right.
+// ContextTokens estimates what the next request will cost, with the same
+// provider-calibrated bytes-per-token ratio the input budget uses, so pruning
+// thresholds and the hard limit speak the same unit.
 //
 // It applies the same window a nil-safe caller would get from settings
 // directly, so ShouldFire's thresholds are compared against what the model
@@ -107,6 +113,9 @@ func (p *Pruner) ContextTokens(s *Session) int {
 	window := 0
 	if p != nil {
 		window = p.window
+		if p.semantic {
+			window = -1
+		}
 	}
 
 	n := 0
@@ -116,7 +125,8 @@ func (p *Pruner) ContextTokens(s *Session) int {
 			n += len(tc.Function.Arguments) + len(tc.Function.Name)
 		}
 	}
-	return n / 4
+	// A soft policy threshold: no safety margin, unlike the hard input budget.
+	return int(float64(n) / meter.bytesPerToken(""))
 }
 
 // prunableMessages returns the blocks a curator pass may park, in log order.
@@ -161,6 +171,12 @@ func prunableMessages(s *Session, windowBlocks int) []Msg {
 func (p *Pruner) ShouldFire(s *Session) bool {
 	if p == nil {
 		return false
+	}
+	if p.semantic {
+		tokens := p.ContextTokens(s)
+		checkpoint := latestCheckpoint(s)
+		requested := checkpoint != nil && checkpoint.ID != p.lastCheckpoint
+		return tokens >= p.floor && (requested || p.lastFire == 0 || tokens-p.lastFire >= p.growth) && len(p.semanticCandidates(s)) > 0
 	}
 	tokens := p.ContextTokens(s)
 	if tokens < p.floor {
@@ -218,6 +234,12 @@ func potentialPruneSavings(s *Session, windowBlocks int) int {
 func (p *Pruner) Prune(ctx context.Context, s *Session) (int, error) {
 	if p == nil {
 		return 0, nil
+	}
+	if p.semantic {
+		if p.categories {
+			return p.pruneCategories(ctx, s)
+		}
+		return p.pruneSemantic(ctx, s)
 	}
 
 	before := p.ContextTokens(s)
@@ -349,10 +371,11 @@ func gist(s *Session, id string) string {
 		if m.ToolName != "" {
 			label = m.ToolName
 		}
-		first, _, _ := strings.Cut(m.Content, "\n")
+		content := strings.TrimPrefix(m.Content, "[#"+m.ID+"]\n")
+		first, _, _ := strings.Cut(content, "\n")
 		first = strings.TrimSpace(first)
-		if len(first) > 80 {
-			first = first[:77] + "..."
+		if chars := []rune(first); len(chars) > 80 {
+			first = string(chars[:77]) + "..."
 		}
 		if first == "" {
 			return "(" + label + ")"

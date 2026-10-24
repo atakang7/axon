@@ -53,6 +53,10 @@ type Agent struct {
 
 	// Config.MaxIterations; zero means the loop is unbounded.
 	maxIterations int
+
+	// One-shot planning note for the next model request, set by the loop when
+	// the agent is fetching context one item per round; see gather.go.
+	nudge string
 }
 
 // SetModel changes the model this agent talks to.
@@ -62,6 +66,7 @@ func (a *Agent) SetModel(m Model) {
 
 // SetPrunerModel changes the model the pruner uses. If the pruner was not initialized, it initializes it.
 func (a *Agent) SetPrunerModel(m Model) {
+	a.pruner.stopCategoryJob()
 	if a.pruner == nil {
 		a.pruner = NewPruner(PrunerConfig{
 			Model:    m,
@@ -79,6 +84,7 @@ func (a *Agent) SetPruneMode(mode PruneMode) {
 	if !mode.Valid() {
 		return
 	}
+	a.pruner.stopCategoryJob()
 
 	a.settings.Pruner.Mode = mode
 	if a.pruner != nil {
@@ -114,6 +120,9 @@ func (a *Agent) initSessionMessages() {
 }
 
 func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
+	if err := a.ensureContextBudget(ctx, tools); err != nil {
+		return nil, err
+	}
 	policy := a.settings.Retry
 	if policy.MaxAttempts < 1 {
 		policy = DefaultSettings().Retry
@@ -148,9 +157,12 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 
 		a.emit(ctx, Event{Kind: KindAPICall})
 		msg, err := a.model.Complete(ctx, Request{
-			Messages: a.session.ContextMessages(a.settings.Pruner.WindowBlocks),
+			Messages: withNudge(a.session.ContextMessages(a.settings.Pruner.ContextWindow()), a.nudge),
 			Tools:    toolSpecs(tools),
 			Stream: Stream{
+				Route: func(model, reason string) {
+					a.emit(ctx, Event{Kind: KindInfo, Text: "model route: " + model + " (" + reason + ")"})
+				},
 				Token: func(t string) {
 					a.emit(ctx, Event{Kind: KindToken, Text: t})
 				},
@@ -264,6 +276,13 @@ func isOnlyToolMarkup(content string) bool {
 }
 
 func (a *Agent) runTool(ctx context.Context, tc ToolCall) Msg {
+	return a.runToolGroup(ctx, []ToolCall{tc})[0]
+}
+
+// execTool runs one call without emitting events, so it is safe to call from
+// several goroutines at once. A tool error comes back both as the failed
+// result the model sees and as err for the caller to report.
+func (a *Agent) execTool(ctx context.Context, tc ToolCall) (Msg, error) {
 	for _, t := range a.tools {
 		if t.Name != tc.Function.Name {
 			continue
@@ -272,14 +291,13 @@ func (a *Agent) runTool(ctx context.Context, tc ToolCall) Msg {
 		input := json.RawMessage(tc.Function.Arguments)
 		out, err := t.Fn(ctx, input)
 		if err != nil {
-			a.emit(ctx, Event{Kind: KindToolError, Tool: &ToolEvent{ID: tc.ID, Name: tc.Function.Name}, Err: err})
-			return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: err.Error()}
+			return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: err.Error(), ToolFailed: true}, err
 		}
 
-		return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: out}
+		return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: out}, nil
 	}
 
-	return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: "tool not found"}
+	return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: "tool not found", ToolFailed: true}, nil
 }
 
 // backoffFor returns how long to wait before the given attempt: exponential,

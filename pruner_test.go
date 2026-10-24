@@ -65,8 +65,10 @@ func TestNewPrunerPreservesNegativeWindow(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // ContextTokens must count message content plus tool-call name+arguments,
-// divided by four — this is the whole basis ShouldFire's thresholds rest on.
+// divided by the calibrated bytes-per-token ratio (pinned to 4 here) — this is the whole basis ShouldFire's thresholds rest on.
 func TestContextTokensCountsContentAndToolCalls(t *testing.T) {
+	resetMeter(t)
+	meter.ratio[""] = 4
 	s := newPrunerSession(t)
 	s.Append(Msg{Role: "user", Content: strings.Repeat("a", 40)}) // 40 chars
 
@@ -91,6 +93,8 @@ func TestContextTokensCountsContentAndToolCalls(t *testing.T) {
 // growth before firing again — otherwise a context sitting just above the
 // floor would fire on every single turn.
 func TestShouldFirePolicy(t *testing.T) {
+	resetMeter(t)
+	meter.ratio[""] = 4
 	s := newPrunerSession(t)
 	p := &Pruner{floor: 10000, growth: 5000}
 

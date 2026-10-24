@@ -259,6 +259,13 @@ func (m PruneMode) Valid() bool {
 
 // PrunerSettings tunes the secondary model that parks stale context.
 type PrunerSettings struct {
+	// Semantic keeps old blocks visible until the curator explicitly parks
+	// them. WindowBlocks then protects the recent tail instead of masking age.
+	// It also enables the read-only recall tool for archived context.
+	Semantic bool `yaml:"semantic"`
+	// Categories enables full-context category review in a background pass.
+	// Requires Semantic. Mode extreme also permits pruning within useful categories.
+	Categories bool `yaml:"categories"`
 	// Mode is how aggressively the curator parks. See PruneMode. The zero
 	// value takes PruneModerate.
 	Mode PruneMode `yaml:"mode"`
@@ -290,6 +297,14 @@ type PrunerSettings struct {
 
 	// Timeout bounds one curator call.
 	Timeout Duration `yaml:"timeout"`
+}
+
+// ContextWindow disables blind age-based masking under semantic curation.
+func (s PrunerSettings) ContextWindow() int {
+	if s.Semantic {
+		return -1
+	}
+	return s.WindowBlocks
 }
 
 // ---------------------------------------------------------------------------
