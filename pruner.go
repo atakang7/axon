@@ -110,6 +110,19 @@ func NewPruner(cfg PrunerConfig) *Pruner {
 // directly, so ShouldFire's thresholds are compared against what the model
 // will actually be sent, not the size of the full unwindowed log.
 func (p *Pruner) ContextTokens(s *Session) int {
+	return contextTokens(p.contextBytes(s))
+}
+
+// contextTokens converts a contextBytes size with the ratio the meter holds
+// now. A prune's own curator requests recalibrate the meter, so a "before"
+// kept as bytes and converted after the pass shares the "after" figure's
+// ratio instead of reporting a reduction the recalibration made up.
+func contextTokens(n int) int {
+	// A soft policy threshold: no safety margin, unlike the hard input budget.
+	return int(float64(n) / meter.bytesPerToken(""))
+}
+
+func (p *Pruner) contextBytes(s *Session) int {
 	window := 0
 	if p != nil {
 		window = p.window
@@ -125,8 +138,7 @@ func (p *Pruner) ContextTokens(s *Session) int {
 			n += len(tc.Function.Arguments) + len(tc.Function.Name)
 		}
 	}
-	// A soft policy threshold: no safety margin, unlike the hard input budget.
-	return int(float64(n) / meter.bytesPerToken(""))
+	return n
 }
 
 // prunableMessages returns the blocks a curator pass may park, in log order.

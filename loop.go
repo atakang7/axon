@@ -46,8 +46,8 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 		a.categoryBoundary(ctx, true)
 		if a.pruner.ShouldFire(a.session) && !a.pruner.categories {
-			before := a.pruner.ContextTokens(a.session)
-			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: before}})
+			beforeBytes := a.pruner.contextBytes(a.session)
+			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: contextTokens(beforeBytes)}})
 
 			pruneCtx, pruneCancel := context.WithCancel(ctx)
 			pruneCF := context.CancelFunc(pruneCancel)
@@ -62,7 +62,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
 			} else {
 				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{
-					Before:   before,
+					Before:   contextTokens(beforeBytes),
 					After:    after,
 					Rejected: a.pruner.Rejected(),
 				}})

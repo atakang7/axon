@@ -94,7 +94,7 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 	a.turnCancel.Store(&cf)
 	defer a.turnCancel.Store(previous)
 	for pass := 0; pass < 3; pass++ {
-		before := a.pruner.ContextTokens(a.session)
+		beforeBytes := a.pruner.contextBytes(a.session)
 		after, pruneErr := a.pruner.Prune(pruneCtx, a.session)
 		if pruneErr != nil {
 			if n <= HardContextLimit {
@@ -102,7 +102,7 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 			}
 			return fmt.Errorf("context compaction could not complete; history retained: %w", pruneErr)
 		}
-		a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
+		a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: contextTokens(beforeBytes), After: after}})
 		next, err := estimate()
 		if err != nil {
 			return err
