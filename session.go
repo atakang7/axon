@@ -121,6 +121,10 @@ type Session struct {
 	// Runs holds folding state and background notes per run, keyed by the
 	// run's user message ID. See WORKING_CONTEXT.md.
 	Runs map[string]*RunNote `json:"runs,omitempty"`
+	// Steps marks folded steps of the goal tree, keyed by the block that
+	// closed the step. Trims holds the enricher's per-block selections.
+	Steps map[string]bool  `json:"steps,omitempty"`
+	Trims map[string]*Trim `json:"trims,omitempty"`
 
 	// TokenUsage accumulates the session's token accounting and cost across
 	// all API calls. On session restart (cortex resumes), these persisted

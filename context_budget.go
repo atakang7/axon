@@ -71,8 +71,10 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 		return requestInputTokens(Request{Messages: a.session.ContextMessages(a.settings.Pruner.ContextWindow()), Tools: toolSpecs(tools)}, model)
 	}
 	a.applyRunNotes()
+	a.applyEnrichment(ctx)
 	if a.settings.Pruner.Semantic {
 		a.foldByPolicy(ctx)
+		a.foldStepsByPolicy(ctx)
 	}
 	n, err := estimate()
 	if err != nil {
@@ -81,10 +83,10 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 	if n <= contextBudgetTarget {
 		return nil
 	}
-	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("input budget: ~%d of %d tokens; folding finished runs", n, HardContextLimit)})
+	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("input budget: ~%d of %d tokens; folding finished work", n, HardContextLimit)})
 
 	before, folded := n, 0
-	for n > contextBudgetTarget && a.foldOldestRun() {
+	for n > contextBudgetTarget && (a.foldOldestRun() || a.foldOldestStep()) {
 		folded++
 		if n, err = estimate(); err != nil {
 			return err
@@ -231,5 +233,52 @@ func (a *Agent) persistContext(ctx context.Context, before, after int) {
 	if err := savePrunedSession(a.session); err != nil {
 		a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
 	}
+	// Measure the reviewers' growth from the new size. A baseline left at the
+	// pre-fold size kept them from ever firing again in that session.
+	if a.pruner != nil {
+		a.pruner.lastFire = a.pruner.ContextTokens(a.session)
+	}
 	a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
+}
+
+// foldStepsByPolicy folds the open run's finished steps except the newest
+// one: the step just closed is what the next step most likely builds on.
+func (a *Agent) foldStepsByPolicy(ctx context.Context) {
+	uses := toolUses(a.session)
+	var finished []step
+	for _, st := range openRunSteps(a.session, uses) {
+		if st.closer != "" {
+			finished = append(finished, st)
+		}
+	}
+	if len(finished) < 2 {
+		return
+	}
+	before := a.pruner.ContextTokens(a.session)
+	folded := 0
+	for _, st := range finished[:len(finished)-1] {
+		if stepBytes(a.session, st) > 1500 && a.session.foldStep(st) {
+			folded++
+		}
+	}
+	if folded == 0 {
+		return
+	}
+	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("context folded: %d finished steps to step cards; originals via recall", folded)})
+	a.persistContext(ctx, before, a.pruner.ContextTokens(a.session))
+}
+
+// foldOldestStep folds the oldest finished step of the open run, the newest
+// finished one included; used only under budget pressure.
+func (a *Agent) foldOldestStep() bool {
+	for _, st := range openRunSteps(a.session, toolUses(a.session)) {
+		if a.session.foldStep(st) {
+			return true
+		}
+	}
+	return false
+}
+
+func stepBytes(s *Session, st step) int {
+	return runBytes(s, run{start: st.start, end: st.end})
 }

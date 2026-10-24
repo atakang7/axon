@@ -17,6 +17,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	// written in the background while the user reads and types.
 	defer func() { a.categoryBoundary(ctx, false); a.pruner.stopCategoryJob(); a.noteFinishedRun() }()
 	a.applyRunNotes()
+	a.applyEnrichment(ctx)
 
 	a.session.Turn++
 	a.emit(ctx, Event{Kind: KindTurnStart})
@@ -48,6 +49,8 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 		}
 
 		a.categoryBoundary(ctx, true)
+		a.applyEnrichment(ctx)
+		a.maybeEnrich()
 		if a.pruner.ShouldFire(a.session) && !a.pruner.categories {
 			beforeBytes := a.pruner.contextBytes(a.session)
 			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: contextTokens(beforeBytes)}})

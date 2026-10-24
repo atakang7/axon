@@ -247,7 +247,18 @@ func stubWriteArgs(tc ToolCall) ToolCall {
 // the run's own messages, so it cannot invent anything; a background note
 // adds judgement on top when one is ready.
 func runCard(s *Session, r run, uses map[string]toolUse) string {
-	var read, wrote, ran, reverted []string
+	summary := ""
+	if n := s.runNote(r); n != nil {
+		summary = n.Summary
+	}
+	return workCard(s, r.start+1, r.end, uses, "run", summary, "final answer")
+}
+
+// workCard lists what the messages in [from, to) did: files read and written,
+// commands run, failures still open at the end, enricher notes, and the last
+// thing the agent said. Every item comes from the log itself.
+func workCard(s *Session, from, to int, uses map[string]toolUse, kind, summary, lastLabel string) string {
+	var read, wrote, ran, reverted, notes []string
 	seen := map[string]bool{}
 	add := func(list *[]string, key, v string) {
 		if v != "" && !seen[key+v] {
@@ -257,7 +268,10 @@ func runCard(s *Session, r run, uses map[string]toolUse) string {
 	}
 	failed := map[string]string{} // command -> block id of its latest failure
 	first, last, answer := "", "", ""
-	for _, m := range s.Messages[r.start+1 : r.end] {
+	for _, m := range s.Messages[from:to] {
+		if t := s.Trims[m.ID]; t != nil && t.Note != "" {
+			notes = append(notes, fmt.Sprintf("#%s %s", m.ID, t.Note))
+		}
 		if m.ID != "" {
 			if first == "" {
 				first = m.ID
@@ -297,9 +311,9 @@ func runCard(s *Session, r run, uses map[string]toolUse) string {
 	}
 	var b strings.Builder
 	if first != "" {
-		fmt.Fprintf(&b, "[finished run #%s..#%s, folded; recall any id for the original text]", first, last)
+		fmt.Fprintf(&b, "[finished %s #%s..#%s, folded; recall any id for the original text]", kind, first, last)
 	} else {
-		b.WriteString("[finished run, folded]")
+		fmt.Fprintf(&b, "[finished %s, folded]", kind)
 	}
 	line := func(label string, items []string, max int) {
 		if len(items) == 0 {
@@ -322,11 +336,12 @@ func runCard(s *Session, r run, uses map[string]toolUse) string {
 	sort.Strings(fails)
 	line("still failing at the end", fails, 4)
 	line("reverted", reverted, 4)
-	if n := s.runNote(r); n != nil && n.Summary != "" {
-		b.WriteString("\nsummary: " + n.Summary)
+	line("notes", notes, 8)
+	if summary != "" {
+		b.WriteString("\nsummary: " + summary)
 	}
 	if answer != "" {
-		b.WriteString("\nfinal answer: " + truncateRunes(answer, 700))
+		b.WriteString("\n" + lastLabel + ": " + truncateRunes(answer, 700))
 	}
 	return b.String()
 }
@@ -345,17 +360,32 @@ func truncateRunes(s string, max int) string {
 }
 
 // compactedIDs are blocks the view already shows in compact form: inside a
-// folded run or replaced by a stale stub. Reviewers have nothing to decide
-// about them.
+// folded run or step, or replaced by a stale stub. Reviewers have nothing to
+// decide about them.
 func (s *Session) compactedIDs() map[string]bool {
 	ids := map[string]bool{}
-	for _, r := range closedRuns(s) {
-		if !s.runFolded(r) {
-			continue
-		}
-		for _, m := range s.Messages[r.start+1 : r.end] {
+	mark := func(from, to int) {
+		for _, m := range s.Messages[from:to] {
 			if m.ID != "" {
 				ids[m.ID] = true
+			}
+		}
+	}
+	var uses map[string]toolUse
+	for _, r := range sessionRuns(s) {
+		if s.runFolded(r) {
+			mark(r.start+1, r.end)
+			continue
+		}
+		if len(s.Steps) == 0 {
+			continue
+		}
+		if uses == nil {
+			uses = toolUses(s)
+		}
+		for _, st := range runSteps(s, r, uses) {
+			if s.stepFolded(st) {
+				mark(st.start, st.end)
 			}
 		}
 	}
@@ -363,4 +393,157 @@ func (s *Session) compactedIDs() map[string]bool {
 		ids[s.Messages[i].ID] = true
 	}
 	return ids
+}
+
+// ---------------------------------------------------------------------------
+// Steps: the goal tree below a run
+// ---------------------------------------------------------------------------
+
+// step is the stretch of a run between milestones: successful task advance or
+// replan results, and compact checkpoints. closer is the ID of the result that
+// closed it; the active step has none.
+type step struct {
+	start, end int
+	closer     string
+	title      string
+}
+
+// runSteps derives a run's steps from the log. The step titles come from the
+// task register/replan arguments, so nothing new has to be stored.
+func runSteps(s *Session, r run, uses map[string]toolUse) []step {
+	var steps []step
+	var plan []string
+	k, segStart := 0, r.start+1
+	for i := r.start + 1; i < r.end; i++ {
+		m := s.Messages[i]
+		if m.Role != "tool" || m.ToolFailed || m.ID == "" {
+			continue
+		}
+		u := uses[m.ToolCallID]
+		action := argString(u.args, "action")
+		title := ""
+		if k < len(plan) {
+			title = plan[k]
+		}
+		closes := false
+		switch {
+		case u.name == toolTask && action == "register":
+			plan, k = stringList(u.args["steps"]), 0
+		case u.name == toolTask && action == "advance":
+			closes = true
+			k++
+		case u.name == toolTask && action == "replan":
+			closes = true
+			plan, k = stringList(u.args["steps"]), 0
+		case u.name == "compact":
+			closes, title = true, "checkpoint: "+oneLine(argString(u.args, "state"), 80)
+		}
+		if !closes {
+			continue
+		}
+		end := i + 1
+		for end < r.end && s.Messages[end].Role == "tool" {
+			end++ // the rest of the same tool round belongs to the closed step
+		}
+		steps = append(steps, step{start: segStart, end: end, closer: m.ID, title: title})
+		segStart, i = end, end-1
+	}
+	title := ""
+	if k < len(plan) {
+		title = plan[k]
+	}
+	return append(steps, step{start: segStart, end: r.end, title: title})
+}
+
+func stringList(v any) []string {
+	items, _ := v.([]any)
+	var out []string
+	for _, it := range items {
+		if s, ok := it.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	return out
+}
+
+func (s *Session) stepFolded(st step) bool {
+	return st.closer != "" && s.Steps[st.closer]
+}
+
+// foldStep marks a finished step as folded; monotonic like run folding.
+func (s *Session) foldStep(st step) bool {
+	if st.closer == "" || s.Steps[st.closer] {
+		return false
+	}
+	if s.Steps == nil {
+		s.Steps = map[string]bool{}
+	}
+	s.Steps[st.closer] = true
+	return true
+}
+
+// openRunSteps are the steps of the run the agent is working on now.
+func openRunSteps(s *Session, uses map[string]toolUse) []step {
+	runs := sessionRuns(s)
+	if len(runs) == 0 {
+		return nil
+	}
+	return runSteps(s, runs[len(runs)-1], uses)
+}
+
+func stepCard(s *Session, st step, uses map[string]toolUse) string {
+	kind := "step"
+	if st.title != "" {
+		kind = "step \"" + st.title + "\""
+	}
+	return workCard(s, st.start, st.end, uses, kind, "", "last message")
+}
+
+// ---------------------------------------------------------------------------
+// Trims: the enricher's per-block selections
+// ---------------------------------------------------------------------------
+
+// Trim is the enricher's decision for one block. Spans are 1-based inclusive
+// line ranges of the block's text; Note replaces the block with one line;
+// Kept records that the block was reviewed and is needed whole.
+type Trim struct {
+	Spans [][2]int `json:"spans,omitempty"`
+	Note  string   `json:"note,omitempty"`
+	Kept  bool     `json:"kept,omitempty"`
+}
+
+// blockText is a tool result without the "[#mN]" label the loop prepends.
+func blockText(m Msg) string {
+	return strings.TrimPrefix(m.Content, "[#"+m.ID+"]\n")
+}
+
+func blockLines(m Msg) []string {
+	return strings.Split(blockText(m), "\n")
+}
+
+func renderTrim(m Msg, t *Trim) string {
+	switch {
+	case t == nil || t.Kept:
+		return m.Content
+	case t.Note != "":
+		return fmt.Sprintf("[#%s note: %s | recall %s for the original]", m.ID, t.Note, m.ID)
+	}
+	lines := blockLines(m)
+	var ranges []string
+	var b strings.Builder
+	for i, sp := range t.Spans {
+		ranges = append(ranges, spanLabel(sp))
+		if i > 0 {
+			b.WriteString("\n…\n")
+		}
+		b.WriteString(strings.Join(lines[sp[0]-1:sp[1]], "\n"))
+	}
+	return fmt.Sprintf("[#%s trimmed to lines %s of %d; recall %s for the rest]\n%s", m.ID, strings.Join(ranges, ", "), len(lines), m.ID, b.String())
+}
+
+func spanLabel(sp [2]int) string {
+	if sp[0] == sp[1] {
+		return fmt.Sprint(sp[0])
+	}
+	return fmt.Sprintf("%d-%d", sp[0], sp[1])
 }

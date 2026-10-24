@@ -67,6 +67,22 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 	if working {
 		stale = staleResults(s)
 	}
+	foldedSteps := map[int]step{} // start index -> folded step
+	if len(s.Steps) > 0 {
+		if uses == nil {
+			uses = toolUses(s)
+		}
+		for _, r := range sessionRuns(s) {
+			if s.runFolded(r) {
+				continue
+			}
+			for _, st := range runSteps(s, r, uses) {
+				if s.stepFolded(st) {
+					foldedSteps[st.start] = st
+				}
+			}
+		}
+	}
 
 	droppedToolCallIDs := map[string]bool{}
 	for _, m := range s.Messages {
@@ -89,6 +105,11 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 			i = r.end - 1
 			continue
 		}
+		if st, ok := foldedSteps[i]; ok {
+			out = append(out, Msg{Role: "assistant", Content: stepCard(s, st, uses)})
+			i = st.end - 1
+			continue
+		}
 		if m.Role == "tool" && droppedToolCallIDs[m.ToolCallID] {
 			continue
 		}
@@ -104,6 +125,8 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 			toolCalls = nil
 		case stale[i] != "":
 			content = stale[i]
+		case m.Role == "tool" && s.Trims[m.ID] != nil:
+			content = renderTrim(m, s.Trims[m.ID])
 		case working && i < closedEnd && len(toolCalls) > 0:
 			stubbed := make([]ToolCall, len(toolCalls))
 			for j, tc := range toolCalls {

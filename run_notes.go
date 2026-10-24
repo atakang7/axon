@@ -59,12 +59,7 @@ func (a *Agent) noteFinishedRun() {
 		a.notesAsked = map[string]bool{}
 	}
 	a.notesAsked[sessionID+id] = true
-	if a.notesCancel == nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		a.notesCancel = cancel
-		a.notesCtx = ctx
-	}
-	parent := a.notesCtx
+	parent := a.backgroundLocked()
 	a.notesMu.Unlock()
 
 	go func() {
@@ -121,6 +116,7 @@ func (a *Agent) stopRunNotes() {
 		a.notesCancel = nil
 	}
 	a.notes = nil
+	a.enrichments = nil
 }
 
 func runTranscript(s *Session, r run) string {
@@ -139,7 +135,9 @@ func runTranscript(s *Session, r run) string {
 	return truncateRunes(b.String(), runNoteInputRunes)
 }
 
-var notePathLike = regexp.MustCompile(`[\w./-]*[/\\][\w./\\-]+|\b[\w-]+\.(go|js|ts|tsx|py|md|json|ya?ml|kt|kts|java|gradle|rs|sh|ps1|toml|xml|html|css)\b`)
+// Only tokens that end in a file extension count as paths; prose such as
+// "delta/message/tool" would otherwise reject sound notes.
+var notePathLike = regexp.MustCompile(`[\w./\\-]*\.(go|js|ts|tsx|py|md|json|ya?ml|kt|kts|java|gradle|rs|sh|ps1|toml|xml|html|css)\b`)
 
 // groundedNote accepts a note only if every path-like token in it appears in
 // the run. A note that names files the run never touched is discarded; the
@@ -171,4 +169,13 @@ func (p *Pruner) reviewTimeout() time.Duration {
 		return p.timeout
 	}
 	return 60 * time.Second
+}
+
+// backgroundLocked is the parent context of background model work (run notes
+// and the enricher); Close and Reset cancel it. Callers hold notesMu.
+func (a *Agent) backgroundLocked() context.Context {
+	if a.notesCancel == nil {
+		a.notesCtx, a.notesCancel = context.WithCancel(context.Background())
+	}
+	return a.notesCtx
 }

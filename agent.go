@@ -65,6 +65,9 @@ type Agent struct {
 	notesCancel context.CancelFunc
 	notesCtx    context.Context
 	notesAsked  map[string]bool
+	// The enricher; see enricher.go. Guarded by notesMu.
+	enriching   bool
+	enrichments []enrichResult
 }
 
 // SetModel changes the model this agent talks to.
