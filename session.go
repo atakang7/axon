@@ -118,6 +118,9 @@ type Session struct {
 	CurrentTask   *Task          `json:"current_task,omitempty"`
 	NextBlockID   int            `json:"next_block_id,omitempty"`
 	Turn          int            `json:"turn,omitempty"`
+	// Runs holds folding state and background notes per run, keyed by the
+	// run's user message ID. See WORKING_CONTEXT.md.
+	Runs map[string]*RunNote `json:"runs,omitempty"`
 
 	// TokenUsage accumulates the session's token accounting and cost across
 	// all API calls. On session restart (cortex resumes), these persisted

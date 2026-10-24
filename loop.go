@@ -10,10 +10,13 @@ import (
 // Step submits one user message and drives the loop until the
 // assistant emits text with no further tool calls.
 func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) {
-	defer func() { a.categoryBoundary(ctx, false); a.pruner.stopCategoryJob() }()
 	if userInput == "" {
 		return StepResult{}, fmt.Errorf("agent: empty input")
 	}
+	// The run this Step answers is finished when it returns; its note is
+	// written in the background while the user reads and types.
+	defer func() { a.categoryBoundary(ctx, false); a.pruner.stopCategoryJob(); a.noteFinishedRun() }()
+	a.applyRunNotes()
 
 	a.session.Turn++
 	a.emit(ctx, Event{Kind: KindTurnStart})

@@ -23,9 +23,11 @@ func (p *Pruner) semanticCandidates(s *Session) []Msg {
 		protected[checkpoint.ID] = true
 	}
 	failures := unresolvedToolFailures(s)
+	// Folded runs and stale stubs are already compact in the view.
+	compacted := s.compactedIDs()
 	var candidates []Msg
 	for i, m := range s.Messages {
-		if i >= cut || m.ID == "" || m.Parked || protected[m.ID] || failures[m.ID] {
+		if i >= cut || m.ID == "" || m.Parked || protected[m.ID] || failures[m.ID] || compacted[m.ID] {
 			continue
 		}
 		// Preserve all human constraints and tool-call envelopes. Tool results

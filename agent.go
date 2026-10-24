@@ -9,6 +9,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -57,6 +58,13 @@ type Agent struct {
 	// One-shot planning note for the next model request, set by the loop when
 	// the agent is fetching context one item per round; see gather.go.
 	nudge string
+
+	// Background notes for finished runs; see run_notes.go.
+	notesMu     sync.Mutex
+	notes       []runNoteResult
+	notesCancel context.CancelFunc
+	notesCtx    context.Context
+	notesAsked  map[string]bool
 }
 
 // SetModel changes the model this agent talks to.

@@ -65,12 +65,14 @@ func categoryRequest(s *Session, candidates []Msg, mode PruneMode) Request {
 		b.WriteString(" " + m.ID)
 	}
 	b.WriteString("\nFULL ACTIVE CONTEXT (no excerpts):\n")
-	for _, m := range s.Messages {
-		fmt.Fprintf(&b, "\n[%s | %s | %s]\n", m.ID, m.Role, m.ToolName)
-		if m.Parked {
-			b.WriteString(breadcrumb(m.ID, m.ParkSummary))
+	// The same view the main model gets: folded runs as cards, stale results
+	// as stubs. Reviewers judge what is actually in context, not the log.
+	task := s.TaskBlock()
+	for _, m := range s.contextView(-1) {
+		if m.Role == "system" && task != "" && m.Content == task {
 			continue
 		}
+		fmt.Fprintf(&b, "\n[%s | %s | %s]\n", m.ID, m.Role, m.ToolName)
 		b.WriteString(m.Content)
 		for _, tc := range m.ToolCalls {
 			fmt.Fprintf(&b, "\nTOOL CALL %s %s: %s", tc.ID, tc.Function.Name, tc.Function.Arguments)

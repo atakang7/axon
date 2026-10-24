@@ -171,6 +171,7 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 // Background shells are killed.
 func (a *Agent) Reset() {
 	a.pruner.stopCategoryJob()
+	a.stopRunNotes()
 	a.shells.KillAll()
 
 	a.session.Reset()
@@ -221,6 +222,7 @@ func (a *Agent) Cd(target string) (string, error) {
 // handles, etc. Idempotent.
 func (a *Agent) Close() error {
 	a.pruner.stopCategoryJob()
+	a.stopRunNotes()
 	a.emit(context.Background(), Event{Kind: KindSessionEnd, Session: &SessionInfo{
 		ID:       a.session.ID,
 		Cwd:      a.session.Cwd,

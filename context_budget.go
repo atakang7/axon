@@ -3,6 +3,8 @@ package axon
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // HardContextLimit is the main agent's input budget in estimated tokens,
@@ -49,12 +51,28 @@ func checkRequestBudget(req Request, model string) error {
 	return nil
 }
 
-// Normal overflow is handled by pruning, not a failed API call. This barrier
-// takes ownership of a background pass and then runs bounded category passes.
+// governorReviewWait bounds how long a request waits for a background review
+// that is already running. The governor never waits unboundedly.
+const governorReviewWait = 20 * time.Second
+
+// minFoldBatch folds finished runs two at a time under the keep-runs policy,
+// so the provider's cached prefix changes every other run, not every run.
+const minFoldBatch = 2
+
+// ensureContextBudget is the governor in front of every model request. Its
+// critical path makes progress without waiting on a model: finished runs fold
+// to cards by policy and then oldest first under pressure. Only when the
+// current run alone is over the limit does it spend bounded time on review,
+// and then it parks the oldest large results of that run deterministically.
+// See WORKING_CONTEXT.md.
 func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 	model := modelName(a.model)
 	estimate := func() (int, error) {
 		return requestInputTokens(Request{Messages: a.session.ContextMessages(a.settings.Pruner.ContextWindow()), Tools: toolSpecs(tools)}, model)
+	}
+	a.applyRunNotes()
+	if a.settings.Pruner.Semantic {
+		a.foldByPolicy(ctx)
 	}
 	n, err := estimate()
 	if err != nil {
@@ -63,57 +81,155 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 	if n <= contextBudgetTarget {
 		return nil
 	}
-	if n <= HardContextLimit && (a.pruner == nil || !a.pruner.ShouldFire(a.session)) {
-		return nil
-	}
-	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("input budget: ~%d of %d tokens; compacting context before continuing", n, HardContextLimit)})
-	if a.pruner == nil {
-		return fmt.Errorf("context budget reached but no pruner is configured")
-	}
-	if job := a.pruner.pending; job != nil {
-		select {
-		case result := <-job.done:
-			job.done <- result
-			a.categoryBoundary(ctx, false)
-		case <-ctx.Done():
-			a.pruner.stopCategoryJob()
-			return ctx.Err()
-		}
-		n, err = estimate()
-		if err != nil {
+	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("input budget: ~%d of %d tokens; folding finished runs", n, HardContextLimit)})
+
+	before, folded := n, 0
+	for n > contextBudgetTarget && a.foldOldestRun() {
+		folded++
+		if n, err = estimate(); err != nil {
 			return err
 		}
-		if n <= HardContextLimit {
-			return nil
+	}
+	if folded > 0 {
+		a.persistContext(ctx, before, n)
+	}
+	if n <= HardContextLimit {
+		return nil
+	}
+
+	// Only the current run is left to shrink.
+	if a.pruner != nil {
+		if job := a.pruner.pending; job != nil {
+			select {
+			case result := <-job.done:
+				job.done <- result
+				a.categoryBoundary(ctx, false)
+			case <-time.After(governorReviewWait):
+			case <-ctx.Done():
+				a.pruner.stopCategoryJob()
+				return ctx.Err()
+			}
+			if n, err = estimate(); err != nil || n <= HardContextLimit {
+				return err
+			}
+		}
+		if err := a.reviewOnceBounded(ctx); err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if n, err = estimate(); err != nil || n <= HardContextLimit {
+			return err
 		}
 	}
-	pruneCtx, cancel := context.WithCancel(ctx)
+
+	before = n
+	if a.parkOpenRunOverflow(estimate) > 0 {
+		if n, err = estimate(); err != nil {
+			return err
+		}
+		a.persistContext(ctx, before, n)
+	}
+	if n <= HardContextLimit {
+		return nil
+	}
+	return fmt.Errorf("the current request alone is ~%d tokens, above the %d input budget, with every finished run folded and the current run's older results parked", n, HardContextLimit)
+}
+
+// foldByPolicy keeps only the newest KeepRuns finished runs unfolded. Runs
+// too small to gain anything stay as they are.
+func (a *Agent) foldByPolicy(ctx context.Context) {
+	closed := closedRuns(a.session)
+	keep := a.settings.Pruner.keptRuns()
+	if len(closed) <= keep {
+		return
+	}
+	var due []run
+	for _, r := range closed[:len(closed)-keep] {
+		if !a.session.runFolded(r) && runBytes(a.session, r) > 1500 {
+			due = append(due, r)
+		}
+	}
+	if len(due) < minFoldBatch {
+		return
+	}
+	before := a.pruner.ContextTokens(a.session)
+	for _, r := range due {
+		a.session.foldRun(r)
+	}
+	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("context folded: %d finished runs to run cards; originals via recall", len(due))})
+	a.persistContext(ctx, before, a.pruner.ContextTokens(a.session))
+}
+
+// foldOldestRun folds the oldest finished run that is still shown in full.
+func (a *Agent) foldOldestRun() bool {
+	for _, r := range closedRuns(a.session) {
+		if a.session.foldRun(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func runBytes(s *Session, r run) int {
+	n := 0
+	for _, m := range s.Messages[r.start:r.end] {
+		n += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			n += len(tc.Function.Arguments)
+		}
+	}
+	return n
+}
+
+// reviewOnceBounded runs one curator pass over what is still unfolded, within
+// the curator's own timeout.
+func (a *Agent) reviewOnceBounded(ctx context.Context) error {
+	reviewCtx, cancel := context.WithTimeout(ctx, a.pruner.reviewTimeout())
 	defer cancel()
 	previous := a.turnCancel.Load()
 	cf := context.CancelFunc(cancel)
 	a.turnCancel.Store(&cf)
 	defer a.turnCancel.Store(previous)
-	for pass := 0; pass < 3; pass++ {
-		beforeBytes := a.pruner.contextBytes(a.session)
-		after, pruneErr := a.pruner.Prune(pruneCtx, a.session)
-		if pruneErr != nil {
-			if n <= HardContextLimit {
-				return nil
-			}
-			return fmt.Errorf("context compaction could not complete; history retained: %w", pruneErr)
+	beforeBytes := a.pruner.contextBytes(a.session)
+	after, err := a.pruner.Prune(reviewCtx, a.session)
+	if err != nil {
+		a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
+		return err
+	}
+	a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: contextTokens(beforeBytes), After: after}})
+	return nil
+}
+
+// parkOpenRunOverflow is the last resort when the current run alone is over
+// budget: park its oldest large tool results, outside the tail and never an
+// unresolved failure, until the request fits the target. Originals stay
+// reachable through recall.
+func (a *Agent) parkOpenRunOverflow(estimate func() (int, error)) int {
+	s := a.session
+	start := 0
+	if runs := sessionRuns(s); len(runs) > 0 {
+		start = runs[len(runs)-1].start
+	}
+	failures := unresolvedToolFailures(s)
+	parked := 0
+	for i := start + 1; i < len(s.Messages)-tailKeep; i++ {
+		m := s.Messages[i]
+		if m.Role != "tool" || m.ID == "" || m.Parked || failures[m.ID] || len(m.Content) < 1024 {
+			continue
 		}
-		a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: contextTokens(beforeBytes), After: after}})
-		next, err := estimate()
-		if err != nil {
-			return err
+		if s.Park(m.ID, truncateRunes(firstLine(strings.TrimPrefix(m.Content, "[#"+m.ID+"]\n")), 160), "context governor: current run over the input budget; original via recall") != nil {
+			continue
 		}
-		if next <= HardContextLimit {
-			return nil
-		}
-		if next >= n {
+		parked++
+		if n, err := estimate(); err != nil || n <= contextBudgetTarget {
 			break
 		}
-		n = next
 	}
-	return fmt.Errorf("context retained: reviewers could not safely reduce protected or necessary information below the %d input budget", HardContextLimit)
+	return parked
+}
+
+func (a *Agent) persistContext(ctx context.Context, before, after int) {
+	if err := savePrunedSession(a.session); err != nil {
+		a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
+	}
+	a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
 }

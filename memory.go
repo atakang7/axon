@@ -32,9 +32,41 @@ import (
 // Internal bookkeeping (ID, park metadata) is stripped — the provider sees
 // only role + content + tool-call fields.
 func (s *Session) ContextMessages(windowBlocks int) []Msg {
+	view := s.contextView(windowBlocks)
+	for i := range view {
+		view[i].ID = ""
+	}
+	return view
+}
+
+// contextView is ContextMessages with block IDs kept, for reviewers that must
+// name blocks. windowBlocks < 0 (semantic curation) also applies the working
+// context layers: folded runs become cards, stale results become stubs, and
+// write bodies in closed runs are dropped. See WORKING_CONTEXT.md.
+func (s *Session) contextView(windowBlocks int) []Msg {
 	s.ensure()
 
 	cut := windowCutoff(s, windowBlocks)
+
+	// Folding is state the governor recorded, so it always renders; stubs are
+	// part of semantic curation only.
+	working := windowBlocks < 0
+	var stale map[int]string
+	folded := map[int]run{} // start index -> folded run
+	closedEnd := 0
+	var uses map[string]toolUse
+	if working || len(s.Runs) > 0 {
+		uses = toolUses(s)
+		for _, r := range closedRuns(s) {
+			closedEnd = r.end
+			if s.runFolded(r) {
+				folded[r.start] = r
+			}
+		}
+	}
+	if working {
+		stale = staleResults(s)
+	}
 
 	droppedToolCallIDs := map[string]bool{}
 	for _, m := range s.Messages {
@@ -48,7 +80,15 @@ func (s *Session) ContextMessages(windowBlocks int) []Msg {
 	}
 
 	out := make([]Msg, 0, len(s.Messages))
-	for _, m := range s.Messages {
+	for i := 0; i < len(s.Messages); i++ {
+		m := s.Messages[i]
+		if r, ok := folded[i]; ok {
+			// The request stays verbatim; the work collapses to its card.
+			out = append(out, Msg{Role: "user", Content: m.Content, ID: m.ID},
+				Msg{Role: "assistant", Content: runCard(s, r, uses)})
+			i = r.end - 1
+			continue
+		}
 		if m.Role == "tool" && droppedToolCallIDs[m.ToolCallID] {
 			continue
 		}
@@ -62,6 +102,14 @@ func (s *Session) ContextMessages(windowBlocks int) []Msg {
 		case cut[m.ID]:
 			content = breadcrumb(m.ID, gist(s, m.ID))
 			toolCalls = nil
+		case stale[i] != "":
+			content = stale[i]
+		case working && i < closedEnd && len(toolCalls) > 0:
+			stubbed := make([]ToolCall, len(toolCalls))
+			for j, tc := range toolCalls {
+				stubbed[j] = stubWriteArgs(tc)
+			}
+			toolCalls = stubbed
 		}
 
 		out = append(out, Msg{
@@ -70,6 +118,7 @@ func (s *Session) ContextMessages(windowBlocks int) []Msg {
 			ToolCalls:  toolCalls,
 			ToolCallID: m.ToolCallID,
 			ToolName:   m.ToolName,
+			ID:         m.ID,
 		})
 	}
 

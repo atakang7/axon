@@ -297,6 +297,11 @@ type PrunerSettings struct {
 
 	// Timeout bounds one curator call.
 	Timeout Duration `yaml:"timeout"`
+
+	// KeepRuns is how many finished runs stay unfolded under semantic
+	// curation; older ones fold to run cards. Zero follows Mode: low 6,
+	// moderate 3, extreme 1. See WORKING_CONTEXT.md.
+	KeepRuns int `yaml:"keep_runs"`
 }
 
 // ContextWindow disables blind age-based masking under semantic curation.
@@ -578,4 +583,18 @@ func join(names []string) string {
 	}
 
 	return out
+}
+
+// keptRuns resolves KeepRuns against the prune mode.
+func (s PrunerSettings) keptRuns() int {
+	if s.KeepRuns > 0 {
+		return s.KeepRuns
+	}
+	switch s.Mode {
+	case PruneLow:
+		return 6
+	case PruneExtreme:
+		return 1
+	}
+	return 3
 }
