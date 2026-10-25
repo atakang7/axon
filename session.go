@@ -110,23 +110,24 @@ type TaskStep struct {
 }
 
 type Session struct {
-	CategoryAudit *CategoryAudit `json:"category_review,omitempty"`
-	ID            string         `json:"id"`
-	StartedAt     time.Time      `json:"started_at"`
-	Cwd           string         `json:"cwd,omitempty"`
-	Title         string         `json:"title,omitempty"`
-	Messages      []Msg          `json:"messages"`
-	Edits         []Edit         `json:"edits"`
-	CurrentTask   *Task          `json:"current_task,omitempty"`
-	NextBlockID   int            `json:"next_block_id,omitempty"`
-	Turn          int            `json:"turn,omitempty"`
+	ID          string    `json:"id"`
+	StartedAt   time.Time `json:"started_at"`
+	Cwd         string    `json:"cwd,omitempty"`
+	Title       string    `json:"title,omitempty"`
+	Messages    []Msg     `json:"messages"`
+	Edits       []Edit    `json:"edits"`
+	CurrentTask *Task     `json:"current_task,omitempty"`
+	NextBlockID int       `json:"next_block_id,omitempty"`
+	Turn        int       `json:"turn,omitempty"`
 	// Runs holds folding state and background notes per run, keyed by the
 	// run's user message ID. See WORKING_CONTEXT.md.
 	Runs map[string]*RunNote `json:"runs,omitempty"`
 	// Steps marks folded steps of the goal tree, keyed by the block that
-	// closed the step. Trims holds the enricher's per-block selections.
+	// closed the step. Trims holds the line selections checkpoints made.
 	Steps map[string]bool  `json:"steps,omitempty"`
 	Trims map[string]*Trim `json:"trims,omitempty"`
+	// Checkpoints records every applied checkpoint, oldest first.
+	Checkpoints []CheckpointRecord `json:"checkpoints,omitempty"`
 	// Goals is the conversation's contract, keyed by the user message that
 	// opened each goal. See GOALS.md.
 	Goals map[string]*Goal `json:"goals,omitempty"`
@@ -142,6 +143,10 @@ type Session struct {
 	// averages the provider choice is computed from.
 	CachedTokens int `json:"cached_tokens,omitempty"`
 	Requests     int `json:"requests,omitempty"`
+	// ExplorerTokens counts the explorer's prompt and completion tokens. Its
+	// cost is included in Cost; its tokens are not in the main totals, which
+	// describe the deciding model's own context.
+	ExplorerTokens int `json:"explorer_tokens,omitempty"`
 
 	path    string
 	editsMu sync.Mutex

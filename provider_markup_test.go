@@ -37,7 +37,7 @@ var dsmlCloserChunks = []sseDelta{
 
 // agentAgainst builds an Agent whose model is a real Client pointed at the
 // stub provider, with a session in a temp file.
-func agentAgainst(t *testing.T, p *prunerProvider) *Agent {
+func agentAgainst(t *testing.T, p *fakeProvider) *Agent {
 	t.Helper()
 
 	client, err := NewClient(ClientConfig{Provider: Provider{
@@ -63,7 +63,7 @@ func agentAgainst(t *testing.T, p *prunerProvider) *Agent {
 // dropped a tool call the model asked for; one more attempt is far more likely
 // to produce it than treating template tokens as the reply.
 func TestProviderToolMarkupLeakIsRetried(t *testing.T) {
-	provider := newPrunerProviderFunc(t, func(call int) []sseDelta {
+	provider := newFakeProviderFunc(t, func(call int) []sseDelta {
 		if call == 0 {
 			return dsmlCloserChunks
 		}
@@ -92,7 +92,7 @@ func TestProviderToolMarkupLeakIsRetried(t *testing.T) {
 // cause. Stopping silently — the original symptom — is the one outcome that
 // tells nobody anything.
 func TestProviderToolMarkupLeakFailsLoudlyWhenPersistent(t *testing.T) {
-	provider := newPrunerProvider(t, dsmlCloserChunks...)
+	provider := newFakeProvider(t, dsmlCloserChunks...)
 	a := agentAgainst(t, provider)
 
 	_, err := a.Step(context.Background(), "keep going")
@@ -114,7 +114,7 @@ func TestProviderToolMarkupDoesNotSwallowRealAnswers(t *testing.T) {
 		"Done. See the DSML notes in the trace for why the earlier turn stopped.",
 	} {
 		t.Run(content[:20], func(t *testing.T) {
-			provider := newPrunerProvider(t, sseDelta{Content: content})
+			provider := newFakeProvider(t, sseDelta{Content: content})
 			a := agentAgainst(t, provider)
 
 			res, err := a.Step(context.Background(), "explain")
@@ -136,7 +136,7 @@ func TestProviderToolMarkupDoesNotSwallowRealAnswers(t *testing.T) {
 // what actually breaks — the empty tool_calls field, not the markup itself.
 func TestProviderToolMarkupWithToolCallsStillContinues(t *testing.T) {
 	calls := 0
-	provider := newPrunerProviderFunc(t, func(call int) []sseDelta {
+	provider := newFakeProviderFunc(t, func(call int) []sseDelta {
 		calls++
 		if call == 0 {
 			// Markup leaked alongside a real tool call.

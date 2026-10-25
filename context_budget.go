@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // HardContextLimit is the main agent's input budget in estimated tokens,
@@ -13,10 +12,9 @@ import (
 const HardContextLimit = 70000
 const contextBudgetTarget = 56000
 
-// PrunerInputLimit bounds a curator request. It is deliberately well above
-// HardContextLimit: the curator must read the entire active context plus its
-// own instructions in one request, and every configured curator model accepts
-// 512K+ tokens. Paging is a last resort only above this ceiling.
+// PrunerInputLimit bounds a checkpoint request. It is above HardContextLimit
+// because a checkpoint is asked for precisely when the context is large: it
+// must see all of it to choose.
 const PrunerInputLimit = 200000
 
 // RequestInputBudget estimates req's input tokens with the meter's
@@ -51,36 +49,37 @@ func checkRequestBudget(req Request, model string) error {
 	return nil
 }
 
-// governorReviewWait bounds how long a request waits for a background review
-// that is already running. The governor never waits unboundedly.
-const governorReviewWait = 20 * time.Second
-
 // minFoldBatch folds finished runs two at a time under the keep-runs policy,
 // so the provider's cached prefix changes every other run, not every run.
 const minFoldBatch = 2
 
-// ensureContextBudget is the governor in front of every model request. Its
-// critical path makes progress without waiting on a model: finished runs fold
-// to cards by policy and then oldest first under pressure. Only when the
-// current run alone is over the limit does it spend bounded time on review,
-// and then it parks the oldest large results of that run deterministically.
-// See WORKING_CONTEXT.md.
+// ensureContextBudget runs before every model request. In order:
+//
+//  1. Rules, no model: finished runs beyond keep_runs fold to cards, and
+//     finished task steps except the newest fold to step cards.
+//  2. Over the checkpoint trigger: the deciding model chooses what stays.
+//  3. Still over the hard limit: fold the oldest runs and steps, then park the
+//     oldest large results of the current run.
+//
+// Step 2 can fail or keep a large working set; step 3 still guarantees that
+// no request is sent above the limit. See WORKING_CONTEXT.md.
 func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 	model := modelName(a.model)
 	estimate := func() (int, error) {
 		return requestInputTokens(Request{Messages: a.session.ContextMessages(a.settings.Pruner.ContextWindow()), Tools: toolSpecs(tools)}, model)
 	}
-	a.applyRunNotes()
-	a.applyEnrichment(ctx)
-	if a.settings.Pruner.Semantic {
-		a.foldByPolicy(ctx)
-		a.foldStepsByPolicy(ctx)
-	}
+	a.foldByPolicy(ctx, estimate)
+	a.foldStepsByPolicy(ctx, estimate)
 	n, err := estimate()
 	if err != nil {
 		return err
 	}
-	if n <= contextBudgetTarget {
+	if n >= a.checkpointTrigger() && a.forceCheckpoint(ctx, tools, n) {
+		if n, err = estimate(); err != nil {
+			return err
+		}
+	}
+	if n <= HardContextLimit {
 		return nil
 	}
 	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("input budget: ~%d of %d tokens; folding finished work", n, HardContextLimit)})
@@ -92,42 +91,13 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 			return err
 		}
 	}
-	if folded > 0 {
-		a.persistContext(ctx, before, n)
-	}
-	if n <= HardContextLimit {
-		return nil
-	}
-
-	// Only the current run is left to shrink.
-	if a.pruner != nil {
-		if job := a.pruner.pending; job != nil {
-			select {
-			case result := <-job.done:
-				job.done <- result
-				a.categoryBoundary(ctx, false)
-			case <-time.After(governorReviewWait):
-			case <-ctx.Done():
-				a.pruner.stopCategoryJob()
-				return ctx.Err()
-			}
-			if n, err = estimate(); err != nil || n <= HardContextLimit {
-				return err
-			}
-		}
-		if err := a.reviewOnceBounded(ctx); err != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if n, err = estimate(); err != nil || n <= HardContextLimit {
-			return err
-		}
-	}
-
-	before = n
-	if a.parkOpenRunOverflow(estimate) > 0 {
+	if n > HardContextLimit && a.parkOpenRunOverflow(estimate) > 0 {
+		folded++
 		if n, err = estimate(); err != nil {
 			return err
 		}
+	}
+	if folded > 0 {
 		a.persistContext(ctx, before, n)
 	}
 	if n <= HardContextLimit {
@@ -138,7 +108,7 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 
 // foldByPolicy keeps only the newest KeepRuns finished runs unfolded. Runs
 // too small to gain anything stay as they are.
-func (a *Agent) foldByPolicy(ctx context.Context) {
+func (a *Agent) foldByPolicy(ctx context.Context, estimate func() (int, error)) {
 	closed := closedRuns(a.session)
 	keep := a.settings.Pruner.keptRuns()
 	if len(closed) <= keep {
@@ -153,12 +123,13 @@ func (a *Agent) foldByPolicy(ctx context.Context) {
 	if len(due) < minFoldBatch {
 		return
 	}
-	before := a.pruner.ContextTokens(a.session)
+	before, _ := estimate()
 	for _, r := range due {
 		a.session.foldRun(r)
 	}
 	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("context folded: %d finished runs to run cards; originals via recall", len(due))})
-	a.persistContext(ctx, before, a.pruner.ContextTokens(a.session))
+	after, _ := estimate()
+	a.persistContext(ctx, before, after)
 }
 
 // foldOldestRun folds the oldest finished run that is still shown in full.
@@ -180,25 +151,6 @@ func runBytes(s *Session, r run) int {
 		}
 	}
 	return n
-}
-
-// reviewOnceBounded runs one curator pass over what is still unfolded, within
-// the curator's own timeout.
-func (a *Agent) reviewOnceBounded(ctx context.Context) error {
-	reviewCtx, cancel := context.WithTimeout(ctx, a.pruner.reviewTimeout())
-	defer cancel()
-	previous := a.turnCancel.Load()
-	cf := context.CancelFunc(cancel)
-	a.turnCancel.Store(&cf)
-	defer a.turnCancel.Store(previous)
-	beforeBytes := a.pruner.contextBytes(a.session)
-	after, err := a.pruner.Prune(reviewCtx, a.session)
-	if err != nil {
-		a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
-		return err
-	}
-	a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: contextTokens(beforeBytes), After: after}})
-	return nil
 }
 
 // parkOpenRunOverflow is the last resort when the current run alone is over
@@ -230,20 +182,15 @@ func (a *Agent) parkOpenRunOverflow(estimate func() (int, error)) int {
 }
 
 func (a *Agent) persistContext(ctx context.Context, before, after int) {
-	if err := savePrunedSession(a.session); err != nil {
+	if err := saveSessionAtomic(a.session); err != nil {
 		a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
-	}
-	// Measure the reviewers' growth from the new size. A baseline left at the
-	// pre-fold size kept them from ever firing again in that session.
-	if a.pruner != nil {
-		a.pruner.lastFire = a.pruner.ContextTokens(a.session)
 	}
 	a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
 }
 
 // foldStepsByPolicy folds the open run's finished steps except the newest
 // one: the step just closed is what the next step most likely builds on.
-func (a *Agent) foldStepsByPolicy(ctx context.Context) {
+func (a *Agent) foldStepsByPolicy(ctx context.Context, estimate func() (int, error)) {
 	uses := toolUses(a.session)
 	var finished []step
 	for _, st := range openRunSteps(a.session, uses) {
@@ -254,18 +201,22 @@ func (a *Agent) foldStepsByPolicy(ctx context.Context) {
 	if len(finished) < 2 {
 		return
 	}
-	before := a.pruner.ContextTokens(a.session)
-	folded := 0
+	var due []step
 	for _, st := range finished[:len(finished)-1] {
-		if stepBytes(a.session, st) > 1500 && a.session.foldStep(st) {
-			folded++
+		if stepBytes(a.session, st) > 1500 && !a.session.stepFolded(st) {
+			due = append(due, st)
 		}
 	}
-	if folded == 0 {
+	if len(due) == 0 {
 		return
 	}
-	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("context folded: %d finished steps to step cards; originals via recall", folded)})
-	a.persistContext(ctx, before, a.pruner.ContextTokens(a.session))
+	before, _ := estimate()
+	for _, st := range due {
+		a.session.foldStep(st)
+	}
+	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("context folded: %d finished steps to step cards; originals via recall", len(due))})
+	after, _ := estimate()
+	a.persistContext(ctx, before, after)
 }
 
 // foldOldestStep folds the oldest finished step of the open run, the newest

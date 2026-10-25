@@ -8,7 +8,7 @@ import (
 
 // api.go — public library API for embedding axon in Go programs.
 // Monolithic engine: no configuration of its own, embedder provides model and system prompt.
-// Built-in tools: read, write, exec, search, task, bash_output, kill_shell (exclude via Config.ExcludeBuiltins).
+// Built-in tools: read, write, exec, search, task, goal, recall, bash_output, kill_shell, checkpoint, and explore with an explorer model (exclude via Config.ExcludeBuiltins).
 // Concurrency: Step/Run/Reset must not be called concurrently; Interrupt is goroutine-safe.
 
 // OpenAI builds a Model for any OpenAI-compatible endpoint.
@@ -42,9 +42,22 @@ type Config struct {
 
 	Tools []Tool
 
+	// ExcludeBuiltins removes runtime tools by name: any built-in, and
+	// "checkpoint" or "explore". Without checkpoint, context is kept under the
+	// limit by rules alone.
 	ExcludeBuiltins []string
 
+	// Pruner decides checkpoints: which older tool results stay in context.
+	// nil means the main model decides, which is the default and usually the
+	// cheapest, since its prompt prefix is already cached. Set it only to a
+	// model you trust to judge relevance. See WORKING_CONTEXT.md.
 	Pruner Model
+
+	// Explorer, when set, backs the explore tool: a cheaper, read-only model
+	// that answers questions about the repository with facts whose quotes are
+	// checked against the files. It never decides anything. nil means no
+	// explore tool.
+	Explorer Model
 
 	// TitleModel, when set, is asked to name the session from the first
 	// user message. When nil, the deterministic deriveTitle truncation is

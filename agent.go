@@ -19,7 +19,22 @@ type Agent struct {
 	model   Model
 	tools   []Tool
 	session *Session
-	pruner  *Pruner
+
+	// prunerModel decides checkpoints; nil means the main model does, which
+	// is the default and the cheapest: its prefix is already cached.
+	prunerModel Model
+
+	// explorer answers explore calls; nil means the tool is not offered.
+	explorer Model
+
+	// keptTokens is what the last checkpoint of the current run kept. The
+	// next forced checkpoint waits for growth beyond it; a new user message
+	// resets it. See WORKING_CONTEXT.md.
+	keptTokens int
+
+	// usageMu guards the session's usage totals, which concurrent explore
+	// calls add to.
+	usageMu sync.Mutex
 
 	// Cancels the currently in-flight chat call; set by chat(), cleared after.
 	turnCancel atomic.Pointer[context.CancelFunc]
@@ -62,16 +77,6 @@ type Agent struct {
 	// One-shot note appended as a user message to the next request, for when
 	// the last message is the assistant's own answer; see goalTurnNote.
 	turnNote string
-
-	// Background notes for finished runs; see run_notes.go.
-	notesMu     sync.Mutex
-	notes       []runNoteResult
-	notesCancel context.CancelFunc
-	notesCtx    context.Context
-	notesAsked  map[string]bool
-	// The enricher; see enricher.go. Guarded by notesMu.
-	enriching   bool
-	enrichments []enrichResult
 }
 
 // SetModel changes the model this agent talks to.
@@ -79,32 +84,27 @@ func (a *Agent) SetModel(m Model) {
 	a.model = m
 }
 
-// SetPrunerModel changes the model the pruner uses. If the pruner was not initialized, it initializes it.
+// SetPrunerModel changes the model that decides checkpoints. nil hands the
+// decision back to the main model.
 func (a *Agent) SetPrunerModel(m Model) {
-	a.pruner.stopCategoryJob()
-	if a.pruner == nil {
-		a.pruner = NewPruner(PrunerConfig{
-			Model:    m,
-			Settings: a.settings.Pruner,
-		})
-	} else {
-		a.pruner.model = m
-	}
+	a.prunerModel = m
 }
 
-// SetPruneMode changes how aggressively the curator parks, mid-session. An
-// invalid mode is ignored rather than applied, so a bad value cannot quietly
-// change pruning behaviour; Load rejects one from a config file outright.
+// SetPruneMode changes when checkpoints fire, mid-session. An invalid mode is
+// ignored rather than applied; Load rejects one from a config file outright.
 func (a *Agent) SetPruneMode(mode PruneMode) {
 	if !mode.Valid() {
 		return
 	}
-	a.pruner.stopCategoryJob()
-
 	a.settings.Pruner.Mode = mode
-	if a.pruner != nil {
-		a.pruner.mode = mode
-	}
+}
+
+// SetExplorerModel changes the model behind the explore tool. nil removes the
+// tool. The tool list is part of every request's cached prefix, so this costs
+// one cache miss; it is a user action, not something the loop does.
+func (a *Agent) SetExplorerModel(m Model) {
+	a.explorer = m
+	a.rebindTools()
 }
 
 // Interrupt cancels the in-flight chat call, or false if no turn is active.
@@ -138,6 +138,59 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 	if err := a.ensureContextBudget(ctx, tools); err != nil {
 		return nil, err
 	}
+	a.emit(ctx, Event{Kind: KindAPICall})
+	return a.complete(ctx, a.model, Request{
+		Messages: withTurnNote(withNudge(a.session.ContextMessages(a.settings.Pruner.ContextWindow()), a.nudge), a.turnNote),
+		Tools:    toolSpecs(tools),
+		Stream: Stream{
+			Route: func(model, reason string) {
+				a.emit(ctx, Event{Kind: KindInfo, Text: "model route: " + model + " (" + reason + ")"})
+			},
+			Token: func(t string) {
+				a.emit(ctx, Event{Kind: KindToken, Text: t})
+			},
+			Reasoning: func(t string) {
+				a.emit(ctx, Event{Kind: KindReasoning, Text: t})
+			},
+			ToolArgs: func(name, delta string) {
+				a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
+			},
+		},
+	}, a.recordUsage(ctx), false)
+}
+
+// recordUsage returns the Stream hooks that add one request's usage to the
+// session totals and report it. Main and checkpoint requests use it: both
+// are the deciding model's own spend.
+func (a *Agent) recordUsage(ctx context.Context) Stream {
+	cached := 0
+	return Stream{
+		Cached: func(tokens int) { cached = tokens },
+		Usage: func(prompt, completion int, cost float64) {
+			a.usageMu.Lock()
+			a.session.PromptTokens += prompt
+			a.session.CompletionTokens += completion
+			a.session.CachedTokens += cached
+			a.session.Requests++
+			a.session.Cost += cost
+			a.usageMu.Unlock()
+			a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, Cost: cost}})
+		},
+	}
+}
+
+// complete sends req to m under the retry policy: transient failures and
+// unusable replies are retried with backoff. usage supplies the Cached and
+// Usage hooks; req's own hooks supply the rest. quiet suppresses events, for
+// callers that run inside a concurrent tool call: the event sink is not
+// required to be goroutine-safe.
+func (a *Agent) complete(ctx context.Context, m Model, req Request, usage Stream, quiet bool) (*Msg, error) {
+	req.Stream.Cached, req.Stream.Usage = usage.Cached, usage.Usage
+	emit := func(e Event) {
+		if !quiet {
+			a.emit(ctx, e)
+		}
+	}
 	policy := a.settings.Retry
 	if policy.MaxAttempts < 1 {
 		policy = DefaultSettings().Retry
@@ -162,7 +215,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 				}
 			}
 
-			a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("retry %d/%d in %s", attempt+1, policy.MaxAttempts, backoff)})
+			emit(Event{Kind: KindInfo, Text: fmt.Sprintf("retry %d/%d in %s", attempt+1, policy.MaxAttempts, backoff)})
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -170,40 +223,12 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			}
 		}
 
-		a.emit(ctx, Event{Kind: KindAPICall})
-		cached := 0
-		msg, err := a.model.Complete(ctx, Request{
-			Messages: withTurnNote(withNudge(a.session.ContextMessages(a.settings.Pruner.ContextWindow()), a.nudge), a.turnNote),
-			Tools:    toolSpecs(tools),
-			Stream: Stream{
-				Route: func(model, reason string) {
-					a.emit(ctx, Event{Kind: KindInfo, Text: "model route: " + model + " (" + reason + ")"})
-				},
-				Token: func(t string) {
-					a.emit(ctx, Event{Kind: KindToken, Text: t})
-				},
-				Reasoning: func(t string) {
-					a.emit(ctx, Event{Kind: KindReasoning, Text: t})
-				},
-				ToolArgs: func(name, delta string) {
-					a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
-				},
-				Cached: func(tokens int) { cached = tokens },
-				Usage: func(prompt, completion int, cost float64) {
-					a.session.PromptTokens += prompt
-					a.session.CompletionTokens += completion
-					a.session.CachedTokens += cached
-					a.session.Requests++
-					a.session.Cost += cost
-					a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, Cost: cost}})
-				},
-			},
-		})
+		msg, err := m.Complete(ctx, req)
 
 		if err == nil {
 			if reason := unusableReply(msg); reason != "" {
 				lastErr = errors.New(reason)
-				a.emit(ctx, Event{Kind: KindError, Err: lastErr})
+				emit(Event{Kind: KindError, Err: lastErr})
 				if attempt >= 1 {
 					return nil, lastErr
 				}
@@ -212,7 +237,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 			return msg, nil
 		}
 
-		a.emit(ctx, Event{Kind: KindError, Err: err})
+		emit(Event{Kind: KindError, Err: err})
 		lastErr = err
 		if ctx.Err() != nil || !a.retryable(err) {
 			return nil, err

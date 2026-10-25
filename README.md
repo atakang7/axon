@@ -87,7 +87,7 @@ go run .
 The snippet above is the full agent loop — one client, one agent, one `Step`. Axon layers the rest on top when you need it:
 
 - **Tools** — file I/O, search, shell exec, background processes, all built in
-- **Sessions** — persistent, resumable, with automatic context pruning under pressure
+- **Sessions** — persistent, resumable; the deciding model checkpoints what stays in context, and an optional read-only explorer answers broad questions with verified quotes (see WORKING_CONTEXT.md)
 - **MCP** — connect external tool servers over stdio or HTTP
 - **Events** — a structured stream you can render into any UI
 

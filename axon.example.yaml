@@ -112,16 +112,23 @@ tools:
     output_bytes: 12000
 
 # ---------------------------------------------------------------------------
-# Pruner — the secondary model that parks stale context
+# Checkpoints — when the deciding model chooses what stays in context
 #
-# Only used when the application supplies a pruner model. Parking is a
-# projection, never a mutation: the original stays in the session log.
+# The main model decides by default; an application may name another model.
+# Dropped results stay in the session log and come back with recall. See
+# WORKING_CONTEXT.md.
 # ---------------------------------------------------------------------------
 pruner:
-  floor_tokens: 10000       # below this, a prune is not worth a round trip
-  growth_tokens: 5000       # accumulate this much before pruning again
-  # Caps the curator's reply. The answer is one line of JSON, but providers
-  # bill reasoning against this cap — set too low, a reasoning curator spends
-  # it all thinking and returns empty content.
-  max_tokens: 16000
-  timeout: 60s
+  mode: moderate            # checkpoint at low 48K, moderate 32K, extreme 20K tokens
+  # trigger_tokens: 32000   # overrides mode
+  growth_tokens: 12000      # a kept working set may grow this much before the next one
+  max_tokens: 16000         # the checkpoint reply, reasoning included
+  timeout: 5m
+
+# ---------------------------------------------------------------------------
+# Explorer — the read-only explore tool, when the application supplies a model
+# ---------------------------------------------------------------------------
+explorer:
+  max_rounds: 16            # requests before it must report
+  max_tokens: 8000          # one explorer reply, reasoning included
+  timeout: 10m

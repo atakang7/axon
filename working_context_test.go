@@ -28,7 +28,7 @@ func (b *runBuilder) user(text string)      { b.s.Append(Msg{Role: "user", Conte
 func (b *runBuilder) assistant(text string) { b.s.Append(Msg{Role: "assistant", Content: text}) }
 
 func newRunBuilder(t *testing.T) *runBuilder {
-	s := newPrunerSession(t)
+	s := newTestSession(t)
 	s.Append(Msg{Role: "system", Content: "system prompt"})
 	return &runBuilder{s: s}
 }
@@ -168,12 +168,12 @@ func TestGovernorBringsAStuckSessionUnderBudgetWithoutAModelCall(t *testing.T) {
 	resetMeter(t)
 	b := bigHistory(t, 40)
 	reviews := 0
-	p := &Pruner{semantic: true, categories: true, mode: PruneModerate, model: funcModel{fn: func(context.Context, Request) (*Msg, error) {
+	model := funcModel{fn: func(context.Context, Request) (*Msg, error) {
 		reviews++
-		return nil, fmt.Errorf("no reviewer in the critical path")
-	}}}
+		return nil, fmt.Errorf("no model in the critical path")
+	}}
 	var events []Event
-	a := &Agent{session: b.s, pruner: p, settings: Settings{Pruner: PrunerSettings{Semantic: true, Mode: PruneModerate}},
+	a := &Agent{session: b.s, model: model, settings: Settings{Pruner: PrunerSettings{Mode: PruneModerate}}.WithDefaults(),
 		onEvent: func(_ context.Context, e Event) { events = append(events, e) }}
 	before, _ := requestInputTokens(Request{Messages: b.s.ContextMessages(-1)}, "")
 	if before <= HardContextLimit*3 {
@@ -204,8 +204,9 @@ func TestGovernorBringsAStuckSessionUnderBudgetWithoutAModelCall(t *testing.T) {
 func TestPolicyFoldsOnlyBeyondKeepRunsAndInBatches(t *testing.T) {
 	resetMeter(t)
 	b := bigHistory(t, 4)
-	a := &Agent{session: b.s, settings: Settings{Pruner: PrunerSettings{Semantic: true, Mode: PruneModerate}}}
-	a.foldByPolicy(context.Background())
+	a := &Agent{session: b.s, settings: Settings{Pruner: PrunerSettings{Mode: PruneModerate}}}
+	estimate := func() (int, error) { return requestInputTokens(Request{Messages: b.s.ContextMessages(-1)}, "") }
+	a.foldByPolicy(context.Background(), estimate)
 	folded := 0
 	for _, r := range closedRuns(b.s) {
 		if b.s.runFolded(r) {
@@ -221,7 +222,7 @@ func TestPolicyFoldsOnlyBeyondKeepRunsAndInBatches(t *testing.T) {
 	b2.call(toolRead, map[string]any{"path": "x.go"}, strings.Repeat("y", 3000), false)
 	b2.assistant("done 4")
 	b2.openRunTail()
-	a.foldByPolicy(context.Background())
+	a.foldByPolicy(context.Background(), estimate)
 	var states []bool
 	for _, r := range closedRuns(b.s) {
 		states = append(states, b.s.runFolded(r))
@@ -241,7 +242,7 @@ func TestGovernorParksTheCurrentRunWhenItAloneIsOverBudget(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		b.call(toolSearch, map[string]any{"pattern": fmt.Sprint(i)}, "none", false)
 	}
-	a := &Agent{session: b.s, settings: Settings{Pruner: PrunerSettings{Semantic: true}}}
+	a := &Agent{session: b.s, settings: Settings{}.WithDefaults()}
 	if err := a.ensureContextBudget(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -251,42 +252,4 @@ func TestGovernorParksTheCurrentRunWhenItAloneIsOverBudget(t *testing.T) {
 	if b.s.Messages[len(b.s.Messages)-1].Parked {
 		t.Fatal("the tail was parked")
 	}
-}
-
-func TestRunNotesAreGroundedAppliedAndShownOnTheCard(t *testing.T) {
-	b := newRunBuilder(t)
-	b.user("add retries to client.go")
-	b.call(toolRead, map[string]any{"path": "client.go"}, strings.Repeat("func Do() {}\n", 400), false)
-	b.call(toolWrite, map[string]any{"path": "client.go", "mode": "save", "content": strings.Repeat("retry\n", 300)}, "ok", false)
-	b.assistant("added retries")
-	reply := "Asked for retries; client.go now retries 3 times; go test passed."
-	p := &Pruner{semantic: true, model: funcModel{fn: func(_ context.Context, r Request) (*Msg, error) {
-		if strings.Contains(r.Messages[1].Content, strings.Repeat("retry\n", 300)) {
-			t.Error("note transcript carries the full write body")
-		}
-		return &Msg{Content: reply}, nil
-	}}}
-	a := &Agent{session: b.s, pruner: p, settings: Settings{Pruner: PrunerSettings{Semantic: true}}}
-	a.noteFinishedRun()
-	a.noteFinishedRun() // asked once per run
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		a.applyRunNotes()
-		if n := b.s.Runs[b.s.Messages[1].ID]; n != nil && n.Summary != "" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("note never applied")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	b.openRunTail()
-	b.s.foldRun(closedRuns(b.s)[0])
-	if !strings.Contains(b.s.ContextMessages(-1)[2].Content, "summary: "+reply) {
-		t.Fatal("card does not carry the note")
-	}
-	if _, ok := groundedNote("changed server/main.go", runTranscript(b.s, closedRuns(b.s)[0])); ok {
-		t.Fatal("a note naming a file the run never touched was accepted")
-	}
-	a.stopRunNotes()
 }

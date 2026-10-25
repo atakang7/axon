@@ -24,7 +24,7 @@ func TestBackoffDoublesFromFiveSecondsUpToTheCap(t *testing.T) {
 
 func TestRequestTimeoutsAreRetriedButACancelledTurnIsNot(t *testing.T) {
 	calls := 0
-	s := newPrunerSession(t)
+	s := newTestSession(t)
 	s.Append(Msg{Role: "user", Content: "hi"})
 	a := &Agent{session: s, settings: Settings{Retry: RetryConfig{MaxAttempts: 4, BackoffCap: Duration(time.Millisecond), OnStatus: []int{429}}},
 		model: funcModel{fn: func(ctx context.Context, r Request) (*Msg, error) {

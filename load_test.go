@@ -101,8 +101,8 @@ tools:
 	}
 
 	// Different section entirely.
-	if got, want := settings.Pruner.FloorTokens, DefaultSettings().Pruner.FloorTokens; got != want {
-		t.Errorf("pruner.floor_tokens = %d, want the default %d", got, want)
+	if got, want := settings.Pruner.GrowthTokens, DefaultSettings().Pruner.GrowthTokens; got != want {
+		t.Errorf("pruner.growth_tokens = %d, want the default %d", got, want)
 	}
 }
 
@@ -478,8 +478,11 @@ func TestDefaultSettingsAreFullyPopulated(t *testing.T) {
 	if d.Retry.MaxAttempts < 1 || d.Retry.BackoffCap <= 0 || len(d.Retry.OnStatus) == 0 {
 		t.Errorf("retry defaults incomplete: %+v", d.Retry)
 	}
-	if d.Pruner.FloorTokens <= 0 || d.Pruner.GrowthTokens <= 0 || d.Pruner.MaxTokens <= 0 || d.Pruner.Timeout <= 0 {
+	if d.Pruner.Trigger() <= 0 || d.Pruner.GrowthTokens <= 0 || d.Pruner.MaxTokens <= 0 || d.Pruner.Timeout <= 0 {
 		t.Errorf("pruner defaults incomplete: %+v", d.Pruner)
+	}
+	if d.Explorer.MaxRounds <= 0 || d.Explorer.MaxTokens <= 0 || d.Explorer.Timeout <= 0 {
+		t.Errorf("explorer defaults incomplete: %+v", d.Explorer)
 	}
 
 	if d.Model.IdleTimeout >= d.Model.RequestTimeout {
@@ -501,14 +504,16 @@ func TestWithDefaultsIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestWithDefaultsPreservesNegativePrunerWindow(t *testing.T) {
-	settings := Settings{Pruner: PrunerSettings{WindowBlocks: -1}}.WithDefaults()
-
-	if settings.Pruner.WindowBlocks != -1 {
-		t.Fatalf("WindowBlocks = %d, want -1 to disable windowing", settings.Pruner.WindowBlocks)
+// Configs written for the free-model reviewers removed in v2.7 must still
+// load: their keys are accepted and ignored, and the context view no longer
+// masks by age.
+func TestRetiredPrunerKeysLoadAndAreIgnored(t *testing.T) {
+	settings := Settings{Pruner: PrunerSettings{WindowBlocks: 30, Semantic: true, Categories: true, FloorTokens: 10000}}.WithDefaults()
+	if settings.Pruner.ContextWindow() != -1 {
+		t.Fatalf("ContextWindow = %d, want -1", settings.Pruner.ContextWindow())
 	}
-	if settings.Pruner.FloorTokens <= 0 {
-		t.Fatalf("other pruner defaults were not filled: %+v", settings.Pruner)
+	if settings.Pruner.Trigger() != 32000 || settings.Pruner.GrowthTokens <= 0 {
+		t.Fatalf("checkpoint defaults were not filled: %+v", settings.Pruner)
 	}
 }
 

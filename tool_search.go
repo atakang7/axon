@@ -77,8 +77,8 @@ type searchInput struct {
 	MaxMatches    int      `json:"max_matches"`
 }
 
-// errNoRipgrep is returned when rg is missing. Search is nothing without it,
-// so the message names the fix rather than the symptom.
+// errNoRipgrep is returned when rg is missing; runRipgrep then falls back to
+// the built-in search in tool_search_fallback.go.
 var errNoRipgrep = errors.New("search requires rg (ripgrep) in PATH")
 
 // globArgs appends the caller's glob filters, skipping blanks.
@@ -146,6 +146,9 @@ func runRipgrep(parent context.Context, ws Workspace, lim Limits, p searchInput,
 	args = append(args, "--", p.Query, p.Path)
 
 	out, truncated, err := runRg(parent, ws, lim, args)
+	if errors.Is(err, errNoRipgrep) {
+		return searchFallback(parent, ws, lim, p, literal)
+	}
 	if err != nil {
 		return "", err
 	}

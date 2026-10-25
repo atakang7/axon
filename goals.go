@@ -76,6 +76,31 @@ func normalizeCommand(c string) string {
 	return strings.Join(strings.Fields(c), " ")
 }
 
+// oracleMatches reports whether an exec command ran a criterion's oracle: the
+// command contains the oracle, or the oracle is the command followed only by
+// words of description. Agents write oracles like "go test ./... run in repo
+// root" and then run "go test ./..." (seen live 2026-10-26); that is the same
+// check. A remainder with a flag, a path or a shell operator is not prose: it
+// names a different or narrower check, and does not match.
+func oracleMatches(command, oracle string) bool {
+	if oracle == "" {
+		return false
+	}
+	if strings.Contains(command, oracle) {
+		return true
+	}
+	rest, ok := strings.CutPrefix(oracle, command+" ")
+	if !ok || command == "" {
+		return false
+	}
+	for _, w := range strings.Fields(rest) {
+		if strings.HasPrefix(w, "-") || strings.ContainsAny(w, "/\\.=&|;<>$`(){}[]*?~\"'") {
+			return false
+		}
+	}
+	return true
+}
+
 // goalOf is the goal a user message's run works on, following continuations.
 func (s *Session) goalOf(userID string) string {
 	seen := map[string]bool{}
@@ -148,7 +173,7 @@ func (s *Session) criterionStatus(c *Criterion, uses map[string]toolUse) critSta
 				continue
 			}
 			u := uses[m.ToolCallID]
-			if u.name != toolExec || !strings.Contains(normalizeCommand(argString(u.args, "command")), oracle) {
+			if u.name != toolExec || !oracleMatches(normalizeCommand(argString(u.args, "command")), oracle) {
 				continue
 			}
 			idx, id = i, m.ID

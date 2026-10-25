@@ -49,8 +49,12 @@ type Settings struct {
 	// Tools caps what a single tool call may cost in time and context.
 	Tools ToolsConfig `yaml:"tools"`
 
-	// Pruner tunes the secondary model that parks stale context.
+	// Pruner tunes checkpoints, when the deciding model chooses what stays
+	// in context.
 	Pruner PrunerSettings `yaml:"pruner"`
+
+	// Explorer bounds the read-only explore tool.
+	Explorer ExplorerSettings `yaml:"explorer"`
 
 	// Goals tunes how the conversation's contract is enforced. See GOALS.md.
 	Goals GoalSettings `yaml:"goals"`
@@ -233,33 +237,26 @@ type SearchConfig struct {
 	OutputBytes Bytes `yaml:"output_bytes"`
 }
 
-// PruneMode is how hard the curator is asked to look for blocks to park.
-//
-// It changes the curator's judgment threshold — how confident it must be
-// that a block is dead before parking it — and nothing else. Every mode gets
-// the same never-park guarantees and the same one-way parking semantics; a
-// stricter mode is not permitted to park something a looser one protects.
-// The knob is the bar for "is this still needed", not the safety rules.
+// PruneMode is how early checkpoints fire: the context size at which the
+// deciding model is asked to choose what stays. It sets a size, not a
+// judgement bar; what the model keeps is always its own call.
 type PruneMode string
 
 const (
-	// PruneLow parks only what is unambiguously dead. Use when context is
-	// cheap relative to the cost of the agent losing a thread.
+	// PruneLow checkpoints at 48K tokens.
 	PruneLow PruneMode = "low"
 
-	// PruneModerate parks what is clearly no longer in play. The default.
+	// PruneModerate checkpoints at 32K tokens. The default.
 	PruneModerate PruneMode = "moderate"
 
-	// PruneExtreme parks anything not carrying the current direction
-	// forward. Use when context is the binding constraint and the agent
-	// re-reading a file occasionally is cheaper than a bloated window.
+	// PruneExtreme checkpoints at 20K tokens.
 	PruneExtreme PruneMode = "extreme"
 )
 
 // PruneModes lists the valid modes, for validation and error messages.
 var PruneModes = []PruneMode{PruneLow, PruneModerate, PruneExtreme}
 
-// Valid reports whether m is a mode the curator knows how to run.
+// Valid reports whether m is a known mode.
 func (m PruneMode) Valid() bool {
 	for _, known := range PruneModes {
 		if m == known {
@@ -269,59 +266,73 @@ func (m PruneMode) Valid() bool {
 	return false
 }
 
-// PrunerSettings tunes the secondary model that parks stale context.
+// PrunerSettings tunes checkpoints: when the deciding model is asked what
+// stays in context. See WORKING_CONTEXT.md.
 type PrunerSettings struct {
-	// Semantic keeps old blocks visible until the curator explicitly parks
-	// them. WindowBlocks then protects the recent tail instead of masking age.
-	// It also enables the read-only recall tool for archived context.
-	Semantic bool `yaml:"semantic"`
-	// Categories enables full-context category review in a background pass.
-	// Requires Semantic. Mode extreme also permits pruning within useful categories.
-	Categories bool `yaml:"categories"`
-	// Mode is how aggressively the curator parks. See PruneMode. The zero
-	// value takes PruneModerate.
+	// Mode sets the checkpoint trigger. See PruneMode. The zero value takes
+	// PruneModerate.
 	Mode PruneMode `yaml:"mode"`
 
-	// WindowBlocks is how many of the most recent blocks are kept active for
-	// free, no model call. Only blocks older than the window are ever
-	// candidates for parking — by the window itself (recency, free) or by
-	// the curator (judgment, costs a call). This is the first and cheapest
-	// line of defense; the curator only ever sees what falls outside it. The
-	// zero value takes the default; set a negative value to disable windowing.
-	WindowBlocks int `yaml:"window_blocks"`
+	// TriggerTokens overrides Mode's trigger: the estimated context size at
+	// which a checkpoint is forced before the next request.
+	TriggerTokens int `yaml:"trigger_tokens"`
 
-	// FloorTokens is the context size below which pruning is not worth a
-	// round trip.
-	FloorTokens int `yaml:"floor_tokens"`
-
-	// GrowthTokens is how much context must accumulate since the last prune
-	// before another one fires.
+	// GrowthTokens is how far the context must grow beyond what the last
+	// checkpoint kept before another one is forced in the same run. It is
+	// what lets a large working set stay without a checkpoint every request.
 	GrowthTokens int `yaml:"growth_tokens"`
 
-	// MaxTokens caps the curator's reply.
-	//
-	// The answer itself is one line of JSON, but providers that bill reasoning
-	// against this cap — OpenRouter does — will cut a reasoning model off
-	// mid-thought and return empty content. The cap has to cover the thinking
-	// as well as the answer, so it is sized for a reasoning curator rather
-	// than for the JSON.
+	// MaxTokens caps the checkpoint reply. It covers reasoning as well as the
+	// tool call, since providers bill both against it.
 	MaxTokens int `yaml:"max_tokens"`
 
-	// Timeout bounds one curator call.
+	// Timeout bounds one checkpoint request.
 	Timeout Duration `yaml:"timeout"`
 
-	// KeepRuns is how many finished runs stay unfolded under semantic
-	// curation; older ones fold to run cards. Zero follows Mode: low 6,
-	// moderate 3, extreme 1. See WORKING_CONTEXT.md.
+	// KeepRuns is how many finished runs stay unfolded; older ones fold to
+	// run cards. Zero follows Mode: low 6, moderate 3, extreme 1.
 	KeepRuns int `yaml:"keep_runs"`
+
+	// Semantic, Categories, WindowBlocks and FloorTokens configured the free
+	// model reviewers removed in v2.7. They are still accepted so existing
+	// config files load, and ignored.
+	Semantic     bool `yaml:"semantic"`
+	Categories   bool `yaml:"categories"`
+	WindowBlocks int  `yaml:"window_blocks"`
+	FloorTokens  int  `yaml:"floor_tokens"`
 }
 
-// ContextWindow disables blind age-based masking under semantic curation.
+// ContextWindow is the windowBlocks argument the agent passes to
+// ContextMessages: -1, the full working view. Age-based masking was a cheap
+// rule deciding relevance; checkpoints decide instead.
 func (s PrunerSettings) ContextWindow() int {
-	if s.Semantic {
-		return -1
+	return -1
+}
+
+// Trigger is the context size, in estimated tokens, that forces a checkpoint.
+func (s PrunerSettings) Trigger() int {
+	if s.TriggerTokens > 0 {
+		return s.TriggerTokens
 	}
-	return s.WindowBlocks
+	switch s.Mode {
+	case PruneLow:
+		return 48000
+	case PruneExtreme:
+		return 20000
+	}
+	return 32000
+}
+
+// ExplorerSettings bounds one explore call. See WORKING_CONTEXT.md.
+type ExplorerSettings struct {
+	// MaxRounds caps the explorer's model requests before it must report.
+	MaxRounds int `yaml:"max_rounds"`
+
+	// MaxTokens caps one explorer reply, reasoning included.
+	MaxTokens int `yaml:"max_tokens"`
+
+	// Timeout bounds the whole exploration.
+	Timeout Duration `yaml:"timeout"`
 }
 
 // ---------------------------------------------------------------------------
@@ -379,11 +390,15 @@ func DefaultSettings() Settings {
 
 		Pruner: PrunerSettings{
 			Mode:         PruneModerate,
-			WindowBlocks: 30,
-			FloorTokens:  10000,
-			GrowthTokens: 5000,
+			GrowthTokens: 12000,
 			MaxTokens:    16000,
-			Timeout:      Duration(60 * time.Second),
+			Timeout:      Duration(5 * time.Minute),
+		},
+
+		Explorer: ExplorerSettings{
+			MaxRounds: 16,
+			MaxTokens: 8000,
+			Timeout:   Duration(10 * time.Minute),
 		},
 	}
 }
@@ -435,11 +450,13 @@ func (r Settings) WithDefaults() Settings {
 	if r.Pruner.Mode == "" {
 		r.Pruner.Mode = d.Pruner.Mode
 	}
-	fillWindowBlocks(&r.Pruner.WindowBlocks, d.Pruner.WindowBlocks)
-	fillInt(&r.Pruner.FloorTokens, d.Pruner.FloorTokens)
 	fillInt(&r.Pruner.GrowthTokens, d.Pruner.GrowthTokens)
 	fillInt(&r.Pruner.MaxTokens, d.Pruner.MaxTokens)
 	fillDuration(&r.Pruner.Timeout, d.Pruner.Timeout)
+
+	fillInt(&r.Explorer.MaxRounds, d.Explorer.MaxRounds)
+	fillInt(&r.Explorer.MaxTokens, d.Explorer.MaxTokens)
+	fillDuration(&r.Explorer.Timeout, d.Explorer.Timeout)
 
 	return r
 }
@@ -452,12 +469,6 @@ func fillString(dst *string, fallback string) {
 
 func fillInt(dst *int, fallback int) {
 	if *dst <= 0 {
-		*dst = fallback
-	}
-}
-
-func fillWindowBlocks(dst *int, fallback int) {
-	if *dst == 0 {
 		*dst = fallback
 	}
 }

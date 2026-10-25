@@ -115,7 +115,6 @@ var errSessionLoad = errors.New("agent: could not load session")
 // a not-yet-existing file is treated as "begin a new session there" rather than
 // an error.
 func (a *Agent) SwitchSession(path string) error {
-	a.pruner.stopCategoryJob()
 	if path == "" {
 		return errors.New("agent: SwitchSession requires a path")
 	}
@@ -130,7 +129,8 @@ func (a *Agent) SwitchSession(path string) error {
 	a.session = sess
 	a.initSessionMessages()
 
-	a.tools = append(builtinTools(a.session, a.shells, a.limits, a.excludeBuiltins, a.settings.Pruner.Semantic), a.customTools...)
+	a.keptTokens = 0
+	a.rebindTools()
 
 	return nil
 }

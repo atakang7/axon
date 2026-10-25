@@ -21,7 +21,7 @@ type goalWorld struct {
 
 func newGoalWorld(t *testing.T) *goalWorld {
 	w := &goalWorld{t: t, outputs: map[string]string{}}
-	w.s = newPrunerSession(t)
+	w.s = newTestSession(t)
 	w.s.Append(Msg{Role: "system", Content: "system prompt"})
 	exec := Tool{Name: toolExec, Description: "x", Schema: obj("object", props{"command": strSchema("c")}, []string{"command"}),
 		Fn: func(_ context.Context, raw json.RawMessage) (string, error) {
@@ -291,5 +291,27 @@ func TestActiveGoalViewForTheEditor(t *testing.T) {
 	q.step("what is this?", answer("A parser."))
 	if q.s.ActiveGoalView() != nil {
 		t.Fatal("a question should not show a goal panel")
+	}
+}
+
+func TestOracleMatchesTheCommandOrTheCommandWithProse(t *testing.T) {
+	for _, tc := range []struct {
+		command, oracle string
+		want            bool
+	}{
+		{"go test ./...", "go test ./...", true},
+		{"go test ./... -v", "go test ./...", true},
+		{"cd repo && go test ./...", "go test ./...", true},
+		{"go test ./...", "go test ./... run in repo root", true},
+		{"go test ./...", "go test ./... -run TestTotal", false},
+		{"go test ./...", "go test ./... && go vet ./...", false},
+		{"go test ./...", "go test ./... in pkg/shop", false},
+		{"go vet ./...", "go test ./...", false},
+		{"", "go test ./...", false},
+		{"go test ./...", "", false},
+	} {
+		if got := oracleMatches(tc.command, tc.oracle); got != tc.want {
+			t.Errorf("oracleMatches(%q, %q) = %v, want %v", tc.command, tc.oracle, got, tc.want)
+		}
 	}
 }

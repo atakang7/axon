@@ -37,7 +37,7 @@ func TestTokenMeterCalibratesPerModelFromProviderUsage(t *testing.T) {
 	}
 }
 
-func TestCuratorRequestsGetTheirOwnLargerBudget(t *testing.T) {
+func TestCheckpointRequestsGetTheirOwnLargerBudget(t *testing.T) {
 	resetMeter(t)
 	big := Request{Messages: []Msg{{Role: "user", Content: strings.Repeat("func x() {}\n", 25000)}}}
 	if err := checkRequestBudget(big, ""); err == nil {
@@ -45,7 +45,7 @@ func TestCuratorRequestsGetTheirOwnLargerBudget(t *testing.T) {
 	}
 	big.InputLimit = PrunerInputLimit
 	if err := checkRequestBudget(big, ""); err != nil {
-		t.Fatal("curator could not see a context the main agent overflowed:", err)
+		t.Fatal("a checkpoint could not see a context the main agent overflowed:", err)
 	}
 }
 
@@ -65,69 +65,5 @@ func TestInputBudgetBlocksNetworkIncludingToolSchema(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("oversized request reached network")
-	}
-}
-
-func TestCategoryPagingPreservesEveryByte(t *testing.T) {
-	resetMeter(t)
-	s, p, _ := categoryFixture(t)
-	// Beyond PrunerInputLimit: the only case that still pages.
-	s.Messages[1].Content = strings.Repeat("source 日本語\n", 40000)
-	candidates := p.semanticCandidates(s)
-	pages, err := categoryPages(s, candidates, PruneExtreme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined := map[string]string{}
-	for _, page := range pages {
-		if err := checkRequestBudget(categoryRequest(page.session, page.candidates, PruneExtreme), ""); err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range page.session.Messages {
-			joined[m.ID] += m.Content
-		}
-	}
-	for _, m := range s.Messages {
-		if joined[m.ID] != m.Content {
-			t.Fatalf("lost content in %s", m.ID)
-		}
-	}
-}
-
-func TestOverBudgetAgentReviewsWholeContextInOneRequest(t *testing.T) {
-	resetMeter(t)
-	s, p, _ := categoryFixture(t)
-	// Over the main agent's 70K budget, well under the curator's.
-	s.Messages[1].Content = strings.Repeat("obsolete source 日本語\n", 12000)
-	candidates := p.semanticCandidates(s)
-	pruneCalls := 0
-	p.model = funcModel{fn: func(ctx context.Context, r Request) (*Msg, error) {
-		if err := checkRequestBudget(r, ""); err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(r.Messages[0].Content, "Extract a compact memory") {
-			t.Fatal("context that fits the curator was paged")
-		}
-		pruneCalls++
-		for _, m := range s.Messages {
-			if !m.Parked && !strings.Contains(r.Messages[1].Content, m.Content) {
-				t.Fatalf("review request is missing block %s", m.ID)
-			}
-		}
-		return &Msg{Content: categoryJSON(candidates, false, nil)}, nil
-	}}
-	mainCalls := 0
-	a := &Agent{session: s, pruner: p, settings: Settings{Pruner: PrunerSettings{Semantic: true}}, model: funcModel{fn: func(ctx context.Context, r Request) (*Msg, error) {
-		mainCalls++
-		if err := checkRequestBudget(r, ""); err != nil {
-			t.Fatal("main call sent before compaction", err)
-		}
-		return &Msg{Role: "assistant", Content: "done"}, nil
-	}}}
-	if _, err := a.chat(context.Background(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if mainCalls != 1 || pruneCalls != 1 || !s.Messages[1].Parked {
-		t.Fatalf("main=%d prune=%d parked=%v", mainCalls, pruneCalls, s.Messages[1].Parked)
 	}
 }

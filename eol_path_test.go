@@ -9,7 +9,7 @@ import (
 
 func crlfFile(t *testing.T, body string) (*Session, string) {
 	t.Helper()
-	s := newPrunerSession(t)
+	s := newTestSession(t)
 	p := filepath.Join(t.TempDir(), "x.js")
 	if err := os.WriteFile(p, []byte(strings.ReplaceAll(body, "\n", "\r\n")), 0644); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestSaveKeepsAnExistingFilesCRLF(t *testing.T) {
 }
 
 func TestLFFilesAreUntouchedByEOLHandling(t *testing.T) {
-	s := newPrunerSession(t)
+	s := newTestSession(t)
 	p := filepath.Join(t.TempDir(), "x.go")
 	os.WriteFile(p, []byte("a\nb\n"), 0644)
 	if _, err := writeReplaceStringMode(s, p, "a\nb", "A\nB"); err != nil {

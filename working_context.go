@@ -18,8 +18,8 @@ const tailKeep = 6
 type RunNote struct {
 	// Folded runs render as the user's message plus a run card.
 	Folded bool `json:"folded,omitempty"`
-	// Summary is the background note a pruner model wrote after the run
-	// closed. Optional: the card is complete without it.
+	// Summary is a note written by the background run notes removed in v2.7.
+	// Sessions that have one still show it; nothing writes it any more.
 	Summary string `json:"summary,omitempty"`
 }
 
@@ -500,12 +500,12 @@ func stepCard(s *Session, st step, uses map[string]toolUse) string {
 }
 
 // ---------------------------------------------------------------------------
-// Trims: the enricher's per-block selections
+// Trims: per-block line selections
 // ---------------------------------------------------------------------------
 
-// Trim is the enricher's decision for one block. Spans are 1-based inclusive
-// line ranges of the block's text; Note replaces the block with one line;
-// Kept records that the block was reviewed and is needed whole.
+// Trim is a checkpoint's line selection for one block. Spans are 1-based
+// inclusive line ranges of the block's text. Note and Kept were written by
+// the enricher removed in v2.7; sessions that carry them still render.
 type Trim struct {
 	Spans [][2]int `json:"spans,omitempty"`
 	Note  string   `json:"note,omitempty"`
@@ -529,21 +529,17 @@ func renderTrim(m Msg, t *Trim) string {
 		return fmt.Sprintf("[#%s note: %s | recall %s for the original]", m.ID, t.Note, m.ID)
 	}
 	lines := blockLines(m)
-	var ranges []string
 	var b strings.Builder
-	for i, sp := range t.Spans {
-		ranges = append(ranges, spanLabel(sp))
-		if i > 0 {
+	kept := 0
+	for _, sp := range t.Spans {
+		if sp[0] < 1 || sp[1] > len(lines) || sp[0] > sp[1] {
+			continue
+		}
+		if kept > 0 {
 			b.WriteString("\n…\n")
 		}
 		b.WriteString(strings.Join(lines[sp[0]-1:sp[1]], "\n"))
+		kept += sp[1] - sp[0] + 1
 	}
-	return fmt.Sprintf("[#%s trimmed to lines %s of %d; recall %s for the rest]\n%s", m.ID, strings.Join(ranges, ", "), len(lines), m.ID, b.String())
-}
-
-func spanLabel(sp [2]int) string {
-	if sp[0] == sp[1] {
-		return fmt.Sprint(sp[0])
-	}
-	return fmt.Sprintf("%d-%d", sp[0], sp[1])
+	return fmt.Sprintf("[#%s trimmed: %d of %d lines kept; recall %s for the rest]\n%s", m.ID, kept, len(lines), m.ID, b.String())
 }

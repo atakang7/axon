@@ -14,11 +14,9 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	if userInput == "" {
 		return StepResult{}, fmt.Errorf("agent: empty input")
 	}
-	// The run this Step answers is finished when it returns; its note is
-	// written in the background while the user reads and types.
-	defer func() { a.categoryBoundary(ctx, false); a.pruner.stopCategoryJob(); a.noteFinishedRun() }()
-	a.applyRunNotes()
-	a.applyEnrichment(ctx)
+	// A new user message moves the focus: the working set a checkpoint kept
+	// for the previous request no longer raises the trigger.
+	a.keptTokens = 0
 
 	a.session.Turn++
 	a.emit(ctx, Event{Kind: KindTurnStart})
@@ -49,33 +47,6 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 				ToolCalls: calls,
 				Turn:      a.session.Turn,
 			}, fmt.Errorf("%w: %d", ErrMaxIterations, a.maxIterations)
-		}
-
-		a.categoryBoundary(ctx, true)
-		a.applyEnrichment(ctx)
-		a.maybeEnrich()
-		if a.pruner.ShouldFire(a.session) && !a.pruner.categories {
-			beforeBytes := a.pruner.contextBytes(a.session)
-			a.emit(ctx, Event{Kind: KindPruneStart, Prune: &PruneInfo{Before: contextTokens(beforeBytes)}})
-
-			pruneCtx, pruneCancel := context.WithCancel(ctx)
-			pruneCF := context.CancelFunc(pruneCancel)
-			a.turnCancel.Store(&pruneCF)
-			after, err := a.pruner.Prune(pruneCtx, a.session)
-			a.turnCancel.Store(nil)
-			pruneCancel()
-			if errors.Is(err, context.Canceled) {
-				return StepResult{Turn: a.session.Turn, ToolCalls: calls}, ErrInterrupted
-			}
-			if err != nil {
-				a.emit(ctx, Event{Kind: KindError, Err: err, Text: "prune skipped"})
-			} else {
-				a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{
-					Before:   contextTokens(beforeBytes),
-					After:    after,
-					Rejected: a.pruner.Rejected(),
-				}})
-			}
 		}
 
 		turnCtx, cancel := context.WithCancel(ctx)

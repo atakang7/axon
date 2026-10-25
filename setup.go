@@ -49,7 +49,22 @@ func New(cfg Config) (*Agent, error) {
 		cfg.Tools = append(cfg.Tools, mcpTools...)
 	}
 
-	toolset := builtinTools(sess, shells, limits, cfg.ExcludeBuiltins, settings.Pruner.Semantic)
+	a := &Agent{
+		model:           cfg.Model,
+		session:         sess,
+		shells:          shells,
+		limits:          limits,
+		prunerModel:     cfg.Pruner,
+		explorer:        cfg.Explorer,
+		onEvent:         cfg.OnEvent,
+		systemPrompt:    cfg.SystemPrompt,
+		excludeBuiltins: cfg.ExcludeBuiltins,
+		mcpClients:      mcpClients,
+		settings:        settings,
+		titleModel:      cfg.TitleModel,
+		maxIterations:   cfg.MaxIterations,
+	}
+	toolset := a.ownTools()
 	seen := map[string]bool{}
 	for _, t := range toolset {
 		seen[t.Name] = true
@@ -57,42 +72,21 @@ func New(cfg Config) (*Agent, error) {
 
 	for _, t := range cfg.Tools {
 		if missing := missingToolFields(t); missing != "" {
+			closeMCP(mcpClients)
 			return nil, fmt.Errorf("%w: tool %q has no %s", ErrInvalidTool, t.Name, missing)
 		}
 		if seen[t.Name] {
+			closeMCP(mcpClients)
 			return nil, fmt.Errorf("%w: %q", ErrDuplicateTool, t.Name)
 		}
 		seen[t.Name] = true
 		toolset = append(toolset, t)
 	}
+	a.customTools = cfg.Tools
+	a.tools = toolset
 
 	if len(sess.Messages) == 0 {
 		sess.Messages = []Msg{{Role: "system", Content: buildSystemPrompt(cfg.SystemPrompt, toolset)}}
-	}
-
-	var pruner *Pruner
-	if cfg.Pruner != nil {
-		pruner = NewPruner(PrunerConfig{
-			Model:    cfg.Pruner,
-			Settings: settings.Pruner,
-		})
-	}
-
-	a := &Agent{
-		model:           cfg.Model,
-		tools:           toolset,
-		session:         sess,
-		shells:          shells,
-		limits:          limits,
-		pruner:          pruner,
-		onEvent:         cfg.OnEvent,
-		systemPrompt:    cfg.SystemPrompt,
-		customTools:     cfg.Tools,
-		excludeBuiltins: cfg.ExcludeBuiltins,
-		mcpClients:      mcpClients,
-		settings:        settings,
-		titleModel:      cfg.TitleModel,
-		maxIterations:   cfg.MaxIterations,
 	}
 
 	// Model and Provider are left blank: Model is an interface an embedder can
@@ -103,7 +97,7 @@ func New(cfg Config) (*Agent, error) {
 		ID:       sess.ID,
 		Cwd:      sess.Cwd,
 		Path:     sess.Path(),
-		PrunerOn: pruner != nil,
+		PrunerOn: true,
 	}})
 
 	return a, nil
@@ -129,12 +123,18 @@ func missingToolFields(t Tool) string {
 	return ""
 }
 
+func closeMCP(clients []*mcpClient) {
+	for _, c := range clients {
+		c.Close()
+	}
+}
+
 // builtinTools binds the built-in tool set to this agent's capabilities. Each
 // tool receives only what it needs: a Workspace for the filesystem tools, the
 // shell registry for the process tools, a Plan for the task tool, and the caps
 // it must obey. None of them gets the Session itself, and none of them reads
 // the environment — this is the single place those decisions are made.
-func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []string, semantic ...bool) []Tool {
+func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []string) []Tool {
 	all := []Tool{
 		ReadTool(ws, lim),
 		WriteTool(ws),
@@ -144,13 +144,14 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 		SearchTool(ws, lim),
 		TaskTool(ws),
 		GoalTool(ws),
+		RecallTool(ws),
 	}
+	return withoutExcluded(all, exclude)
+}
 
-	if len(semantic) > 0 && semantic[0] {
-		all = append(all, RecallTool(ws), CompactTool(ws))
-	}
+func withoutExcluded(tools []Tool, exclude []string) []Tool {
 	if len(exclude) == 0 {
-		return all
+		return tools
 	}
 
 	skip := make(map[string]bool, len(exclude))
@@ -158,8 +159,8 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 		skip[name] = true
 	}
 
-	kept := all[:0]
-	for _, t := range all {
+	kept := tools[:0]
+	for _, t := range tools {
 		if !skip[t.Name] {
 			kept = append(kept, t)
 		}
@@ -168,18 +169,35 @@ func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []s
 	return kept
 }
 
+// ownTools is every tool the runtime provides: the built-ins, plus checkpoint
+// and, when an explorer model is set, explore. Those two are bound to the
+// agent rather than the session, because they act on its context and models.
+func (a *Agent) ownTools() []Tool {
+	tools := builtinTools(a.session, a.shells, a.limits, nil)
+	tools = append(tools, a.checkpointTool())
+	if a.explorer != nil {
+		tools = append(tools, a.exploreTool())
+	}
+	return withoutExcluded(tools, a.excludeBuiltins)
+}
+
+// rebindTools rebuilds the tool list after the session or the explorer
+// changed. Custom tools were validated by New and are appended as they are.
+func (a *Agent) rebindTools() {
+	a.tools = append(a.ownTools(), a.customTools...)
+}
+
 // Reset wipes the session and rebuilds the system prompt and tool set.
 // Background shells are killed.
 func (a *Agent) Reset() {
-	a.pruner.stopCategoryJob()
-	a.stopRunNotes()
 	a.shells.KillAll()
 
 	a.session.Reset()
+	a.keptTokens = 0
 
 	a.initSessionMessages()
 
-	a.tools = append(builtinTools(a.session, a.shells, a.limits, a.excludeBuiltins, a.settings.Pruner.Semantic), a.customTools...)
+	a.rebindTools()
 }
 
 // Undo reverts the last recorded file edit and tells the model it happened.
@@ -222,13 +240,11 @@ func (a *Agent) Cd(target string) (string, error) {
 // Close releases resources held by the agent: background shells, file
 // handles, etc. Idempotent.
 func (a *Agent) Close() error {
-	a.pruner.stopCategoryJob()
-	a.stopRunNotes()
 	a.emit(context.Background(), Event{Kind: KindSessionEnd, Session: &SessionInfo{
 		ID:       a.session.ID,
 		Cwd:      a.session.Cwd,
 		Path:     a.session.Path(),
-		PrunerOn: a.pruner != nil,
+		PrunerOn: true,
 	}})
 
 	a.shells.KillAll()

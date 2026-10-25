@@ -1,137 +1,119 @@
 # Working context
 
-The model should see only what the work still needs, every request, without
-ever stalling on its own housekeeping. Context is kept small continuously, by
-two mechanisms running at two speeds, both anchored to one goal tree.
+The model should see only what the work still needs, at a size where every
+request is cheap: tens of thousands of tokens, not hundreds. Everything else
+waits in the log, one `recall` away.
 
-## Principles
+## The rule
+
+**Cheap models read; the main model decides.**
+
+A cheap model never chooses what the agent does or what it forgets. It may
+search and read, and it reports what it found as facts with exact quotes that
+code checks against the files. Every judgement — what to change, what to keep
+in context, when the work is done — belongs to the main model, or to a model
+the user deliberately picked for that role.
+
+Before v2.7 this rule was broken: free models voted on what to park, trimmed
+blocks and wrote run notes. That took ~6,000 lines, needed consensus voting to
+be safe, and still made the wrong call often enough to cost re-reads. It is
+gone.
+
+## Roles
+
+| Role | Model | Can | Cannot |
+|---|---|---|---|
+| Main | `Config.Model` | read, write, run, decide | — |
+| Checkpoint | `Config.Pruner`, default: the main model | choose what stays in context | act on the repository |
+| Explorer | `Config.Explorer`, optional | read and search; report facts with quotes | write, run commands, recommend, decide |
+| Code | — | cap tool output, stub stale copies, fold finished runs, verify quotes and ids | judge relevance |
+
+## The log and the view
 
 1. **History is immutable; context is a view.** `Session.Messages` is never
    rewritten to save tokens. `ContextMessages` derives what the model sees.
    Every original stays reachable through `recall`.
 2. **The disk is the source of truth.** A file's contents in context are a
-   cache. A write's full `content` argument, or a read that a newer read of
-   the same file replaced, is a stale cache entry.
-3. **Relevance comes from the goal tree.** Every block belongs to a node of
-   the tree below; whether a node is finished or active decides what happens
-   to its blocks.
-4. **Closed nodes are immutable.** A finished run or step never changes, so
-   its card or note can be computed at any time and never goes stale.
-5. **The critical path is deterministic and bounded.** No request waits on an
-   unbounded model call to make room. Models improve quality in the
-   background; rules guarantee progress.
-6. **Models select, they do not rewrite.** A trim keeps exact line ranges of
-   the original; code is never paraphrased into context. User words are kept
-   verbatim.
-7. **Changes are monotonic and near the tail.** Folding never unfolds, and
-   trims touch recent blocks, so the provider's cached prompt prefix stays
-   stable.
+   cache. The same call repeated, or a read followed by a write in a closed
+   run, makes the older copy a stale stub (code, no model).
+3. **User messages are never dropped.** They are small, and they are the
+   specification. Finished runs fold to the user's message plus a card built
+   from the log.
 
-## The goal tree
+## Checkpoints
 
-Derived from the log on every request, nothing new is stored to build it:
+A checkpoint is the deciding model choosing, in one tool call, what stays:
 
 ```
-session
-├─ run 1  user message → agent work           finished  → run card
-├─ run 2                                       finished  → run card
-└─ run 3  (open)
-   ├─ step 1  closed by task advance          finished  → step card
-   ├─ step 2  closed by task advance          finished, newest → kept, trimmed
-   └─ step 3  active                           blocks shown; enricher trims them
+checkpoint {
+  keep:  [{id: "m12"}, {id: "m31", lines: "40-85, 120-140"}],
+  notes: [{id: "m14", note: "expiry compared in s vs ms at auth.go:132"}]
+}
 ```
 
-- A **run** starts at a user message. Folding state lives in `Session.Runs`.
-- A **step** is the stretch of a run between successful `task` (`advance`,
-  `replan`) or `compact` results. The step's description comes from the
-  `register`/`replan` arguments in the log. Folding state lives in
-  `Session.Steps`, keyed by the block that closed the step.
-- Runs without a task plan have a single step: the run itself.
+Every candidate it does not keep becomes a one-line stub: its note, or a gist
+code builds from the call (`read auth/token.go`, `exec go test ./...`).
+Candidates are tool results outside the newest messages that are not
+unresolved failures, not already folded or stubbed, and big enough to matter.
 
-## Two speeds
+- **Forced.** Before a request, when the context estimate reaches the trigger
+  (`pruner.mode`: low 48K, moderate 32K, extreme 20K; or
+  `pruner.trigger_tokens`), the runtime sends the same context plus one note
+  asking for the checkpoint call. With the main model as the checkpoint model
+  the prefix is identical, so the request is served almost entirely from the
+  provider's prompt cache: a checkpoint costs about one ordinary step.
+- **Voluntary.** The tool is always available. The agent calls it when a step
+  is done and its material is no longer needed.
+- **Elastic.** If the work genuinely needs more than the trigger, the model
+  keeps it, and the next forced checkpoint waits until the context has grown
+  by `pruner.growth_tokens` (12K) beyond what was kept. A new user message
+  resets this. The trigger cuts bloat, never the working set.
+- **Validated by code.** Unknown ids, ranges outside a block and empty notes are
+  ignored and reported back; nothing invalid is applied. If the checkpoint
+  request fails twice, the deterministic floor below runs instead. A turn never
+  stalls on its own housekeeping.
 
-| | Enricher (fast) | Pruning (milestones) |
-|---|---|---|
-| When | every ~3K tokens of new, unreviewed results in the open run | a step or run closes; budget pressure |
-| Scope | only the new blocks, outside the tail | whole finished nodes |
-| Who | one free model, background | rules (cards) + the consensus reviewers |
-| Can | narrow a block to line ranges, matching lines, head/tail, or a one-line note | fold a node to its card; park blocks by unanimous vote |
-| Cannot | remove a block outright, touch the tail, user messages or unresolved failures | — |
-| Validity | per block, so a new user message never invalidates it | node is closed, so never stale |
+## The deterministic floor
 
-Enricher syntax, one decision per line, every candidate exactly once:
+Before every request, in order, without any model:
+
+1. Stale stubs and write-body stubs (always).
+2. Finished runs beyond `keep_runs` (low 6, moderate 3, extreme 1) fold to run
+   cards; finished task steps except the newest fold to step cards.
+3. Forced checkpoint, if over the trigger.
+4. Only if the request is still above the hard limit (70K): fold the oldest
+   runs and steps, then park the oldest large results of the current run.
+
+## Exploration
+
+`explore {question, paths}` hands a read-only question to the explorer model:
+"where is token expiry set?", starting from `auth/`. It runs in its own
+throw-away conversation with `read` and `search` only, within
+`explorer.max_rounds` (16) and `explorer.timeout` (10 min), and ends by calling
+`report`:
 
 ```
-m12 keep
-m12 lines 40-85 120-140
-m31 match "FAIL|panic" context 2
-m31 head 30
-m31 tail 40
-m20 note "build ok; apk at app/build/outputs/apk/debug/app-debug.apk, 14MB"
+report {
+  facts:     [{path, start_line, end_line, quote, claim}],
+  not_found: [{what, searched}]
+}
 ```
 
-Each line is validated in code: unknown ids, out-of-range lines, patterns that
-match nothing, notes over 500 characters, and trims that would not shrink the
-block are ignored (the block stays whole). A trimmed block renders as its
-selected lines under a header naming what was kept and `recall <id>`.
+Code checks every quote against the file. A quote found elsewhere in the file
+gets its line numbers corrected; a quote not in the file rejects the fact.
+The main model receives only verified facts, the explorer's one-line reading
+of each (labelled as its wording, not verified), and what was not found
+(labelled as not proof of absence). None of the explorer's raw reading enters
+the main context.
 
-## Layers in order (cheapest first)
-
-1. Stale stubs, every projection, no cost.
-2. Trims recorded by the enricher (`Session.Trims`).
-3. Step folding: in the open run, finished steps older than the newest
-   finished one fold to step cards; under pressure, all finished steps.
-4. Run folding: finished runs beyond `keep_runs` (low 6, moderate 3,
-   extreme 1) fold to run cards; under pressure, oldest first.
-5. Run notes: one background note per finished run, grounded in its text.
-6. Consensus reviewers over what is still unfolded.
-7. Governor before every request: target 56K, limit 70K; folds runs then
-   steps, waits ≤20s for a running review, one bounded review, then parks the
-   oldest large results of the active step.
-
-After any reduction the reviewers' growth baseline is reset to the new size;
-otherwise a fold from 230K to 14K left the baseline at 230K and reviewers
-never fired again in that session (seen 2026-10-24).
-
-## Thought experiments
-
-Checked against two real sessions (1586 and 619 messages, 2026-10-24).
-
-1. **Long run without a task plan.** Runs 1–14 of the larger session never
-   called `task`; one run was 185 KB over 57 results. Milestone pruning alone
-   would do nothing there. The enricher reviews every ~3K tokens, so the
-   active step stays trimmed; the governor remains the backstop.
-   *Holds.*
-2. **One step that never ends.** A single step reached 495 KB over 92
-   results. Same answer: enricher continuously, governor parks oldest large
-   results only under pressure. Step boundaries are a bonus, not the bound.
-   *Holds.*
-3. **Step 2 needs what step 1 read.** Folding step 1 at its milestone would
-   force re-reads, the costliest measured behaviour (3–4 reads per file). So
-   the newest finished step stays unfolded (only trimmed), and older ones
-   fold. A file needed later is re-read once; the stale rule then hides the
-   older copy. *Holds, with keep-one-step.*
-4. **The enricher trims what the agent is about to edit.** Trims only touch
-   blocks outside the tail (the agent has already acted on them), the prompt
-   tells it to keep what the active step will edit, and the edit tool rejects
-   an `old_str` that does not match the file, so a wrong trim costs one
-   re-read, never a bad edit. *Holds.*
-5. **The user types fast.** A new user message closes the run. Trims are per
-   block and stay valid; run and step cards are of closed nodes. Nothing is
-   thrown away, unlike the reviewers' whole-snapshot validation. *Holds.*
-6. **Prompt cache.** Trims land just outside the tail, folds are monotonic
-   and happen at milestones, so the cached prefix changes rarely and only near
-   its end. *Holds.*
-7. **Enricher cost.** ~3K tokens of new content per call plus the goal header:
-   a 495 KB step costs about 45 small free calls, against main-model requests
-   that each shrink by far more. *Acceptable.*
-8. **Enricher answers garbage.** Every line is validated; anything invalid
-   leaves the block whole. The worst case is no reduction. *Holds.*
+The main model can always read and search itself. Exploration is the cheap
+path for broad questions, never a gate: it reads raw whatever it will edit.
 
 ## Guarantees
 
-- No request is sent above the limit, and the turn does not fail just because
-  history is long: folding always makes progress.
-- The tail, the latest user message, unresolved failures and the task block
-  are never folded, trimmed or stubbed.
-- Every stub, trim and card names block ids; `recall` returns the original.
+- No request is sent above the hard limit; housekeeping always makes progress.
+- The newest messages, every user message, unresolved failures and the goal
+  block are never dropped.
+- Every stub names its block id; `recall` returns the original.
+- No cheap model's output reaches the main context unless code verified it
+  against the repository.

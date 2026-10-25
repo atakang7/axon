@@ -6,19 +6,23 @@ import (
 	"sync"
 )
 
-// readOnlyTools have no ordering dependency on each other: a run of them in
+// readOnlyTools are the direct lookups the drip nudge watches.
+var readOnlyTools = map[string]bool{toolRead: true, toolSearch: true}
+
+// concurrentTools have no ordering dependency on each other: a run of them in
 // one reply executes concurrently. Any other call is a barrier — everything
 // before it finishes first, and nothing after it starts until it is done — so
-// "write X, then read X" in one reply still reads the new contents.
-var readOnlyTools = map[string]bool{toolRead: true, toolSearch: true}
+// "write X, then read X" in one reply still reads the new contents. Explore
+// only reads, and is the slowest of them, so it gains the most.
+var concurrentTools = map[string]bool{toolRead: true, toolSearch: true, toolExplore: true}
 
 // toolGroups splits one reply's calls into execution groups, in order.
 func toolGroups(calls []ToolCall) [][]ToolCall {
 	var groups [][]ToolCall
 	for i := 0; i < len(calls); {
 		j := i + 1
-		if readOnlyTools[calls[i].Function.Name] {
-			for j < len(calls) && readOnlyTools[calls[j].Function.Name] {
+		if concurrentTools[calls[i].Function.Name] {
+			for j < len(calls) && concurrentTools[calls[j].Function.Name] {
 				j++
 			}
 		}
