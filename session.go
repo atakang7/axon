@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -297,6 +299,7 @@ func (s *Session) Dir() string {
 }
 
 func (s *Session) ResolvePath(p string) string {
+	p = msysPath(p, runtime.GOOS)
 	if filepath.IsAbs(p) {
 		return p
 	}
@@ -400,4 +403,20 @@ func (s *Session) ReplanTask(goal string, steps []TaskStep) error {
 	s.CurrentTask.Steps = steps
 	s.CurrentTask.CurrentStep = 0
 	return s.Save()
+}
+
+var msysDrive = regexp.MustCompile(`^/([a-zA-Z])(/|$)`)
+
+// msysPath maps a Git Bash path such as /c/Users/x to C:\Users\x on Windows.
+// exec runs in Git Bash there, so the model sees and writes such paths; read
+// and write used to join them onto the working directory instead.
+func msysPath(p, goos string) string {
+	if goos != "windows" {
+		return p
+	}
+	g := msysDrive.FindStringSubmatch(p)
+	if g == nil {
+		return p
+	}
+	return strings.ToUpper(g[1]) + `:\` + strings.ReplaceAll(strings.TrimPrefix(p[len(g[0]):], "/"), "/", `\`)
 }

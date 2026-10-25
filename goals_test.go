@@ -233,7 +233,9 @@ func TestGoalNotesCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestFirstEditWithoutCriteriaIsNotedOnItsResult(t *testing.T) {
+// Mid-run notes interrupted work without changing what agents did (they
+// recorded criteria at the end anyway); the contract is checked at turn end.
+func TestEditsAreNotInterruptedMidRun(t *testing.T) {
 	w := newGoalWorld(t)
 	w.outputs["go build ./..."] = ""
 	w.step("rename the flag",
@@ -243,12 +245,15 @@ func TestFirstEditWithoutCriteriaIsNotedOnItsResult(t *testing.T) {
 		call(toolExec, map[string]string{"command": "go build ./..."}),
 		answer("Renamed; build passes."),
 	)
-	msgs := w.requests[1].Messages
-	if last := msgs[len(msgs)-2]; last.Role != "tool" || !strings.Contains(last.Content, "no criteria yet") {
-		t.Fatalf("the write result did not carry the criteria note: %q", last.Content)
+	for i, r := range w.requests {
+		for _, m := range r.Messages {
+			if strings.Contains(m.Content, "[runtime note") {
+				t.Fatalf("request %d carried a runtime note: %q", i, m.Content)
+			}
+		}
 	}
 	if len(w.requests) != 4 {
-		t.Fatalf("requests %d; a proven goal needs no turn-end note", len(w.requests))
+		t.Fatalf("requests %d", len(w.requests))
 	}
 }
 

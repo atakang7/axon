@@ -157,6 +157,12 @@ func writeSaveMode(ws Workspace, abs, content string) (string, error) {
 		if err := rejectSuspiciousSaveShrink(abs, priorContent, content); err != nil {
 			return "", err
 		}
+		// A rewrite keeps the file's line endings, so it does not turn into a
+		// whole-file diff on a CRLF checkout.
+		if _, crlf := splitEOL(priorContent); crlf {
+			lf, _ := splitEOL(content)
+			content = joinEOL(lf, true)
+		}
 	}
 	ws.RecordEdit(abs, priorContent)
 	if err := WriteFileAtomic(abs, []byte(content)); err != nil {
@@ -196,7 +202,10 @@ func writeReplaceStringMode(ws Workspace, abs, oldStr, newStr string) (string, e
 	if err != nil {
 		return "", err
 	}
-	old := string(before)
+	raw := string(before)
+	old, crlf := splitEOL(raw)
+	oldStr, _ = splitEOL(oldStr)
+	newStr, _ = splitEOL(newStr)
 
 	// Caught before the match is attempted, because it explains a failure the
 	// not-found message below would describe misleadingly. A caller that sends
@@ -226,8 +235,8 @@ func writeReplaceStringMode(ws Workspace, abs, oldStr, newStr string) (string, e
 	if start > 0 && replacementStartsWithFileHeader(old, newStr) {
 		return "", fmt.Errorf("content appears to include the beginning of %s while old_str matches later in the file — this would duplicate top-level code; replace only the matched block, or use mode=save only for a genuine whole-file rewrite", abs)
 	}
-	after := strings.Replace(old, oldStr, newStr, 1)
-	ws.RecordEdit(abs, old)
+	after := joinEOL(strings.Replace(old, oldStr, newStr, 1), crlf)
+	ws.RecordEdit(abs, raw)
 	return "replaced 1 occurrence in " + abs, WriteFileAtomic(abs, []byte(after))
 }
 
@@ -280,7 +289,9 @@ func writeReplaceLinesMode(ws Workspace, abs string, startLine, endLine int, con
 	if err != nil {
 		return "", err
 	}
-	old := string(before)
+	raw := string(before)
+	old, crlf := splitEOL(raw)
+	content, _ = splitEOL(content)
 	lines := strings.Split(old, "\n")
 	if startLine > len(lines) {
 		return "", fmt.Errorf("start_line %d is past end of file (%d lines)", startLine, len(lines))
@@ -292,8 +303,8 @@ func writeReplaceLinesMode(ws Workspace, abs string, startLine, endLine int, con
 	tail := lines[endLine:]
 	replacement := strings.Split(strings.TrimRight(content, "\n"), "\n")
 	newLines := append(append(append([]string{}, head...), replacement...), tail...)
-	after := strings.Join(newLines, "\n")
-	ws.RecordEdit(abs, old)
+	after := joinEOL(strings.Join(newLines, "\n"), crlf)
+	ws.RecordEdit(abs, raw)
 	return fmt.Sprintf("replaced lines %d-%d in %s", startLine, endLine, abs), WriteFileAtomic(abs, []byte(after))
 }
 
@@ -302,7 +313,9 @@ func writeInsertAtMode(ws Workspace, abs string, startLine int, content string) 
 	if err != nil {
 		return "", err
 	}
-	old := string(before)
+	raw := string(before)
+	old, crlf := splitEOL(raw)
+	content, _ = splitEOL(content)
 	lines := strings.Split(old, "\n")
 	if startLine > len(lines)+1 {
 		return "", fmt.Errorf("start_line %d is past end of file (%d lines)", startLine, len(lines))
@@ -311,7 +324,28 @@ func writeInsertAtMode(ws Workspace, abs string, startLine int, content string) 
 	tail := lines[startLine-1:]
 	insert := strings.Split(strings.TrimRight(content, "\n"), "\n")
 	newLines := append(append(append([]string{}, head...), insert...), tail...)
-	after := strings.Join(newLines, "\n")
-	ws.RecordEdit(abs, old)
+	after := joinEOL(strings.Join(newLines, "\n"), crlf)
+	ws.RecordEdit(abs, raw)
 	return fmt.Sprintf("inserted at line %d in %s", startLine, abs), WriteFileAtomic(abs, []byte(after))
+}
+
+// splitEOL returns content with LF line endings and whether the file mainly
+// uses CRLF. Edits are matched and applied on the LF text: a model copies what
+// read showed it, and read shows lines, not carriage returns. On a CRLF
+// checkout (git core.autocrlf on Windows) every multi-line old_str failed to
+// match, and line-based edits wrote LF lines into CRLF files.
+func splitEOL(content string) (string, bool) {
+	crlfs := strings.Count(content, "\r\n")
+	if crlfs == 0 {
+		return content, false
+	}
+	return strings.ReplaceAll(content, "\r\n", "\n"), crlfs*2 >= strings.Count(content, "\n")
+}
+
+// joinEOL writes LF text back in the file's own line-ending style.
+func joinEOL(lf string, crlf bool) string {
+	if !crlf {
+		return lf
+	}
+	return strings.ReplaceAll(lf, "\n", "\r\n")
 }

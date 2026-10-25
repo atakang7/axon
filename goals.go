@@ -552,18 +552,6 @@ func (s *Session) settleCriterion(goal, action, id, evidence, quote, reason stri
 	return fmt.Sprintf("%s met by #%s", id, evidence), s.Save()
 }
 
-// needsCriteria reports a goal that has changed files with no criteria.
-func (s *Session) needsCriteria() bool {
-	goal := s.activeGoal()
-	if goal == "" {
-		return false
-	}
-	if g := s.Goals[goal]; g != nil && len(g.Criteria) > 0 {
-		return false
-	}
-	return s.goalWrites(goal, toolUses(s)) >= 0
-}
-
 // hasBrokenCriterion is true when an open item is failed, stale or missing,
 // as opposed to merely not run yet.
 func hasBrokenCriterion(open []string) bool {

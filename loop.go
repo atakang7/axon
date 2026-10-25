@@ -37,7 +37,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	var gather gatherTracker
 	a.nudge = ""
 	a.turnNote = ""
-	goalNotes, criteriaNoted, wrote := 0, false, false
+	goalNotes := 0
 
 	for iteration := 1; ; iteration++ {
 		// Checked before the model call, not after, so the cap is a bound on
@@ -168,18 +168,8 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 				a.emit(ctx, Event{Kind: KindToolResult, Tool: &ToolEvent{
 					ID: tc.ID, Name: tc.Function.Name, Result: result.Content, BlockID: blockID,
 				}})
-				if tc.Function.Name == toolWrite && !result.ToolFailed {
-					wrote = true
-				}
 			}
 		}
-		// The contract belongs before the change: the first edit without
-		// criteria gets a note on its result, not only at the end.
-		if wrote && !criteriaNoted && !a.settings.Goals.DisableNudges && a.session.needsCriteria() {
-			criteriaNoted = true
-			a.nudge += "\n\n[runtime note: you changed files, but this goal has no criteria yet. Record them now with goal criteria: the check the user would accept, with the exact oracle command, and the baseline you observed. Then continue.]"
-		}
-		wrote = false
 
 		a.turnCancel.Store(nil)
 		interrupted := turnCtx.Err() != nil

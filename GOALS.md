@@ -79,7 +79,7 @@ Recomputed from the log on every request:
 |---|---|---|
 | New goal or refinement? | The agent decides (`goal continue`); default is a new goal per message | It reads the message; a wrong default is harmless because open goals stay visible |
 | How hard to enforce? | One turn-end note per turn, plus the status visible to the user | Blocking can trap the agent on an uncheckable criterion; visibility makes skipping obvious |
-| Who records criteria? | The agent, during distillation, before changing anything | It knows the domain; code validates every reference it cites |
+| Who records criteria? | The agent, once it knows how the work will be checked; at the latest before finishing | It knows the domain; code validates every reference it cites. Requiring it before the first edit (a mid-run note) and a baseline before changing anything made agents explore without end: on 2026-10-25 a run spent ~80 replies gathering, ~37 of them hunting for a test runner to take a baseline. Both were removed. |
 | Who decides met/failed? | Code, from oracle output | The point is to not trust the claim |
 
 ## Golden scenarios
