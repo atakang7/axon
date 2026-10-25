@@ -85,6 +85,11 @@ type Stream struct {
 	// called at most once per response, after the last chunk. A provider that
 	// omits usage never calls it.
 	Usage func(prompt, completion int, cost float64)
+
+	// Cached receives how many of the prompt tokens the provider served from
+	// its prompt cache (OpenRouter's prompt_tokens_details.cached_tokens),
+	// just before Usage. Optional.
+	Cached func(tokens int)
 }
 
 // Provider is one endpoint: base URL, model name, credentials, and any

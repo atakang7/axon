@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -262,14 +263,22 @@ type usage struct {
 	PromptTokens     int
 	CompletionTokens int
 	Cost             float64
+	CachedTokens     int
 }
 
 // reportUsage delivers any usage the stream carried to the caller, once.
+// Cached is reported before Usage so a caller can fold both into one record.
 func (r *reply) reportUsage(stream Stream) {
+	if stream.Cached != nil && r.usage.PromptTokens != 0 {
+		stream.Cached(r.usage.CachedTokens)
+	}
 	if stream.Usage != nil && (r.usage.PromptTokens != 0 || r.usage.CompletionTokens != 0 || r.usage.Cost != 0) {
 		stream.Usage(r.usage.PromptTokens, r.usage.CompletionTokens, r.usage.Cost)
 	}
 }
+
+// ErrStreamStalled is a provider that went silent mid-response; retryable.
+var ErrStreamStalled = errors.New("stream stalled")
 
 // readStream consumes the SSE body until the server closes it, applying an
 // idle timeout so a silent provider fails fast instead of hanging the turn.
@@ -295,7 +304,7 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 	}
 
 	if stalled.Load() {
-		return nil, fmt.Errorf("stream stalled: no data for %s (provider went silent mid-response)", idleTimeout)
+		return nil, fmt.Errorf("%w: no data for %s (provider went silent mid-response)", ErrStreamStalled, idleTimeout)
 	}
 
 	if err := sc.Err(); err != nil {
@@ -354,7 +363,10 @@ func (r *reply) consume(text string, stream Stream) {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
 			// OpenRouter sends cost as a plain float, not an object.
-			Cost float64 `json:"cost"`
+			Cost                float64 `json:"cost"`
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 
@@ -378,6 +390,7 @@ func (r *reply) consume(text string, stream Stream) {
 		r.usage.PromptTokens = chunk.Usage.PromptTokens
 		r.usage.CompletionTokens = chunk.Usage.CompletionTokens
 		r.usage.Cost = chunk.Usage.Cost
+		r.usage.CachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
 	}
 
 	if len(chunk.Choices) == 0 {

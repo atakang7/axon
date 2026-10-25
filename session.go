@@ -138,6 +138,10 @@ type Session struct {
 	PromptTokens     int     `json:"prompt_tokens,omitempty"`
 	CompletionTokens int     `json:"completion_tokens,omitempty"`
 	Cost             float64 `json:"cost,omitempty"`
+	// CachedTokens and Requests give the cache hit rate and per-request
+	// averages the provider choice is computed from.
+	CachedTokens int `json:"cached_tokens,omitempty"`
+	Requests     int `json:"requests,omitempty"`
 
 	path    string
 	editsMu sync.Mutex

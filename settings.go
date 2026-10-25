@@ -2,6 +2,7 @@ package axon
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"time"
 )
@@ -347,8 +348,9 @@ func DefaultSettings() Settings {
 		},
 
 		Retry: RetryConfig{
-			MaxAttempts: 12,
-			BackoffCap:  Duration(5 * time.Minute),
+			// One try and ten retries, waiting 5s, 10s, 20s, 40s, then 60s.
+			MaxAttempts: 11,
+			BackoffCap:  Duration(time.Minute),
 			OnStatus:    []int{429, 500, 502, 503, 504},
 		},
 
@@ -498,7 +500,9 @@ func (r Settings) Provider(endpoint, model string) (Provider, error) {
 	}
 
 	opts, ok := e.Models[model]
-	if !ok {
+	// OpenRouter's own catalog is the list of valid models there; the config
+	// does not have to repeat it for a model to be selectable.
+	if !ok && !isOpenRouter(e.BaseURL) {
 		return Provider{}, fmt.Errorf("%w: provider %q has no model %q (have: %s)",
 			ErrUnknownModel, endpoint, model, join(e.ModelNames()))
 	}
@@ -515,6 +519,35 @@ func (r Settings) Provider(endpoint, model string) (Provider, error) {
 	}
 
 	return p, nil
+}
+
+func isOpenRouter(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	return err == nil && u.Host == "openrouter.ai"
+}
+
+// WithRoute returns settings in which model on endpoint is routed to an
+// OpenRouter provider first (route is a provider slug or tag such as
+// "wafer/us"), falling back to others when it is unavailable. An empty route
+// clears the preference. The receiver is not modified.
+func (r Settings) WithRoute(endpoint, model, route string) Settings {
+	e, ok := r.Providers[endpoint]
+	if !ok {
+		return r
+	}
+	providers := make(map[string]Endpoint, len(r.Providers))
+	for k, v := range r.Providers {
+		providers[k] = v
+	}
+	models := make(map[string]ModelOptions, len(e.Models)+1)
+	for k, v := range e.Models {
+		models[k] = v
+	}
+	models[model] = ModelOptions{Route: route}
+	e.Models = models
+	providers[endpoint] = e
+	r.Providers = providers
+	return r
 }
 
 // ProviderNames returns the configured endpoints in a stable order.

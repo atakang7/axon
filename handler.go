@@ -124,6 +124,8 @@ type UsageInfo struct {
 	PromptTokens     int
 	CompletionTokens int
 	Cost             float64
+	// CachedTokens of PromptTokens were served from the provider's prompt cache.
+	CachedTokens int
 }
 
 // SessionInfo carries session-start/end metadata.

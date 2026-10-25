@@ -71,6 +71,7 @@ func (f *freeFirstClient) Complete(ctx context.Context, req Request) (*Msg, erro
 		Reasoning: func(string) { timer.Stop() },
 		ToolArgs:  func(string, string) { timer.Stop() },
 		Usage:     req.Stream.Usage,
+		Cached:    req.Stream.Cached,
 	}
 	msg, err := free.Complete(freeCtx, r)
 	timer.Stop()

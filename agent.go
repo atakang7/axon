@@ -171,6 +171,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 		}
 
 		a.emit(ctx, Event{Kind: KindAPICall})
+		cached := 0
 		msg, err := a.model.Complete(ctx, Request{
 			Messages: withTurnNote(withNudge(a.session.ContextMessages(a.settings.Pruner.ContextWindow()), a.nudge), a.turnNote),
 			Tools:    toolSpecs(tools),
@@ -187,11 +188,14 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 				ToolArgs: func(name, delta string) {
 					a.emit(ctx, Event{Kind: KindToolArgDelta, Tool: &ToolEvent{Name: name, ArgsDelta: delta}})
 				},
+				Cached: func(tokens int) { cached = tokens },
 				Usage: func(prompt, completion int, cost float64) {
 					a.session.PromptTokens += prompt
 					a.session.CompletionTokens += completion
+					a.session.CachedTokens += cached
+					a.session.Requests++
 					a.session.Cost += cost
-					a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion, Cost: cost}})
+					a.emit(ctx, Event{Kind: KindUsage, Usage: &UsageInfo{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, Cost: cost}})
 				},
 			},
 		})
@@ -210,7 +214,7 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 
 		a.emit(ctx, Event{Kind: KindError, Err: err})
 		lastErr = err
-		if !a.retryable(err) {
+		if ctx.Err() != nil || !a.retryable(err) {
 			return nil, err
 		}
 	}
@@ -315,26 +319,18 @@ func (a *Agent) execTool(ctx context.Context, tc ToolCall) (Msg, error) {
 	return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: "tool not found", ToolFailed: true}, nil
 }
 
-// backoffFor returns how long to wait before the given attempt: exponential,
-// ceilinged by the configured cap.
-//
-// The base triples on each attempt rather than doubling. A steeper curve is
-// what shared, rate-limited pools — OpenRouter's free tier among them — call
-// for: the next open slot is usually minutes away, and a backoff that crawls
-// up one second at a time spends its attempts before it reaches the wait that
-// would succeed. Tripling reaches a minute inside four attempts and the cap
-// soon after, so the policy still fails fast on a genuinely broken endpoint
-// while giving a congested free pool a real chance to clear.
+// backoffFor returns how long to wait before the given retry: 5s, doubling
+// (5, 10, 20, 40s...), ceilinged by the configured cap. With the default cap
+// of a minute and ten retries a turn rides out about seven minutes of
+// provider trouble before it gives up.
 func backoffFor(attempt int, cap time.Duration) time.Duration {
 	if cap <= 0 {
 		cap = DefaultSettings().Retry.BackoffCap.Std()
 	}
 
-	// Multiply out 3^attempt on a duration rather than a second count so the
-	// cap can be any duration, not just a whole number of seconds.
-	wait := time.Second
-	for range attempt {
-		wait *= 3
+	wait := 5 * time.Second
+	for range attempt - 1 {
+		wait *= 2
 	}
 	if wait <= 0 || wait > cap {
 		return cap
@@ -372,8 +368,16 @@ func (a *Agent) retryable(err error) bool {
 		return false
 	}
 
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	// A cancelled turn is caught by chat against its own context before it
+	// gets here. A deadline is then the request's own timeout (the HTTP
+	// client wraps context.DeadlineExceeded), and a stall is a provider that
+	// went silent: both are transient. Treating them as cancellation meant
+	// timeouts were never retried.
+	if errors.Is(err, context.Canceled) {
 		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrStreamStalled) {
+		return true
 	}
 
 	var apiErr *APIError
