@@ -371,7 +371,13 @@ func TestUnknownProviderAndModelListWhatIsAvailable(t *testing.T) {
 		t.Errorf("err = %v, want it to list the configured providers", err)
 	}
 
-	_, err = settings.Provider("openrouter", "nope")
+	// OpenRouter's catalog is the authority there, so any model id is allowed;
+	// other endpoints still reject unlisted models and name the configured ones.
+	if _, err = settings.Provider("openrouter", "nope"); err != nil {
+		t.Fatalf("OpenRouter model rejected: %v", err)
+	}
+	settings.Providers["local"] = Endpoint{BaseURL: "http://localhost:8080/v1", Models: map[string]ModelOptions{"deepseek/deepseek-v3.2": {}}}
+	_, err = settings.Provider("local", "nope")
 	if !errors.Is(err, ErrUnknownModel) {
 		t.Fatalf("err = %v, want ErrUnknownModel", err)
 	}
