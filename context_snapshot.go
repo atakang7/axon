@@ -3,12 +3,15 @@ package axon
 import "strings"
 
 // ContextSnapshot is the next request as the model will receive it, block by
-// block, with why each block looks the way it does. It exists so a person can
-// audit what the agent sees and what its checkpoints chose. See
-// WORKING_CONTEXT.md.
+// block, with why each block looks the way it does, and what is left out. It
+// exists so a person can audit what the agent sees and what its checkpoints
+// chose. See WORKING_CONTEXT.md.
 type ContextSnapshot struct {
 	// Blocks are the messages of the next request, in order.
 	Blocks []ContextBlock `json:"blocks"`
+	// Outside are the results the request leaves out, listed by id in its
+	// index: dropped by a checkpoint or the governor, or stale.
+	Outside []ContextBlock `json:"outside"`
 	// Tokens estimates the whole request, tool definitions included; Tools
 	// is the part the tool definitions take.
 	Tokens int `json:"tokens"`
@@ -21,10 +24,9 @@ type ContextSnapshot struct {
 	Checkpoints []CheckpointRecord `json:"checkpoints"`
 }
 
-// ContextBlock is one message of the next request.
+// ContextBlock is one message of the next request, or one result left out.
 type ContextBlock struct {
-	// ID is the block id ("m12"); empty for blocks the runtime composes, such
-	// as the system prompt, cards for folded work and the goal block.
+	// ID is the block id ("m12"); empty for blocks the runtime composes.
 	ID   string `json:"id,omitempty"`
 	Role string `json:"role"`
 	// Tool names the tool for a result, or the calls an assistant message makes.
@@ -32,19 +34,21 @@ type ContextBlock struct {
 	// State says why the block reads as it does:
 	//   full     - sent as recorded
 	//   trimmed  - a checkpoint kept only some lines
-	//   dropped  - replaced by a one-line stub (Note); recall brings it back
+	//   folded   - a finished request, or its final answer
+	//   history  - the one note for finished requests, or for finished steps
+	//   system   - the system prompt, or a runtime message in the log
+	//   state    - the goal and the index of what is out
+	// and, for blocks left out:
+	//   dropped  - dropped by a checkpoint or the governor
 	//   stale    - a newer copy or a later edit made it redundant
-	//   folded   - a card standing for finished work
-	//   system   - the system prompt
-	//   goal     - the goal block
 	State string `json:"state"`
-	// Note is the stub's text for dropped blocks: the checkpoint's note or
-	// the call's gist. Reason says who dropped it.
+	// Note is a left-out block's line in the index; Reason says who dropped it.
 	Note   string `json:"note,omitempty"`
 	Reason string `json:"reason,omitempty"`
-	// Tokens estimates this block alone.
+	// Tokens estimates this block alone; for a left-out block, what it would
+	// cost if it were sent.
 	Tokens int `json:"tokens"`
-	// Text is exactly what is sent, tool-call arguments included.
+	// Text is exactly what is sent; for a left-out block, the original.
 	Text string `json:"text"`
 }
 
@@ -52,20 +56,13 @@ type ContextBlock struct {
 // every other Agent method it must not be called while Step is running.
 func (a *Agent) ContextSnapshot() ContextSnapshot {
 	s := a.session
-	view := s.contextView(a.settings.Pruner.ContextWindow())
-	byID := map[string]Msg{}
-	for _, m := range s.Messages {
-		if m.ID != "" {
-			byID[m.ID] = m
-		}
-	}
+	view, info := s.view(a.settings.Pruner.ContextWindow())
 	snap := ContextSnapshot{
+		Blocks:      []ContextBlock{},
+		Outside:     []ContextBlock{},
 		Trigger:     a.checkpointTrigger(),
 		Limit:       HardContextLimit,
-		Checkpoints: append([]CheckpointRecord(nil), s.Checkpoints...),
-	}
-	if snap.Checkpoints == nil {
-		snap.Checkpoints = []CheckpointRecord{}
+		Checkpoints: append([]CheckpointRecord{}, s.Checkpoints...),
 	}
 	sum := 0
 	for i, v := range view {
@@ -78,26 +75,28 @@ func (a *Agent) ContextSnapshot() ContextSnapshot {
 		if b.Tool == "" && len(calls) > 0 {
 			b.Tool = strings.Join(calls, ", ")
 		}
-		orig, recorded := byID[v.ID]
-		switch {
-		case v.ID == "" && v.Role == "system" && i == len(view)-1 && i > 0 && v.Content == s.GoalBlock():
-			b.State = "goal"
-		case v.ID == "" && v.Role == "system":
-			b.State = "system"
-		case v.ID == "" && v.Role == "assistant" && len(v.ToolCalls) == 0:
-			// Cards are the only assistant messages the view composes; a call
-			// without text has no id either, but is sent as recorded.
+		switch kind := info.kinds[i]; {
+		case kind == viewFolded:
 			b.State = "folded"
-		case recorded && orig.Parked:
-			b.State, b.Note, b.Reason = "dropped", orig.ParkSummary, orig.ParkReason
-		case recorded && v.Content != orig.Content && s.Trims[v.ID] != nil:
+		case kind == viewHistory:
+			b.State = "history"
+		case kind == viewState:
+			b.State = "state"
+		case v.Role == "system":
+			b.State = "system"
+		case v.ID != "" && s.Trims[v.ID] != nil:
 			b.State = "trimmed"
-		case recorded && v.Content != orig.Content && v.Role == "tool":
-			b.State = "stale"
 		}
 		b.Tokens = contextTokens(len(b.Text))
 		sum += b.Tokens
 		snap.Blocks = append(snap.Blocks, b)
+	}
+	for _, o := range info.outside {
+		snap.Outside = append(snap.Outside, ContextBlock{
+			ID: o.msg.ID, Role: o.msg.Role, Tool: o.msg.ToolName, State: o.why,
+			Note: o.line, Reason: o.msg.ParkReason, Text: blockText(o.msg),
+			Tokens: contextTokens(len(o.msg.Content)),
+		})
 	}
 	snap.Tokens = a.viewTokens()
 	if snap.Tools = snap.Tokens - sum; snap.Tools < 0 {

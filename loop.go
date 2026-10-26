@@ -35,7 +35,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	var gather gatherTracker
 	a.nudge = ""
 	a.turnNote = ""
-	goalNotes := 0
+	goalNotes, echoNotes := 0, 0
 
 	for iteration := 1; ; iteration++ {
 		// Checked before the model call, not after, so the cap is a bound on
@@ -68,6 +68,18 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 		a.session.Append(*msg)
 		if err := a.session.Save(); err != nil {
 			a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
+		}
+
+		// A reply that copies a runtime card is neither an answer nor an
+		// action: the model took the card for a way to work. Ask once more
+		// with a note; a second copy ends the turn as it is.
+		if len(msg.ToolCalls) == 0 && looksLikeCardEcho(msg.Content) && echoNotes == 0 {
+			echoNotes++
+			a.turnNote = cardEchoNote
+			a.turnCancel.Store(nil)
+			cancel()
+			a.emit(ctx, Event{Kind: KindInfo, Text: "the model copied a runtime note instead of acting; asking it to use the tools"})
+			continue
 		}
 
 		if msg.Content != "" {
@@ -180,3 +192,6 @@ func (a *Agent) Run(ctx context.Context, input InputFunc) error {
 		}
 	}
 }
+
+// cardEchoNote answers a reply that copied a runtime card instead of acting.
+const cardEchoNote = "[runtime note: your last reply copied a runtime summary instead of acting. Runtime notes describe work that already happened; writing one does nothing. To read, run or change anything, call the tools through the tool-calling API. If the request is already answered, answer in your own words.]"

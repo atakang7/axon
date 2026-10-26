@@ -80,8 +80,11 @@ func TestCheckpointKeepsTrimsAndDropsWithNotes(t *testing.T) {
 	if !strings.Contains(trimmed, "7 of 200 lines kept") {
 		t.Fatalf("trim header: %s", firstLine(trimmed))
 	}
-	if got := view[test].Content; !strings.Contains(got, "all packages pass second line") || !strings.Contains(got, test) {
-		t.Fatalf("dropped block stub %q does not carry the note and id", got)
+	if _, in := view[test]; in {
+		t.Fatal("a dropped result is still in context")
+	}
+	if index := stateBlock(b.s.contextView(-1)); !strings.Contains(index, "#"+test+" exec go test ./... → exit 0 — all packages pass second line") {
+		t.Fatalf("the index does not carry the dropped result's note:\n%s", index)
 	}
 	if view[other].Content != msgByID(b.s, other).Content {
 		t.Fatal("a kept block changed")

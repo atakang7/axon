@@ -91,3 +91,12 @@ func newFakeProviderFunc(t *testing.T, reply func(call int) []sseDelta) *fakePro
 	t.Cleanup(p.server.Close)
 	return p
 }
+
+// stateBlock is the view's closing system block: the goal and the index of
+// what is out of context.
+func stateBlock(view []Msg) string {
+	if n := len(view); n > 0 && view[n-1].Role == "system" {
+		return view[n-1].Content
+	}
+	return ""
+}

@@ -39,35 +39,76 @@ func (s *Session) ContextMessages(windowBlocks int) []Msg {
 	return view
 }
 
-// contextView is ContextMessages with block IDs kept, for reviewers that must
-// name blocks. windowBlocks < 0 (semantic curation) also applies the working
-// context layers: folded runs become cards, stale results become stubs, and
-// write bodies in closed runs are dropped. See WORKING_CONTEXT.md.
+// contextView is ContextMessages with block IDs kept, for callers that must
+// name blocks. windowBlocks < 0 also applies the working context layers. See
+// WORKING_CONTEXT.md.
 func (s *Session) contextView(windowBlocks int) []Msg {
+	out, _ := s.view(windowBlocks)
+	return out
+}
+
+// View kinds: what the runtime composed a message as, for ContextSnapshot.
+const (
+	viewRecorded = ""        // a logged message, as recorded or trimmed
+	viewFolded   = "folded"  // a folded request or its final answer
+	viewHistory  = "history" // the note for folded requests or steps
+	viewState    = "state"   // the goal block and the index of what is out
+)
+
+// outsideBlock is a result the working view leaves out, with its index line.
+type outsideBlock struct {
+	msg  Msg
+	why  string // "dropped" or "stale"
+	line string
+}
+
+// view builds the next request and says what each message is.
+//
+// In the working view nothing repeats a shape:
+//
+//   - A folded request keeps the user's words and the final answer; what the
+//     work did goes in one history note after the last folded request.
+//   - The folded steps of the open request share one note where they began.
+//   - Results dropped by a checkpoint or the governor, or made stale by a newer
+//     copy or a later edit, leave with their calls; one index at the end, in
+//     the state block, lists each by id. It is at the end because it changes
+//     most often, so the cached prefix before it survives.
+//   - Replies that only copied a runtime note are left out.
+func (s *Session) view(windowBlocks int) ([]Msg, viewInfo) {
 	s.ensure()
+	var info viewInfo
 
 	cut := windowCutoff(s, windowBlocks)
-
-	// Folding is state the governor recorded, so it always renders; stubs are
-	// part of semantic curation only.
 	working := windowBlocks < 0
-	var stale map[int]string
-	folded := map[int]run{} // start index -> folded run
-	closedEnd := 0
+	n := len(s.Messages)
+
 	var uses map[string]toolUse
+	folded := map[int]run{} // start index -> folded run
+	var foldedRuns []run
+	closedEnd := 0
 	if working || len(s.Runs) > 0 {
 		uses = toolUses(s)
 		for _, r := range closedRuns(s) {
 			closedEnd = r.end
 			if s.runFolded(r) {
 				folded[r.start] = r
+				foldedRuns = append(foldedRuns, r)
 			}
 		}
 	}
-	if working {
-		stale = staleResults(s)
+	lastFolded := -1
+	if len(foldedRuns) > 0 {
+		lastFolded = foldedRuns[len(foldedRuns)-1].start
 	}
-	foldedSteps := map[int]step{} // start index -> folded step
+
+	hidden := make([]bool, n) // inside a folded run or step
+	for _, r := range foldedRuns {
+		for i := r.start + 1; i < r.end; i++ {
+			hidden[i] = true
+		}
+	}
+	stepSkip := map[int]int{}     // folded step start -> end
+	stepNotes := map[int]string{} // where a request's folded steps begin -> their note
 	if len(s.Steps) > 0 {
 		if uses == nil {
 			uses = toolUses(s)
@@ -76,11 +117,35 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 			if s.runFolded(r) {
 				continue
 			}
+			var group []step
 			for _, st := range runSteps(s, r, uses) {
 				if s.stepFolded(st) {
-					foldedSteps[st.start] = st
+					group = append(group, st)
+					stepSkip[st.start] = st.end
+					for i := st.start; i < st.end; i++ {
+						hidden[i] = true
+					}
 				}
 			}
+			if len(group) > 0 {
+				stepNotes[group[0].start] = stepsNote(s, group, uses)
+			}
+		}
+	}
+
+	elided := map[string]bool{} // tool call ids whose result is out
+	if working {
+		stale := staleResults(s)
+		for i, m := range s.Messages {
+			if m.Role != "tool" || hidden[i] || m.ToolCallID == "" || !(m.Parked || stale[i] != "") {
+				continue
+			}
+			elided[m.ToolCallID] = true
+			why := "dropped"
+			if !m.Parked {
+				why = "stale"
+			}
+			info.outside = append(info.outside, outsideBlock{msg: m, why: why, line: indexLine(s, m, uses, stale[i])})
 		}
 	}
 
@@ -95,27 +160,54 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 		}
 	}
 
-	out := make([]Msg, 0, len(s.Messages))
-	for i := 0; i < len(s.Messages); i++ {
+	out := make([]Msg, 0, n)
+	add := func(m Msg, kind string) {
+		out = append(out, m)
+		info.kinds = append(info.kinds, kind)
+	}
+	for i := 0; i < n; i++ {
 		m := s.Messages[i]
 		if r, ok := folded[i]; ok {
-			// The request stays verbatim; the work collapses to its card.
-			out = append(out, Msg{Role: "user", Content: m.Content, ID: m.ID},
-				Msg{Role: "assistant", Content: runCard(s, r, uses)})
+			add(Msg{Role: "user", Content: m.Content, ID: m.ID}, viewFolded)
+			if w := summarizeWork(s, r.start+1, r.end, uses); w.answer != "" {
+				add(Msg{Role: "assistant", Content: truncateRunes(w.answer, 700)}, viewFolded)
+			}
+			if i == lastFolded {
+				add(Msg{Role: "user", Content: historyNote(s, foldedRuns, uses)}, viewHistory)
+			}
 			i = r.end - 1
 			continue
 		}
-		if st, ok := foldedSteps[i]; ok {
-			out = append(out, Msg{Role: "assistant", Content: stepCard(s, st, uses)})
-			i = st.end - 1
+		if end, ok := stepSkip[i]; ok {
+			if note, ok := stepNotes[i]; ok {
+				add(Msg{Role: "user", Content: note}, viewHistory)
+			}
+			i = end - 1
 			continue
 		}
-		if m.Role == "tool" && droppedToolCallIDs[m.ToolCallID] {
+		if m.Role == "tool" && (droppedToolCallIDs[m.ToolCallID] || elided[m.ToolCallID]) {
+			continue
+		}
+		// A recorded reply that only copied a runtime note did nothing and
+		// teaches the model to do it again. It stays in the log.
+		if m.Role == "assistant" && len(m.ToolCalls) == 0 && looksLikeCardEcho(m.Content) {
 			continue
 		}
 
 		content := m.Content
 		toolCalls := m.ToolCalls
+		if len(elided) > 0 && len(toolCalls) > 0 {
+			kept := make([]ToolCall, 0, len(toolCalls))
+			for _, tc := range toolCalls {
+				if !elided[tc.ID] {
+					kept = append(kept, tc)
+				}
+			}
+			if len(kept) == 0 && strings.TrimSpace(content) == "" {
+				continue
+			}
+			toolCalls = kept
+		}
 		switch {
 		case m.Parked:
 			content = breadcrumb(m.ID, m.ParkSummary)
@@ -123,8 +215,6 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 		case cut[m.ID]:
 			content = breadcrumb(m.ID, gist(s, m.ID))
 			toolCalls = nil
-		case stale[i] != "":
-			content = stale[i]
 		case m.Role == "tool" && s.Trims[m.ID] != nil:
 			content = renderTrim(m, s.Trims[m.ID])
 		case working && i < closedEnd && len(toolCalls) > 0:
@@ -135,21 +225,64 @@ func (s *Session) contextView(windowBlocks int) []Msg {
 			toolCalls = stubbed
 		}
 
-		out = append(out, Msg{
+		add(Msg{
 			Role:       m.Role,
 			Content:    content,
 			ToolCalls:  toolCalls,
 			ToolCallID: m.ToolCallID,
 			ToolName:   m.ToolName,
 			ID:         m.ID,
-		})
+		}, viewRecorded)
 	}
 
+	var state []string
 	if tb := s.GoalBlock(); tb != "" {
-		out = append(out, Msg{Role: "system", Content: tb})
+		state = append(state, tb)
 	}
+	if len(info.outside) > 0 {
+		lines := []string{"[out of context; recall an id to read it again]"}
+		for _, o := range info.outside {
+			lines = append(lines, o.line)
+		}
+		state = append(state, strings.Join(lines, "\n"))
+	}
+	if len(state) > 0 {
+		add(Msg{Role: "system", Content: strings.Join(state, "\n\n")}, viewState)
+	}
+	return out, info
+}
 
-	return out
+// viewInfo says what view composed: one kind per message, and the results
+// it left out.
+type viewInfo struct {
+	kinds   []string
+	outside []outsideBlock
+}
+
+// indexLine is one result's line in the index: its id, what the call was,
+// and why it is out.
+func indexLine(s *Session, m Msg, uses map[string]toolUse, stale string) string {
+	what := ""
+	if u, ok := uses[m.ToolCallID]; ok {
+		what = callGist(u, m)
+	}
+	if what == "" {
+		what = m.ToolName
+	}
+	line := "#" + m.ID + " " + what
+	switch {
+	case m.Parked && m.ParkSummary != "" && m.ParkSummary != what:
+		line += " — " + oneLine(m.ParkSummary, 300)
+	case !m.Parked && strings.Contains(stale, "superseded by #"):
+		newer := stale[strings.Index(stale, "superseded by #")+len("superseded by "):]
+		if j := strings.IndexAny(newer, ", ]"); j > 0 {
+			newer = newer[:j]
+		}
+		line += " — older copy of " + newer
+	case !m.Parked:
+		line += " — the file was edited after this read"
+	}
+	return line
 }
 
 // windowCutoff returns the IDs of active blocks that fall outside the most

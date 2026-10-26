@@ -243,22 +243,38 @@ func stubWriteArgs(tc ToolCall) ToolCall {
 // Run cards
 // ---------------------------------------------------------------------------
 
-// runCard is the deterministic stand-in for a folded run. It is built from
-// the run's own messages, so it cannot invent anything; a background note
-// adds judgement on top when one is ready.
-func runCard(s *Session, r run, uses map[string]toolUse) string {
-	summary := ""
-	if n := s.runNote(r); n != nil {
-		summary = n.Summary
-	}
-	return workCard(s, r.start+1, r.end, uses, "run", summary, "final answer")
+// Finished work is shown once, as runtime notes, never as a repeated shape.
+//
+// Two failures shaped this. Cards rendered as assistant turns were copied by
+// the model instead of calling tools: "[finished run #m241..#m242, folded]
+// read: ... ran: ...", every reply, nothing executed (seen 2026-10-26 with a
+// free model). And any structure that repeats — one card per run, one stub
+// per dropped result — is a template the model's attention is pulled toward.
+// So a folded run keeps only what was said (the request and the final
+// answer), all folded runs share one history note, the folded steps of a
+// request share one note, and results out of context share one index.
+
+// looksLikeCardEcho reports whether an assistant reply copies a runtime note
+// instead of saying or doing anything.
+func looksLikeCardEcho(text string) bool {
+	t := strings.TrimSpace(text)
+	return strings.HasPrefix(t, "[finished ") || strings.HasPrefix(t, "[runtime note") ||
+		strings.Contains(t, "folded; recall any id for the original text]")
 }
 
-// workCard lists what the messages in [from, to) did: files read and written,
-// commands run, failures still open at the end, enricher notes, and the last
-// thing the agent said. Every item comes from the log itself.
-func workCard(s *Session, from, to int, uses map[string]toolUse, kind, summary, lastLabel string) string {
-	var read, wrote, ran, reverted, notes []string
+// work is what a stretch of the log did, read from the log itself, so it
+// cannot invent anything.
+type work struct {
+	first, last                                string
+	read, wrote, ran, failing, reverted, notes []string
+	// answer is the last thing the agent said; a reply that only echoed a
+	// runtime note is not one.
+	answer string
+}
+
+// summarizeWork reads the messages in [from, to).
+func summarizeWork(s *Session, from, to int, uses map[string]toolUse) work {
+	var w work
 	seen := map[string]bool{}
 	add := func(list *[]string, key, v string) {
 		if v != "" && !seen[key+v] {
@@ -267,36 +283,35 @@ func workCard(s *Session, from, to int, uses map[string]toolUse, kind, summary, 
 		}
 	}
 	failed := map[string]string{} // command -> block id of its latest failure
-	first, last, answer := "", "", ""
 	for _, m := range s.Messages[from:to] {
 		if t := s.Trims[m.ID]; t != nil && t.Note != "" {
-			notes = append(notes, fmt.Sprintf("#%s %s", m.ID, t.Note))
+			w.notes = append(w.notes, fmt.Sprintf("#%s %s", m.ID, t.Note))
 		}
 		if m.ID != "" {
-			if first == "" {
-				first = m.ID
+			if w.first == "" {
+				w.first = m.ID
 			}
-			last = m.ID
+			w.last = m.ID
 		}
 		switch m.Role {
 		case "assistant":
-			if len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) != "" {
-				answer = m.Content
+			if len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) != "" && !looksLikeCardEcho(m.Content) {
+				w.answer = m.Content
 			}
 		case "system":
 			if strings.Contains(m.Content, "reverted") {
-				reverted = append(reverted, strings.Trim(m.Content, "[]"))
+				w.reverted = append(w.reverted, strings.Trim(m.Content, "[]"))
 			}
 		case "tool":
 			u := uses[m.ToolCallID]
 			switch u.name {
 			case toolRead:
 				for _, p := range readPaths(u) {
-					add(&read, "r", p)
+					add(&w.read, "r", p)
 				}
 			case toolWrite:
 				if !m.ToolFailed {
-					add(&wrote, "w", argString(u.args, "path"))
+					add(&w.wrote, "w", argString(u.args, "path"))
 				}
 			case toolExec:
 				cmd := oneLine(argString(u.args, "command"), 80)
@@ -305,43 +320,88 @@ func workCard(s *Session, from, to int, uses map[string]toolUse, kind, summary, 
 				} else {
 					delete(failed, cmd)
 				}
-				add(&ran, "x", cmd)
+				add(&w.ran, "x", cmd)
 			}
 		}
 	}
-	var b strings.Builder
-	if first != "" {
-		fmt.Fprintf(&b, "[finished %s #%s..#%s, folded; recall any id for the original text]", kind, first, last)
-	} else {
-		fmt.Fprintf(&b, "[finished %s, folded]", kind)
-	}
-	line := func(label string, items []string, max int) {
-		if len(items) == 0 {
-			return
-		}
-		more := ""
-		if len(items) > max {
-			more = fmt.Sprintf(" (+%d more)", len(items)-max)
-			items = items[:max]
-		}
-		fmt.Fprintf(&b, "\n%s: %s%s", label, strings.Join(items, ", "), more)
-	}
-	line("read", read, 12)
-	line("wrote", wrote, 12)
-	line("ran", ran, 6)
-	var fails []string
 	for cmd, id := range failed {
-		fails = append(fails, fmt.Sprintf("%s (#%s)", cmd, id))
+		w.failing = append(w.failing, fmt.Sprintf("%s (#%s)", cmd, id))
 	}
-	sort.Strings(fails)
-	line("still failing at the end", fails, 4)
-	line("reverted", reverted, 4)
-	line("notes", notes, 8)
-	if summary != "" {
-		b.WriteString("\nsummary: " + summary)
+	sort.Strings(w.failing)
+	return w
+}
+
+// line renders the work as one line of a note: what was written, run, still
+// failing; reads only as a count of files.
+func (w work) line() string {
+	list := func(items []string, max int) string {
+		if len(items) > max {
+			return strings.Join(items[:max], ", ") + fmt.Sprintf(" (+%d more)", len(items)-max)
+		}
+		return strings.Join(items, ", ")
 	}
-	if answer != "" {
-		b.WriteString("\n" + lastLabel + ": " + truncateRunes(answer, 700))
+	var parts []string
+	if len(w.read) > 0 {
+		parts = append(parts, fmt.Sprintf("read %d file(s)", len(w.read)))
+	}
+	if len(w.wrote) > 0 {
+		parts = append(parts, "wrote "+list(w.wrote, 8))
+	}
+	if len(w.ran) > 0 {
+		parts = append(parts, "ran "+list(w.ran, 4))
+	}
+	if len(w.failing) > 0 {
+		parts = append(parts, "still failing: "+list(w.failing, 3))
+	}
+	if len(w.reverted) > 0 {
+		parts = append(parts, "reverted: "+list(w.reverted, 3))
+	}
+	if len(w.notes) > 0 {
+		parts = append(parts, "notes: "+list(w.notes, 4))
+	}
+	if len(parts) == 0 {
+		return "no tool work"
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (w work) span() string {
+	if w.first == "" {
+		return ""
+	}
+	return "#" + w.first + ".." + w.last
+}
+
+// historyNote is the one note for every folded request, in order. Each line
+// names the request by its id; the request itself and the final answer stay
+// in the conversation above it.
+func historyNote(s *Session, runs []run, uses map[string]toolUse) string {
+	var b strings.Builder
+	b.WriteString("[runtime note: work done on the requests above, folded; recall an id for the original]")
+	for _, r := range runs {
+		w := summarizeWork(s, r.start+1, r.end, uses)
+		fmt.Fprintf(&b, "\n#%s %s: %s", s.Messages[r.start].ID, w.span(), w.line())
+		if n := s.runNote(r); n != nil && n.Summary != "" {
+			b.WriteString("; summary: " + oneLine(n.Summary, 300))
+		}
+	}
+	return b.String()
+}
+
+// stepsNote is the one note for the folded steps of a request.
+func stepsNote(s *Session, steps []step, uses map[string]toolUse) string {
+	var b strings.Builder
+	b.WriteString("[runtime note: earlier steps of this request, folded; recall an id for the original]")
+	for _, st := range steps {
+		w := summarizeWork(s, st.start, st.end, uses)
+		title := "step"
+		if st.title != "" {
+			title = "step \"" + oneLine(st.title, 80) + "\""
+		}
+		fmt.Fprintf(&b, "\n%s %s: %s", title, w.span(), w.line())
+		if w.answer != "" {
+			b.WriteString("; you said: " + oneLine(w.answer, 200))
+		}
 	}
 	return b.String()
 }
@@ -489,14 +549,6 @@ func openRunSteps(s *Session, uses map[string]toolUse) []step {
 		return nil
 	}
 	return runSteps(s, runs[len(runs)-1], uses)
-}
-
-func stepCard(s *Session, st step, uses map[string]toolUse) string {
-	kind := "step"
-	if st.title != "" {
-		kind = "step \"" + st.title + "\""
-	}
-	return workCard(s, st.start, st.end, uses, kind, "", "last message")
 }
 
 // ---------------------------------------------------------------------------

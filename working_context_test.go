@@ -65,12 +65,30 @@ func TestStaleCacheEntriesBecomeStubsWithoutTouchingTheLog(t *testing.T) {
 	b.openRunTail()
 	original := b.s.Messages[2].Content
 
-	view := viewByID(b.s.contextView(-1))
-	if got := view[firstRead].Content; !strings.Contains(got, "edited later") || !strings.Contains(got, "recall "+firstRead) {
-		t.Fatalf("read of a file edited later was not stubbed: %q", got)
+	full := b.s.contextView(-1)
+	view := viewByID(full)
+	if _, in := view[firstRead]; in {
+		t.Fatal("a read of a file edited later is still in context")
 	}
-	if got := view[oldTest].Content; !strings.Contains(got, "superseded") {
-		t.Fatalf("repeated command output was not stubbed: %q", got)
+	if _, in := view[oldTest]; in {
+		t.Fatal("repeated command output is still in context")
+	}
+	index := stateBlock(full)
+	if !strings.Contains(index, "#"+firstRead+" read a.go — the file was edited after this read") {
+		t.Fatalf("index lacks the stale read:\n%s", index)
+	}
+	if !strings.Contains(index, "#"+oldTest+" exec go test ./... — older copy of #") {
+		t.Fatalf("index lacks the superseded output:\n%s", index)
+	}
+	for _, m := range full {
+		for _, tc := range m.ToolCalls {
+			if tc.Function.Name == toolExec && tc.ID != "" && strings.Contains(m.Content+tc.Function.Arguments, "FAIL old") {
+				t.Fatal("the call of an elided result is still in context")
+			}
+		}
+		if m.Role == "tool" && strings.Contains(m.Content, "FAIL old") {
+			t.Fatal("elided output is still in context")
+		}
 	}
 	for _, m := range b.s.contextView(-1) {
 		for _, tc := range m.ToolCalls {
@@ -123,11 +141,18 @@ func TestFoldedRunKeepsTheRequestVerbatimAndPairsStayValid(t *testing.T) {
 	}
 
 	view := b.s.ContextMessages(-1)
-	var card string
+	var card, answer string
 	calls := map[string]bool{}
 	for i, m := range view {
-		if m.Content == request && i+1 < len(view) {
-			card = view[i+1].Content
+		// The request is the user's words alone; its answer follows; one
+		// history note after them says what the work did.
+		if m.Role == "user" && m.Content == request && i+2 < len(view) {
+			answer = view[i+1].Content
+			card = view[i+2].Content
+		}
+		// Cards are never the assistant's own words: a model copies those.
+		if m.Role == "assistant" && looksLikeCardEcho(m.Content) {
+			t.Fatalf("a card is rendered as an assistant turn: %.80s", m.Content)
 		}
 		for _, tc := range m.ToolCalls {
 			calls[tc.ID] = true
@@ -139,10 +164,13 @@ func TestFoldedRunKeepsTheRequestVerbatimAndPairsStayValid(t *testing.T) {
 			t.Fatal("folded run content is still in context")
 		}
 	}
-	for _, want := range []string{"read: pkg/a.go", "wrote: pkg/a.go", "still failing at the end: go build ./... (#" + failure + ")", "final answer: build still fails"} {
+	for _, want := range []string{"[runtime note: work done on the requests above", "read 1 file(s)", "wrote pkg/a.go", "still failing: go build ./... (#" + failure + ")"} {
 		if !strings.Contains(card, want) {
 			t.Fatalf("card lacks %q:\n%s", want, card)
 		}
+	}
+	if answer != "build still fails in pkg/a.go" {
+		t.Fatalf("the run's answer is not its own assistant turn: %q", answer)
 	}
 	out, err := RecallTool(b.s).Fn(context.Background(), json.RawMessage(fmt.Sprintf(`{"id":%q}`, failure)))
 	if err != nil || !strings.Contains(out, "boom") {

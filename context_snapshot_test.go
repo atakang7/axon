@@ -33,23 +33,35 @@ func TestContextSnapshotShowsWhatTheModelSeesAndWhy(t *testing.T) {
 	if got := states[ids[0]]; got.State != "trimmed" || !strings.Contains(got.Text, "5 of 200 lines kept") {
 		t.Fatalf("trimmed block: %+v", got.State)
 	}
-	if got := states[ids[1]]; got.State != "dropped" || got.Note != "all packages pass" || got.Reason != "checkpoint" {
+	if _, in := states[ids[1]]; in {
+		t.Fatal("a dropped result is among the blocks sent")
+	}
+	outside := map[string]ContextBlock{}
+	for _, blk := range snap.Outside {
+		outside[blk.ID] = blk
+	}
+	if got := outside[ids[1]]; got.State != "dropped" || !strings.HasSuffix(got.Note, "— all packages pass") || got.Reason != "checkpoint" || !strings.Contains(got.Text, "ok  pkg") {
 		t.Fatalf("dropped block: %+v", got)
 	}
 	if got := states[ids[2]]; got.State != "full" || got.Tool != toolRead {
 		t.Fatalf("kept block: %+v", got)
 	}
 	stale := 0
-	for _, blk := range snap.Blocks {
+	for _, blk := range snap.Outside {
 		if blk.State == "stale" {
 			stale++
 		}
+	}
+	for _, blk := range snap.Blocks {
 		if blk.Role == "assistant" && strings.Contains(blk.Text, "→ search") && blk.Tool != toolSearch {
 			t.Fatalf("assistant block does not name its calls: %+v", blk)
 		}
 	}
 	if stale != 1 {
-		t.Fatalf("%d stale blocks, want the first copy of the repeated search", stale)
+		t.Fatalf("%d stale blocks outside, want the first copy of the repeated search", stale)
+	}
+	if last := snap.Blocks[len(snap.Blocks)-1]; last.State != "state" || !strings.Contains(last.Text, "[out of context") {
+		t.Fatalf("the request does not end with the index: %+v", last)
 	}
 	if len(snap.Checkpoints) != 1 || !snap.Checkpoints[0].Forced || snap.Trigger <= 0 || snap.Limit != HardContextLimit {
 		t.Fatalf("snapshot header: %+v", snap)
@@ -72,19 +84,27 @@ func TestContextSnapshotMarksFoldedWorkAndTheGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := a.ContextSnapshot()
-	folded, goal := 0, 0
+	folded, history, state := 0, 0, 0
 	for _, blk := range snap.Blocks {
 		switch blk.State {
 		case "folded":
 			folded++
-			if !strings.HasPrefix(blk.Text, "[finished run") {
-				t.Fatalf("folded block is not a card: %.60s", blk.Text)
+			if blk.Role == "user" && blk.Text != "request 0" {
+				t.Fatalf("a folded request is not the user's words alone: %.60s", blk.Text)
 			}
-		case "goal":
-			goal++
+			if blk.Role == "assistant" && blk.Text != "done 0" {
+				t.Fatalf("folded answer: %.60s", blk.Text)
+			}
+		case "history":
+			history++
+			if !strings.Contains(blk.Text, "read 6 file(s); wrote out0.go") {
+				t.Fatalf("history note: %s", blk.Text)
+			}
+		case "state":
+			state++
 		}
 	}
-	if folded != 1 || goal != 1 || snap.Blocks[len(snap.Blocks)-1].State != "goal" {
-		t.Fatalf("folded %d goal %d last %q", folded, goal, snap.Blocks[len(snap.Blocks)-1].State)
+	if folded != 2 || history != 1 || state != 1 || snap.Blocks[len(snap.Blocks)-1].State != "state" {
+		t.Fatalf("folded %d history %d state %d last %q", folded, history, state, snap.Blocks[len(snap.Blocks)-1].State)
 	}
 }
