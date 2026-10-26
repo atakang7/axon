@@ -114,7 +114,7 @@ func reportCall(t *testing.T, r exploreReport) *Msg {
 func exploreAgent(t *testing.T, explorer Model) *Agent {
 	t.Helper()
 	s := exploreRepo(t)
-	a := &Agent{session: s, explorer: explorer, settings: Settings{}.WithDefaults()}
+	a := &Agent{session: s, explorers: []Model{explorer}, settings: Settings{}.WithDefaults()}
 	a.limits = a.settings.Tools.limits()
 	return a
 }
@@ -213,7 +213,7 @@ func TestExploreFailsCleanlyWhenTheExplorerIsDown(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "read and search yourself") {
 		t.Fatalf("err %v", err)
 	}
-	a.explorer = nil
+	a.explorers = nil
 	if _, err := a.explore(context.Background(), "where?", nil); err == nil {
 		t.Fatal("explore without an explorer model succeeded")
 	}

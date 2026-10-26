@@ -139,3 +139,41 @@ func withTurnNote(messages []Msg, note string) []Msg {
 	}
 	return append(append([]Msg(nil), messages...), Msg{Role: "user", Content: note})
 }
+
+// locateRoundsBeforeDelegate is how many replies in a row that only read and
+// search the deciding model may spend before it is told to delegate. Every
+// token it reads is paid at its price on each later request; finding where
+// things are is the explorer's work. See ROLES.md.
+const locateRoundsBeforeDelegate = 3
+
+// delegateTracker notices the deciding model locating things itself while an
+// explorer is available. It fires once per run.
+type delegateTracker struct {
+	rounds int
+	sent   bool
+}
+
+func (d *delegateTracker) observe(calls []ToolCall) bool {
+	if d.sent || len(calls) == 0 {
+		return false
+	}
+	for _, tc := range calls {
+		if !readOnlyTools[tc.Function.Name] {
+			d.rounds = 0
+			return false
+		}
+	}
+	d.rounds++
+	if d.rounds < locateRoundsBeforeDelegate {
+		return false
+	}
+	d.sent = true
+	return true
+}
+
+// delegateNote is appended, for one request, to the newest tool result.
+func delegateNote(rounds int) string {
+	return fmt.Sprintf("\n\n[runtime note: your last %d replies only read and searched. Finding where things are is the explorer's work: "+
+		"call explore with your questions (several can go at once) and a free model returns facts whose quotes are checked against the files. "+
+		"Read raw only what you will change.]", rounds)
+}

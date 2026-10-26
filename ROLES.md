@@ -54,19 +54,18 @@ which never touch GLM's prefix.
 
 ## The gap, in order
 
-1. **Explorer pool with fallback.** Free models rate-limit and fail often. One
-   explorer model makes `explore` fragile exactly when it is needed.
-   `explorer.models: [a, b, c]` (cortex) / `Config.Explorers` (axon): try in
-   order; a failed or empty exploration moves to the next; independent
-   parallel questions spread over the pool. Spend stays free.
-2. **Steer GLM to delegate locating.** When an explorer exists and GLM spends
-   rounds searching and reading files it then does not edit, the next request
-   carries a one-shot note: ask explore, read raw only what you will change.
-   Deterministic, like the batching note in gather.go. The note fires at most
-   once per run.
-3. **Visibility.** The Context view and the bridge state show which model did
-   each request (main, checkpoint, explorer) and the explorer's spend, so the
-   split can be audited.
+1. **Explorer pool with fallback.** *Done in axon v2.8.0.* Free models
+   rate-limit and fail often. `explorer.models: [b, c]` (cortex, after
+   `explorer.model`) / `Config.Explorers` (axon): each call starts at the next
+   model, so parallel questions spread over the pool; a failed or unreported
+   exploration moves to the next, and the result says which ones failed.
+2. **Steer GLM to delegate locating.** *Done in axon v2.8.0.* After three
+   replies in a row that only read and search, while an explorer exists, the
+   next request carries a one-shot note: ask explore, read raw only what you
+   will change. Once per run (gather.go, delegateTracker).
+3. **Visibility.** *Partly done:* the Context view shows explorer spend, the
+   explorer and its pool. Still to do: which model did each request (main,
+   checkpoint, explorer), as a per-request list in the Context view.
 4. **Later, measured first:** delegate bulk mechanical edits (a rename across
    many files) to a free model from GLM's exact instructions, with the diff
    checked by the build and GLM's review. Only if the Context view shows edit

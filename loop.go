@@ -33,6 +33,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	var calls []ToolCall
 	var assistantText string
 	var gather gatherTracker
+	var delegate delegateTracker
 	a.nudge = ""
 	a.turnNote = ""
 	goalNotes, echoNotes := 0, 0
@@ -117,8 +118,12 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			}, nil
 		}
 
+		if len(a.explorers) > 0 && delegate.observe(msg.ToolCalls) {
+			a.nudge += delegateNote(delegate.rounds)
+			a.emit(ctx, Event{Kind: KindInfo, Text: "the model has spent several replies locating things itself; suggesting explore"})
+		}
 		if rounds := gather.observe(msg.ToolCalls); rounds > 0 {
-			a.nudge = gatherNudge(rounds)
+			a.nudge += gatherNudge(rounds)
 			a.emit(ctx, Event{Kind: KindInfo, Text: "context gathered one item per round; asking the model to plan and batch its next lookups"})
 		}
 

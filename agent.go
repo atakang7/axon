@@ -24,8 +24,11 @@ type Agent struct {
 	// is the default and the cheapest: its prefix is already cached.
 	prunerModel Model
 
-	// explorer answers explore calls; nil means the tool is not offered.
-	explorer Model
+	// explorers answer explore calls, tried in turn: free models rate-limit
+	// and fail often, so one failing hands the question to the next. Empty
+	// means the tool is not offered. See ROLES.md.
+	explorers   []Model
+	exploreNext atomic.Uint32
 
 	// keptTokens is what the last checkpoint of the current run kept. The
 	// next forced checkpoint waits for growth beyond it; a new user message
@@ -103,7 +106,22 @@ func (a *Agent) SetPruneMode(mode PruneMode) {
 // tool. The tool list is part of every request's cached prefix, so this costs
 // one cache miss; it is a user action, not something the loop does.
 func (a *Agent) SetExplorerModel(m Model) {
-	a.explorer = m
+	if m == nil {
+		a.SetExplorerModels()
+		return
+	}
+	a.SetExplorerModels(m)
+}
+
+// SetExplorerModels sets the explorer pool, tried in turn. None removes the
+// explore tool.
+func (a *Agent) SetExplorerModels(models ...Model) {
+	a.explorers = nil
+	for _, m := range models {
+		if m != nil {
+			a.explorers = append(a.explorers, m)
+		}
+	}
 	a.rebindTools()
 }
 

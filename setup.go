@@ -55,7 +55,6 @@ func New(cfg Config) (*Agent, error) {
 		shells:          shells,
 		limits:          limits,
 		prunerModel:     cfg.Pruner,
-		explorer:        cfg.Explorer,
 		onEvent:         cfg.OnEvent,
 		systemPrompt:    cfg.SystemPrompt,
 		excludeBuiltins: cfg.ExcludeBuiltins,
@@ -63,6 +62,11 @@ func New(cfg Config) (*Agent, error) {
 		settings:        settings,
 		titleModel:      cfg.TitleModel,
 		maxIterations:   cfg.MaxIterations,
+	}
+	for _, m := range append([]Model{cfg.Explorer}, cfg.Explorers...) {
+		if m != nil {
+			a.explorers = append(a.explorers, m)
+		}
 	}
 	toolset := a.ownTools()
 	seen := map[string]bool{}
@@ -175,7 +179,7 @@ func withoutExcluded(tools []Tool, exclude []string) []Tool {
 func (a *Agent) ownTools() []Tool {
 	tools := builtinTools(a.session, a.shells, a.limits, nil)
 	tools = append(tools, a.checkpointTool())
-	if a.explorer != nil {
+	if len(a.explorers) > 0 {
 		tools = append(tools, a.exploreTool())
 	}
 	return withoutExcluded(tools, a.excludeBuiltins)

@@ -140,10 +140,37 @@ var reportSchema = obj("object", props{
 // It runs inside a tool call, possibly next to other explore calls, so it must
 // not emit events: the event sink is not required to be goroutine-safe.
 func (a *Agent) explore(ctx context.Context, question string, paths []string) (string, error) {
-	model := a.explorer
-	if model == nil {
+	pool := a.explorers
+	if len(pool) == 0 {
 		return "", errors.New("no explorer model is configured; read and search yourself")
 	}
+	// Each call starts at the next model, so parallel questions spread over
+	// the pool; a model that fails or does not report hands the question on.
+	start := int(a.exploreNext.Add(1)-1) % len(pool)
+	var failures []string
+	for i := range pool {
+		model := pool[(start+i)%len(pool)]
+		out, err := a.exploreWith(ctx, model, question, paths)
+		if err == nil {
+			if len(failures) > 0 {
+				out += "\n(" + strings.Join(failures, "; ") + ")"
+			}
+			return out, nil
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		name := modelName(model)
+		if name == "" {
+			name = fmt.Sprintf("explorer %d", (start+i)%len(pool)+1)
+		}
+		failures = append(failures, name+" failed: "+oneLine(err.Error(), 160))
+	}
+	return "", fmt.Errorf("every explorer failed (%s); read and search yourself", strings.Join(failures, "; "))
+}
+
+// exploreWith runs one exploration with one model to its report.
+func (a *Agent) exploreWith(ctx context.Context, model Model, question string, paths []string) (string, error) {
 	cfg := a.settings.Explorer
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout.Std())
 	defer cancel()
@@ -197,7 +224,7 @@ func (a *Agent) explore(ctx context.Context, question string, paths []string) (s
 			InputLimit: exploreInputLimit,
 		}, usage, true)
 		if err != nil {
-			return "", fmt.Errorf("explorer failed after %d rounds: %v; read and search yourself", rounds, err)
+			return "", fmt.Errorf("explorer failed after %d rounds: %v", rounds, err)
 		}
 		msgs = append(msgs, Msg{Role: "assistant", Content: reply.Content, ToolCalls: reply.ToolCalls})
 		if len(strings.TrimSpace(reply.Content)) > len(strings.TrimSpace(prose)) {
@@ -227,7 +254,7 @@ func (a *Agent) explore(ctx context.Context, question string, paths []string) (s
 			return formatExplore(question, facts, nil, &exploreReport{}, modelName(model), rounds,
 				"The explorer answered in prose instead of calling report; only the quotes below were recovered from it, each found in the file."), nil
 		}
-		return "", fmt.Errorf("the explorer did not report after %d rounds; read and search yourself", rounds)
+		return "", fmt.Errorf("the explorer did not report after %d rounds", rounds)
 	}
 	facts, rejected := verifyFacts(ws, report.Facts)
 	return formatExplore(question, facts, rejected, report, modelName(model), rounds, ""), nil

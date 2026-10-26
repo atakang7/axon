@@ -59,6 +59,11 @@ type Config struct {
 	// explore tool.
 	Explorer Model
 
+	// Explorers are more explorer models, tried after Explorer in turn: free
+	// models rate-limit and fail often, so one that fails or does not report
+	// hands the question to the next. See ROLES.md.
+	Explorers []Model
+
 	// TitleModel, when set, is asked to name the session from the first
 	// user message. When nil, the deterministic deriveTitle truncation is
 	// used instead. The call is best-effort: any error or empty reply
