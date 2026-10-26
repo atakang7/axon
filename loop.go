@@ -17,6 +17,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 	// A new user message moves the focus: the working set a checkpoint kept
 	// for the previous request no longer raises the trigger.
 	a.keptTokens = 0
+	a.exploreFailed.Store(false)
 
 	a.session.Turn++
 	a.emit(ctx, Event{Kind: KindTurnStart})
@@ -125,7 +126,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			}, nil
 		}
 
-		if len(a.explorers) > 0 && delegate.observe(msg.ToolCalls) {
+		if len(a.explorers) > 0 && !a.exploreFailed.Load() && delegate.observe(msg.ToolCalls) {
 			a.nudge += delegateNote(delegate.rounds)
 			a.emit(ctx, Event{Kind: KindInfo, Text: "the model has spent several replies locating things itself; suggesting explore"})
 		}

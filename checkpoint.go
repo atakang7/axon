@@ -160,11 +160,19 @@ func (a *checkpointArgs) UnmarshalJSON(b []byte) error {
 			a.Keep = []keepEntry{one}
 		}
 	}
+	// Notes are optional: a shape that cannot be read loses the notes, never
+	// the checkpoint.
 	if len(raw.Notes) > 0 && string(raw.Notes) != "null" {
 		if err := json.Unmarshal(raw.Notes, &a.Notes); err != nil {
+			a.Notes = nil
+			var one noteEntry
+			if json.Unmarshal(raw.Notes, &one) == nil && one.ID != "" {
+				a.Notes = []noteEntry{one}
+				return nil
+			}
 			var byID map[string]string
 			if json.Unmarshal(raw.Notes, &byID) != nil {
-				return fmt.Errorf("notes: %w", err)
+				return nil
 			}
 			ids := make([]string, 0, len(byID))
 			for id := range byID {

@@ -31,6 +31,7 @@ const (
 	KindInfo
 	KindError
 	KindSessionEnd
+	KindToolProgress // a step inside a running tool call (an explorer's read or search)
 )
 
 // kindNames backs Kind.String. Indexed by Kind so the switch that would
@@ -55,6 +56,7 @@ var kindNames = [...]string{
 	KindInfo:         "info",
 	KindError:        "error",
 	KindSessionEnd:   "session_end",
+	KindToolProgress: "tool_progress",
 }
 
 // String names a Kind for logs and traces. An out-of-range value (there
@@ -77,7 +79,8 @@ type Event struct {
 	// Text — used by Token, Reasoning, AssistantEnd, UserInput, Info, Error.
 	Text string
 
-	// Tool — used by ToolArgDelta, ToolCall, ToolResult, ToolError.
+	// Tool — used by ToolArgDelta, ToolCall, ToolResult, ToolError, and by
+	// ToolProgress, where it names the running call and Text is the step.
 	Tool *ToolEvent
 
 	// Prune — used by PruneStart, PruneEnd.
@@ -153,4 +156,26 @@ func (a *Agent) emit(ctx context.Context, e Event) {
 	}
 
 	a.onEvent(ctx, e)
+}
+
+// toolCallKey carries the running tool call's id in its context, so a tool
+// can report progress against it.
+type toolCallKey struct{}
+
+func withToolCall(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, toolCallKey{}, id)
+}
+
+// progress reports one step of the running tool call. Tool calls run
+// concurrently and the event sink is not required to be goroutine-safe, so
+// progress events are serialized here. While a group runs, the loop emits
+// nothing else.
+func (a *Agent) progress(ctx context.Context, tool, step string) {
+	id, _ := ctx.Value(toolCallKey{}).(string)
+	if id == "" || a == nil || a.onEvent == nil {
+		return
+	}
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	a.emit(ctx, Event{Kind: KindToolProgress, Tool: &ToolEvent{ID: id, Name: tool}, Text: step})
 }

@@ -31,7 +31,7 @@ func scoutQuestion(s *Session, request string) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("An engineer is about to act on this request:\n«" + strings.TrimSpace(request) + "»\n")
+	b.WriteString("An engineer working in this repository just received this message:\n«" + strings.TrimSpace(request) + "»\n")
 	if len(earlier) > 0 {
 		b.WriteString("\nEarlier messages in the conversation, oldest first:\n")
 		for _, e := range earlier {
@@ -41,8 +41,10 @@ func scoutQuestion(s *Session, request string) string {
 	if answer != "" {
 		b.WriteString("\nThe engineer's last answer: " + answer + "\n")
 	}
-	b.WriteString("\nFind what they need to act: the files and functions the request is about, how that code behaves now, " +
-		"and how the project builds or tests that part (the exact command). If the request is not about the code, report nothing.")
+	b.WriteString("\nFind what they need. For a change: the files and functions it is about, how that code behaves now, " +
+		"and how the project builds or tests that part (the exact command). For a question about the project or a part of it: " +
+		"what it is for, its main pieces and how they connect, where it starts, and how it builds and runs. " +
+		"If the message is not about the code, report nothing.")
 	return b.String()
 }
 
@@ -67,7 +69,7 @@ func (a *Agent) scout(ctx context.Context, request string) error {
 
 	a.emit(ctx, Event{Kind: KindInfo, Text: "scout: the explorer is looking into the request before the main model starts"})
 	a.emit(ctx, Event{Kind: KindToolCall, Tool: &ToolEvent{ID: tc.ID, Name: toolExplore, Args: raw}})
-	out, err := a.explore(scoutCtx, question, nil)
+	out, err := a.explore(withToolCall(scoutCtx, tc.ID), question, nil)
 	if scoutCtx.Err() != nil {
 		a.emit(ctx, Event{Kind: KindToolError, Tool: &ToolEvent{ID: tc.ID, Name: toolExplore}, Err: scoutCtx.Err()})
 		return ErrInterrupted

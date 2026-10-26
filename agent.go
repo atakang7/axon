@@ -29,6 +29,10 @@ type Agent struct {
 	// means the tool is not offered. See ROLES.md.
 	explorers   []Model
 	exploreNext atomic.Uint32
+	// exploreFailed is set when every explorer failed in this request, so
+	// nothing steers the deciding model back to explore.
+	exploreFailed atomic.Bool
+	progressMu    sync.Mutex
 
 	// keptTokens is what the last checkpoint of the current run kept. The
 	// next forced checkpoint waits for growth beyond it; a new user message
@@ -203,13 +207,17 @@ func (a *Agent) recordUsage(ctx context.Context) Stream {
 // callers that run inside a concurrent tool call: the event sink is not
 // required to be goroutine-safe.
 func (a *Agent) complete(ctx context.Context, m Model, req Request, usage Stream, quiet bool) (*Msg, error) {
+	return a.completeWith(ctx, m, req, usage, quiet, a.settings.Retry)
+}
+
+// completeWith is complete under its own retry policy.
+func (a *Agent) completeWith(ctx context.Context, m Model, req Request, usage Stream, quiet bool, policy RetryConfig) (*Msg, error) {
 	req.Stream.Cached, req.Stream.Usage = usage.Cached, usage.Usage
 	emit := func(e Event) {
 		if !quiet {
 			a.emit(ctx, e)
 		}
 	}
-	policy := a.settings.Retry
 	if policy.MaxAttempts < 1 {
 		policy = DefaultSettings().Retry
 	}
@@ -351,7 +359,7 @@ func (a *Agent) execTool(ctx context.Context, tc ToolCall) (Msg, error) {
 		}
 
 		input := json.RawMessage(tc.Function.Arguments)
-		out, err := t.Fn(ctx, input)
+		out, err := t.Fn(withToolCall(ctx, tc.ID), input)
 		if err != nil {
 			return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: err.Error(), ToolFailed: true}, err
 		}

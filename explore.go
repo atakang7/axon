@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Exploration: a cheaper model answers a read-only question in its own
@@ -137,20 +138,33 @@ var reportSchema = obj("object", props{
 // explore runs one exploration to its report and returns what the deciding
 // model sees: verified facts only.
 //
-// It runs inside a tool call, possibly next to other explore calls, so it must
-// not emit events: the event sink is not required to be goroutine-safe.
+// It runs inside a tool call, possibly next to other explore calls, so it
+// emits only through progress, which serializes: the event sink is not
+// required to be goroutine-safe.
 func (a *Agent) explore(ctx context.Context, question string, paths []string) (string, error) {
 	pool := a.explorers
 	if len(pool) == 0 {
 		return "", errors.New("no explorer model is configured; read and search yourself")
 	}
+	if a.exploreFailed.Load() {
+		return "", errors.New("every explorer already failed in this request; read and search yourself")
+	}
 	// Each call starts at the next model, so parallel questions spread over
 	// the pool; a model that fails or does not report hands the question on.
 	start := int(a.exploreNext.Add(1)-1) % len(pool)
 	var failures []string
+	var partial *exploreStopped
 	for i := range pool {
 		model := pool[(start+i)%len(pool)]
+		label := modelName(model)
+		if label == "" {
+			label = fmt.Sprintf("explorer %d", (start+i)%len(pool)+1)
+		}
+		a.progress(ctx, toolExplore, label+" is exploring")
 		out, err := a.exploreWith(ctx, model, question, paths)
+		if err != nil && ctx.Err() == nil {
+			a.progress(ctx, toolExplore, label+" stopped: "+oneLine(err.Error(), 120))
+		}
 		if err == nil {
 			if len(failures) > 0 {
 				out += "\n(" + strings.Join(failures, "; ") + ")"
@@ -160,14 +174,42 @@ func (a *Agent) explore(ctx context.Context, question string, paths []string) (s
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		name := modelName(model)
-		if name == "" {
-			name = fmt.Sprintf("explorer %d", (start+i)%len(pool)+1)
+		failures = append(failures, label+" failed: "+oneLine(err.Error(), 160))
+		var stopped *exploreStopped
+		if errors.As(err, &stopped) && (partial == nil || len(stopped.looked) > len(partial.looked)) {
+			partial = stopped
 		}
-		failures = append(failures, name+" failed: "+oneLine(err.Error(), 160))
 	}
-	return "", fmt.Errorf("every explorer failed (%s); read and search yourself", strings.Join(failures, "; "))
+	a.exploreFailed.Store(true)
+	if partial != nil && len(partial.looked) > 0 {
+		// The work is not thrown away: where the explorer looked is a fact,
+		// and it spares the deciding model locating the same places again.
+		var b strings.Builder
+		fmt.Fprintf(&b, "explore: %q\nEvery explorer stopped before reporting (%s), so no fact was checked. "+
+			"Where the furthest one looked, in order:", question, strings.Join(failures, "; "))
+		for _, l := range partial.looked {
+			b.WriteString("\n- " + l)
+		}
+		b.WriteString("\nStart from these; do not explore this question again.")
+		return b.String(), nil
+	}
+	return "", fmt.Errorf("every explorer failed (%s); read and search yourself, and do not call explore again in this request", strings.Join(failures, "; "))
 }
+
+// explorerRetry is the explorer's retry policy. Free models rate-limit often;
+// a model that is busy hands the question to the next one in the pool after
+// one short wait instead of spending minutes on backoff.
+var explorerRetry = RetryConfig{MaxAttempts: 2, BackoffCap: Duration(10 * time.Second)}
+
+// exploreStopped is an exploration that ended without a report, with where
+// it had looked.
+type exploreStopped struct {
+	err    error
+	looked []string
+}
+
+func (e *exploreStopped) Error() string { return e.err.Error() }
+func (e *exploreStopped) Unwrap() error { return e.err }
 
 // exploreWith runs one exploration with one model to its report.
 func (a *Agent) exploreWith(ctx context.Context, model Model, question string, paths []string) (string, error) {
@@ -208,6 +250,7 @@ func (a *Agent) exploreWith(ctx context.Context, model Model, question string, p
 	}}
 
 	rounds, nudged, prose := 0, false, ""
+	var looked []string
 	for rounds <= cfg.MaxRounds && report == nil {
 		rounds++
 		toolset := tools
@@ -217,14 +260,14 @@ func (a *Agent) exploreWith(ctx context.Context, model Model, question string, p
 			msgs = append(msgs, Msg{Role: "user", Content: "Your exploration budget is used up. Call report now with the facts you have; no other tool is available."})
 			toolset = []Tool{reportTool}
 		}
-		reply, err := a.complete(ctx, model, Request{
+		reply, err := a.completeWith(ctx, model, Request{
 			Messages:   msgs,
 			Tools:      toolSpecs(toolset),
 			MaxTokens:  cfg.MaxTokens,
 			InputLimit: exploreInputLimit,
-		}, usage, true)
+		}, usage, true, explorerRetry)
 		if err != nil {
-			return "", fmt.Errorf("explorer failed after %d rounds: %v", rounds, err)
+			return "", &exploreStopped{err: fmt.Errorf("explorer failed after %d rounds: %v", rounds, err), looked: looked}
 		}
 		msgs = append(msgs, Msg{Role: "assistant", Content: reply.Content, ToolCalls: reply.ToolCalls})
 		if len(strings.TrimSpace(reply.Content)) > len(strings.TrimSpace(prose)) {
@@ -241,6 +284,15 @@ func (a *Agent) exploreWith(ctx context.Context, model Model, question string, p
 		for _, tc := range reply.ToolCalls {
 			out := runExplorerTool(ctx, toolset, tc)
 			msgs = append(msgs, Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: out})
+			failed := strings.HasPrefix(out, "error:")
+			if tc.Function.Name != toolReport && !failed {
+				looked = append(looked, tc.Function.Name+" "+oneLine(tc.Function.Arguments, 160))
+			}
+			step := exploreStep(tc)
+			if failed {
+				step += " (failed)"
+			}
+			a.progress(ctx, toolExplore, step)
 		}
 		if final {
 			break
@@ -254,7 +306,7 @@ func (a *Agent) exploreWith(ctx context.Context, model Model, question string, p
 			return formatExplore(question, facts, nil, &exploreReport{}, modelName(model), rounds,
 				"The explorer answered in prose instead of calling report; only the quotes below were recovered from it, each found in the file."), nil
 		}
-		return "", fmt.Errorf("the explorer did not report after %d rounds", rounds)
+		return "", &exploreStopped{err: fmt.Errorf("the explorer did not report after %d rounds", rounds), looked: looked}
 	}
 	facts, rejected := verifyFacts(ws, report.Facts)
 	return formatExplore(question, facts, rejected, report, modelName(model), rounds, ""), nil
@@ -352,6 +404,51 @@ func runExplorerTool(ctx context.Context, tools []Tool, tc ToolCall) string {
 		return out
 	}
 	return fmt.Sprintf("error: %q is not available; you can use %s", tc.Function.Name, toolNames(tools))
+}
+
+// exploreStep is one explorer call as a short line for the user: what it read
+// or searched, or what it reported.
+func exploreStep(tc ToolCall) string {
+	var in struct {
+		Path    string `json:"path"`
+		Query   string `json:"query"`
+		Literal string `json:"literal"`
+		Offset  int    `json:"offset"`
+		Limit   int    `json:"limit"`
+		Files   []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+		Facts []json.RawMessage `json:"facts"`
+	}
+	_ = json.Unmarshal([]byte(tc.Function.Arguments), &in)
+	switch tc.Function.Name {
+	case toolRead:
+		var paths []string
+		if in.Path != "" {
+			p := in.Path
+			if in.Offset > 0 || in.Limit > 0 {
+				p += fmt.Sprintf(" (from line %d)", max(in.Offset, 1))
+			}
+			paths = append(paths, p)
+		}
+		for _, f := range in.Files {
+			paths = append(paths, f.Path)
+		}
+		return "Read " + oneLine(strings.Join(paths, ", "), 160)
+	case toolSearch:
+		q := in.Query
+		if q == "" {
+			q = in.Literal
+		}
+		s := "Search " + strconv.Quote(oneLine(q, 80))
+		if in.Path != "" {
+			s += " in " + in.Path
+		}
+		return s
+	case toolReport:
+		return fmt.Sprintf("Reported %d facts", len(in.Facts))
+	}
+	return tc.Function.Name + " " + oneLine(tc.Function.Arguments, 120)
 }
 
 func toolNames(tools []Tool) string {
