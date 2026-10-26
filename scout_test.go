@@ -124,7 +124,10 @@ func TestTheScoutCanBeInterrupted(t *testing.T) {
 	}}
 	a, model, _ := scoutAgent(t, slow)
 	done := make(chan error)
-	go func() { _, err := a.Step(context.Background(), "the token expiry check looks wrong, fix it"); done <- err }()
+	go func() {
+		_, err := a.Step(context.Background(), "the token expiry check looks wrong, fix it")
+		done <- err
+	}()
 	<-started
 	if !a.Interrupt() {
 		t.Fatal("nothing to interrupt during the scout")
