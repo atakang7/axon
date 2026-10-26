@@ -30,6 +30,13 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 	a.emit(ctx, Event{Kind: KindUserInput, Text: userInput})
 
+	// Every message starts free: the explorer pool looks into the request
+	// before the main model's first request.
+	if err := a.scout(ctx, userInput); err != nil {
+		a.emit(ctx, Event{Kind: KindTurnEnd})
+		return StepResult{Turn: a.session.Turn}, err
+	}
+
 	var calls []ToolCall
 	var assistantText string
 	var gather gatherTracker

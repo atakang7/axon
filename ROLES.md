@@ -71,8 +71,30 @@ which never touch GLM's prefix.
    checked by the build and GLM's review. Only if the Context view shows edit
    output dominating GLM's spend.
 
+## The scout: every message starts free
+
+*Done in axon v2.9.0.* The cheapest part of a turn is its beginning:
+understanding the request and finding the code. So when an explorer pool
+exists, each user message first goes to the **scout**: before the deciding
+model's first request, the pool explores the request (with the last few
+messages for context) in its own conversation and reports verified facts:
+the files and functions involved, how the code behaves now, how the project
+builds and tests that part. The brief enters the log as an ordinary explore
+result, so the deciding model's first request already has it and can decide.
+
+Why this and not a cheap model driving the turn and handing over:
+
+- The scout's raw reading never reaches the deciding model, only verified
+  facts. A cheap driver would put everything it read into the shared log,
+  paid again by the deciding model on every request.
+- The scout cannot change anything: explorers only read and search.
+- No model switch, so no cache loss: the scout is a separate conversation.
+- It reuses the pool, its fallback and quote checking.
+
+Rules: skipped for messages under four words (acknowledgements, short
+commands) and when `explorer.no_scout` is set; if every explorer fails the turn
+starts without a brief. The deciding model can always explore or read more.
+
 Not in the plan: switching the deciding model by state (deciding / failing /
-disputed). With GLM driving every request it is unnecessary, and switching
-breaks the cache (see above). It becomes useful only for a GLM tier split
-(e.g. a flash model for exploring rounds), and then only in whole-state
-windows.
+disputed). The scout makes the cheap start structural; switching the driver
+would break the cache and let a cheap model choose direction.

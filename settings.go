@@ -333,6 +333,10 @@ type ExplorerSettings struct {
 
 	// Timeout bounds the whole exploration.
 	Timeout Duration `yaml:"timeout"`
+
+	// NoScout turns off the scout: the explorer looking into each new
+	// request before the main model starts. See ROLES.md.
+	NoScout bool `yaml:"no_scout"`
 }
 
 // ---------------------------------------------------------------------------
