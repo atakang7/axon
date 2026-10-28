@@ -9,11 +9,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // NewFreeFirstClient checks the live OpenRouter catalog for the exact model's
-// :free sibling on every Complete call. Explicit free models and other hosts
+// :free sibling before Complete calls; the catalog is fetched at most once
+// per catalogTTL (per failureTTL after a failed fetch). Explicit free models and other hosts
 // are unchanged. This is opt-in; NewClient and free-only pruners stay unchanged.
 func (s Settings) NewFreeFirstClient(endpoint, model string) (Model, error) {
 	m, err := s.NewClient(endpoint, model)
@@ -33,13 +35,82 @@ type freeFirstClient struct {
 	catalogURL         string
 	catalogHTTP        *http.Client
 	firstOutputTimeout time.Duration
+
+	mu        sync.Mutex
+	catalog   []catalogModel
+	catalogOK bool
+	fetchedAt time.Time
 }
 
+// The catalog is 770 KB and changes rarely; fetching it before every request
+// cost a download per model call.
+const (
+	catalogTTL = 10 * time.Minute
+	failureTTL = time.Minute
+)
+
 type catalogModel struct {
-	ID         string            `json:"id"`
-	Canonical  string            `json:"canonical_slug"`
-	Parameters []string          `json:"supported_parameters"`
-	Pricing    map[string]string `json:"pricing"`
+	ID         string   `json:"id"`
+	Canonical  string   `json:"canonical_slug"`
+	Parameters []string `json:"supported_parameters"`
+	// Pricing holds strings for each kind and other shapes besides them
+	// (e.g. "overrides", a list), so values are decoded one by one.
+	Pricing map[string]json.RawMessage `json:"pricing"`
+}
+
+// price is the pricing value for kind, and whether it is a number string.
+func (m *catalogModel) price(kind string) (float64, bool, bool) {
+	raw, ok := m.Pricing[kind]
+	if !ok {
+		return 0, false, false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return 0, true, false
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	return v, true, err == nil
+}
+
+// models returns the catalog, fetching it when the cached copy is too old.
+func (f *freeFirstClient) models(ctx context.Context) ([]catalogModel, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ttl := catalogTTL
+	if !f.catalogOK {
+		ttl = failureTTL
+	}
+	if !f.fetchedAt.IsZero() && time.Since(f.fetchedAt) < ttl {
+		return f.catalog, f.catalogOK
+	}
+	f.catalog, f.catalogOK = f.fetchCatalog(ctx)
+	f.fetchedAt = time.Now()
+	return f.catalog, f.catalogOK
+}
+
+func (f *freeFirstClient) fetchCatalog(ctx context.Context) ([]catalogModel, bool) {
+	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	r, err := http.NewRequestWithContext(lookupCtx, http.MethodGet, f.catalogURL, nil)
+	if err != nil {
+		return nil, false
+	}
+	r.Header.Set("Cache-Control", "no-cache")
+	resp, err := f.catalogHTTP.Do(r)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var catalog struct {
+		Data []catalogModel `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&catalog); err != nil {
+		return nil, false
+	}
+	return catalog.Data, true
 }
 
 func (f *freeFirstClient) Complete(ctx context.Context, req Request) (*Msg, error) {
@@ -108,30 +179,13 @@ func (f *freeFirstClient) paidComplete(ctx context.Context, req Request, reason 
 }
 
 func (f *freeFirstClient) freeClient(ctx context.Context, req Request) (*Client, string) {
-	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	r, err := http.NewRequestWithContext(lookupCtx, http.MethodGet, f.catalogURL, nil)
-	if err != nil {
-		return nil, "catalog unavailable"
-	}
-	r.Header.Set("Cache-Control", "no-cache")
-	resp, err := f.catalogHTTP.Do(r)
-	if err != nil {
-		return nil, "catalog unavailable"
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "catalog unavailable"
-	}
-	var catalog struct {
-		Data []catalogModel `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&catalog); err != nil {
+	data, ok := f.models(ctx)
+	if !ok {
 		return nil, "catalog unavailable"
 	}
 	var base, free *catalogModel
-	for i := range catalog.Data {
-		m := &catalog.Data[i]
+	for i := range data {
+		m := &data[i]
 		if m.ID == f.paid.Model() {
 			base = m
 		}
@@ -146,16 +200,12 @@ func (f *freeFirstClient) freeClient(ctx context.Context, req Request) (*Client,
 		return nil, "free variant resolves to a different model revision"
 	}
 	for _, kind := range []string{"prompt", "completion"} {
-		v, err := strconv.ParseFloat(free.Pricing[kind], 64)
-		if err != nil || v != 0 {
+		if v, _, ok := free.price(kind); !ok || v != 0 {
 			return nil, "free pricing not confirmed"
 		}
 	}
-	if price, ok := free.Pricing["request"]; ok {
-		v, err := strconv.ParseFloat(price, 64)
-		if err != nil || v != 0 {
-			return nil, "free request pricing not confirmed"
-		}
+	if v, present, ok := free.price("request"); present && (!ok || v != 0) {
+		return nil, "free request pricing not confirmed"
 	}
 	supported := map[string]bool{}
 	for _, p := range free.Parameters {
