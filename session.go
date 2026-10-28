@@ -110,6 +110,12 @@ type TaskStep struct {
 }
 
 type Session struct {
+	// Todos is the plan todo_write keeps.
+	Todos []Todo `json:"todos,omitempty"`
+	// files is what the model has read, for the read-before-edit rule.
+	files      *fileLedger
+	ledgerOnce sync.Once
+
 	ID          string    `json:"id"`
 	StartedAt   time.Time `json:"started_at"`
 	Cwd         string    `json:"cwd,omitempty"`

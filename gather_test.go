@@ -24,7 +24,7 @@ func calls(names ...string) []ToolCall {
 // A write between reads is a barrier: "write X, then read X" in one reply must
 // still read the new contents.
 func TestToolGroupsBatchReadsButBarrierAtMutations(t *testing.T) {
-	groups := toolGroups(calls("read", "search", "write", "read", "exec", "exec"))
+	groups := toolGroups(calls(toolRead, toolSearch, toolWrite, toolRead, toolExec, toolExec))
 	var sizes []int
 	for _, g := range groups {
 		sizes = append(sizes, len(g))
@@ -49,13 +49,16 @@ func TestReadOnlyCallsRunConcurrentlyAndKeepOrder(t *testing.T) {
 			return name + "-result", nil
 		}
 	}
-	cfg.Tools = []Tool{fnTool("read", wait("read")), fnTool("search", wait("search"))}
+	cfg.Tools = []Tool{fnTool("lookup_a", wait("read")), fnTool("lookup_b", wait("search"))}
 	go func() {
 		<-started
 		<-started
 		close(release)
 	}()
-	cfg.Model = newQueueModel(scriptedReply{msg: &Msg{Role: "assistant", ToolCalls: calls("read", "search")}}, scriptedReply{msg: finalMsg("ok")})
+	concurrentTools["lookup_a"], concurrentTools["lookup_b"] = true, true
+	defer delete(concurrentTools, "lookup_a")
+	defer delete(concurrentTools, "lookup_b")
+	cfg.Model = newQueueModel(scriptedReply{msg: &Msg{Role: "assistant", ToolCalls: calls("lookup_a", "lookup_b")}}, scriptedReply{msg: finalMsg("ok")})
 	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -72,52 +75,6 @@ func TestReadOnlyCallsRunConcurrentlyAndKeepOrder(t *testing.T) {
 	}
 	if len(results) != 2 || !strings.HasSuffix(results[0], "read-result") || !strings.HasSuffix(results[1], "search-result") {
 		t.Fatalf("results out of call order: %q", results)
-	}
-}
-
-func TestDripLookupsGetOneEphemeralPlanningNudge(t *testing.T) {
-	cfg := noToolsConfig(t)
-	cfg.Tools = []Tool{fnTool("read", func(context.Context, json.RawMessage) (string, error) { return "contents", nil })}
-	model := newQueueModel(
-		scriptedReply{msg: toolCallMsg("a", "read", `{"path":"a.go"}`)},
-		scriptedReply{msg: toolCallMsg("b", "read", `{"path":"b.go"}`)},
-		scriptedReply{msg: toolCallMsg("c", "read", `{"path":"c.go"}`)},
-		scriptedReply{msg: finalMsg("done")},
-	)
-	cfg.Model = model
-	a, err := New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	if _, err := a.Step(context.Background(), "go"); err != nil {
-		t.Fatal(err)
-	}
-	reqs := model.reqs()
-	if len(reqs) != 4 {
-		t.Fatalf("%d requests", len(reqs))
-	}
-	nudged := func(r Request) bool {
-		return strings.Contains(r.Messages[len(r.Messages)-1].Content, "runtime note")
-	}
-	if nudged(reqs[0]) || nudged(reqs[1]) || !nudged(reqs[2]) || nudged(reqs[3]) {
-		t.Fatalf("nudge pattern wrong: %v %v %v %v", nudged(reqs[0]), nudged(reqs[1]), nudged(reqs[2]), nudged(reqs[3]))
-	}
-	for _, m := range a.session.Messages {
-		if strings.Contains(m.Content, "runtime note") {
-			t.Fatal("nudge was persisted into the session")
-		}
-	}
-}
-
-func TestBatchedLookupsAreNotDrip(t *testing.T) {
-	var g gatherTracker
-	batch := calls("read")
-	batch[0].Function.Arguments = `{"files":[{"path":"a.go"},{"path":"b.go"}]}`
-	for range 5 {
-		if g.observe(batch) != 0 || g.observe(calls("read", "search")) != 0 {
-			t.Fatal("batched lookups counted as drip")
-		}
 	}
 }
 

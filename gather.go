@@ -2,19 +2,15 @@ package axon
 
 import (
 	"context"
-	"fmt"
 	"sync"
 )
-
-// readOnlyTools are the direct lookups the drip nudge watches.
-var readOnlyTools = map[string]bool{toolRead: true, toolSearch: true}
 
 // concurrentTools have no ordering dependency on each other: a run of them in
 // one reply executes concurrently. Any other call is a barrier — everything
 // before it finishes first, and nothing after it starts until it is done — so
 // "write X, then read X" in one reply still reads the new contents. Explore
 // only reads, and is the slowest of them, so it gains the most.
-var concurrentTools = map[string]bool{toolRead: true, toolSearch: true, toolExplore: true}
+var concurrentTools = map[string]bool{toolRead: true, toolSearch: true, toolGlob: true, toolExplore: true}
 
 // toolGroups splits one reply's calls into execution groups, in order.
 func toolGroups(calls []ToolCall) [][]ToolCall {
@@ -59,58 +55,6 @@ func (a *Agent) runToolGroup(ctx context.Context, group []ToolCall) []Msg {
 	return out
 }
 
-// dripRoundsBeforeNudge is how many consecutive single-lookup rounds the loop
-// tolerates. One follow-up lookup is normal — a result names something new.
-// A third in a row means the agent is discovering its needs one round trip at
-// a time, and every round trip re-sends the whole conversation.
-const dripRoundsBeforeNudge = 2
-
-// gatherTracker notices an agent fetching context one item per model call.
-type gatherTracker struct {
-	drip int
-}
-
-// observe records one model reply. It returns the length of the drip streak
-// when the next request should carry the planning nudge, else zero. The
-// streak restarts after a nudge so a persistent drip is not nagged every round.
-func (g *gatherTracker) observe(calls []ToolCall) int {
-	if len(calls) == 1 && readOnlyTools[calls[0].Function.Name] && !isBatchRead(calls[0]) {
-		g.drip++
-	} else {
-		g.drip = 0
-	}
-	if g.drip < dripRoundsBeforeNudge {
-		return 0
-	}
-	rounds := g.drip
-	g.drip = 0
-	return rounds
-}
-
-func isBatchRead(tc ToolCall) bool {
-	if tc.Function.Name != toolRead {
-		return false
-	}
-	p, _, err := parseAndValidateReadInput([]byte(tc.Function.Arguments), nopWorkspace{})
-	return err == nil && len(p.Files) > 1
-}
-
-type nopWorkspace struct{}
-
-func (nopWorkspace) Dir() string                 { return "" }
-func (nopWorkspace) ResolvePath(p string) string { return p }
-func (nopWorkspace) RecordEdit(string, string)   {}
-
-// gatherNudge is appended, for one request only, to the newest tool result.
-// It is never written to the session: it steers the next reply and would be
-// noise in every request after that.
-func gatherNudge(rounds int) string {
-	return fmt.Sprintf("\n\n[runtime note: the last %d replies each fetched a single item. Before your next call, stop and plan: "+
-		"what is the current step, and what exactly do you still need to know to finish it — every file, range, symbol and command? "+
-		"Request all of it in this one reply, as parallel tool calls or a single read with files:[...]. "+
-		"Only fetch again afterwards if a result reveals something you could not have predicted.]", rounds)
-}
-
 // withNudge returns messages with note appended to the final tool result, on
 // a copy: the session's own messages are never modified. Trailing system
 // messages (the goal block) are skipped; they used to make every note vanish
@@ -138,42 +82,4 @@ func withTurnNote(messages []Msg, note string) []Msg {
 		return messages
 	}
 	return append(append([]Msg(nil), messages...), Msg{Role: "user", Content: note})
-}
-
-// locateRoundsBeforeDelegate is how many replies in a row that only read and
-// search the deciding model may spend before it is told to delegate. Every
-// token it reads is paid at its price on each later request; finding where
-// things are is the explorer's work. See ROLES.md.
-const locateRoundsBeforeDelegate = 3
-
-// delegateTracker notices the deciding model locating things itself while an
-// explorer is available. It fires once per run.
-type delegateTracker struct {
-	rounds int
-	sent   bool
-}
-
-func (d *delegateTracker) observe(calls []ToolCall) bool {
-	if d.sent || len(calls) == 0 {
-		return false
-	}
-	for _, tc := range calls {
-		if !readOnlyTools[tc.Function.Name] {
-			d.rounds = 0
-			return false
-		}
-	}
-	d.rounds++
-	if d.rounds < locateRoundsBeforeDelegate {
-		return false
-	}
-	d.sent = true
-	return true
-}
-
-// delegateNote is appended, for one request, to the newest tool result.
-func delegateNote(rounds int) string {
-	return fmt.Sprintf("\n\n[runtime note: your last %d replies only read and searched. Finding where things are is the explorer's work: "+
-		"call explore with your questions (several can go at once) and a free model returns facts whose quotes are checked against the files. "+
-		"Read raw only what you will change.]", rounds)
 }

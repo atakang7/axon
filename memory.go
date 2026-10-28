@@ -236,11 +236,11 @@ func (s *Session) view(windowBlocks int) ([]Msg, viewInfo) {
 	}
 
 	var state []string
-	if tb := s.GoalBlock(); tb != "" {
+	if tb := s.stateBlock(); tb != "" {
 		state = append(state, tb)
 	}
 	if len(info.outside) > 0 {
-		lines := []string{"[out of context; recall an id to read it again]"}
+		lines := []string{"[out of context: read the files again or run the commands again for current output]"}
 		for _, o := range info.outside {
 			lines = append(lines, o.line)
 		}

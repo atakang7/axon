@@ -81,9 +81,7 @@ func TestContextSnapshotMarksFoldedWorkAndTheGoal(t *testing.T) {
 	b := bigHistory(t, 4)
 	a := &Agent{session: b.s, settings: Settings{}.WithDefaults()}
 	b.s.foldRun(closedRuns(b.s)[0])
-	if _, err := GoalTool(b.s).Fn(t.Context(), json.RawMessage(`{"action":"criteria","criteria":[{"text":"tests pass","oracle":"go test ./..."}]}`)); err != nil {
-		t.Fatal(err)
-	}
+	b.s.Todos = []Todo{{Content: "finish", Status: "in_progress"}}
 	snap := a.ContextSnapshot()
 	folded, history, state := 0, 0, 0
 	for _, blk := range snap.Blocks {

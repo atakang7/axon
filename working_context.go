@@ -211,21 +211,21 @@ func staleResults(s *Session) map[int]string {
 		if key := repeatKey(u); key != "" {
 			if id, seen := newer[key]; seen {
 				if eligible {
-					stale[i] = fmt.Sprintf("[#%s superseded by #%s, the same %s run again; recall %s for this output]", m.ID, id, u.name, m.ID)
+					stale[i] = fmt.Sprintf("[#%s superseded by #%s, the same %s run again]", m.ID, id, u.name)
 					continue
 				}
 			} else if !m.ToolFailed && m.ID != "" {
 				newer[key] = m.ID
 			}
 		}
-		switch u.name {
-		case toolWrite:
+		switch {
+		case isWriteTool(u.name):
 			if !m.ToolFailed {
 				for _, p := range writePaths(u) {
 					written[p] = m.ID
 				}
 			}
-		case toolRead:
+		case u.name == toolRead:
 			if !eligible || i >= openStart {
 				continue
 			}
@@ -237,8 +237,8 @@ func staleResults(s *Session) map[int]string {
 				}
 			}
 			if len(paths) > 0 && len(by) == len(paths) {
-				stale[i] = fmt.Sprintf("[#%s read %s; edited later (#%s), so the disk has the current text. recall %s for this old copy]",
-					m.ID, strings.Join(paths, ", "), strings.Join(by, ", #"), m.ID)
+				stale[i] = fmt.Sprintf("[#%s read %s; edited later (#%s), so the disk has the current text: read_file it again if you need it]",
+					m.ID, strings.Join(paths, ", "), strings.Join(by, ", #"))
 			}
 		}
 	}
@@ -249,7 +249,7 @@ func staleResults(s *Session) map[int]string {
 // The file on disk is the record; keeping its body in every later request is
 // paying for the same bytes twice.
 func stubWriteArgs(tc ToolCall) ToolCall {
-	if tc.Function.Name != toolWrite || len(tc.Function.Arguments) < 600 {
+	if !isWriteTool(tc.Function.Name) || len(tc.Function.Arguments) < 600 {
 		return tc
 	}
 	var args map[string]any
@@ -271,8 +271,10 @@ func stubWriteArgs(tc ToolCall) ToolCall {
 		content := argString(args, "content")
 		args["content"] = fmt.Sprintf("[%d characters written to %s; the file on disk is the source of truth]", len([]rune(content)), argString(args, "path"))
 	}
-	if old := argString(args, "old_str"); len(old) > 200 {
-		args["old_str"] = fmt.Sprintf("[%d characters replaced]", len([]rune(old)))
+	for _, key := range []string{"old_str", "old_string", "new_string"} {
+		if v := argString(args, key); len(v) > 200 {
+			args[key] = fmt.Sprintf("[%d characters]", len([]rune(v)))
+		}
 	}
 	b, err := json.Marshal(args)
 	if err != nil {
@@ -302,7 +304,8 @@ func stubWriteArgs(tc ToolCall) ToolCall {
 func looksLikeCardEcho(text string) bool {
 	t := strings.TrimSpace(text)
 	return strings.HasPrefix(t, "[finished ") || strings.HasPrefix(t, "[runtime note") ||
-		strings.Contains(t, "folded; recall any id for the original text]")
+		strings.Contains(t, "folded; recall any id for the original text]") ||
+		strings.Contains(t, "folded. Files on disk are current")
 }
 
 // work is what a stretch of the log did, read from the log itself, so it
@@ -352,7 +355,7 @@ func summarizeWork(s *Session, from, to int, uses map[string]toolUse) work {
 				for _, p := range readPaths(u) {
 					add(&w.read, "r", p)
 				}
-			case toolWrite:
+			case toolWrite, toolEdit:
 				if !m.ToolFailed {
 					for _, p := range writePaths(u) {
 						add(&w.wrote, "w", p)
@@ -422,7 +425,7 @@ func (w work) span() string {
 // in the conversation above it.
 func historyNote(s *Session, runs []run, uses map[string]toolUse) string {
 	var b strings.Builder
-	b.WriteString("[runtime note: work done on the requests above, folded; recall an id for the original]")
+	b.WriteString("[runtime note: work done on the requests above, folded. Files on disk are current: read them again if you need them.]")
 	for _, r := range runs {
 		w := summarizeWork(s, r.start+1, r.end, uses)
 		fmt.Fprintf(&b, "\n#%s %s: %s", s.Messages[r.start].ID, w.span(), w.line())
@@ -436,7 +439,7 @@ func historyNote(s *Session, runs []run, uses map[string]toolUse) string {
 // stepsNote is the one note for the folded steps of a request.
 func stepsNote(s *Session, steps []step, uses map[string]toolUse) string {
 	var b strings.Builder
-	b.WriteString("[runtime note: earlier steps of this request, folded; recall an id for the original]")
+	b.WriteString("[runtime note: earlier steps of this request, folded. Files on disk are current: read them again if you need them.]")
 	for _, st := range steps {
 		w := summarizeWork(s, st.start, st.end, uses)
 		title := "step"
@@ -623,7 +626,7 @@ func renderTrim(m Msg, t *Trim) string {
 	case t == nil || t.Kept:
 		return m.Content
 	case t.Note != "":
-		return fmt.Sprintf("[#%s note: %s | recall %s for the original]", m.ID, t.Note, m.ID)
+		return fmt.Sprintf("[#%s note: %s]", m.ID, t.Note)
 	}
 	lines := blockLines(m)
 	var b strings.Builder
@@ -638,5 +641,5 @@ func renderTrim(m Msg, t *Trim) string {
 		b.WriteString(strings.Join(lines[sp[0]-1:sp[1]], "\n"))
 		kept += sp[1] - sp[0] + 1
 	}
-	return fmt.Sprintf("[#%s trimmed: %d of %d lines kept; recall %s for the rest]\n%s", m.ID, kept, len(lines), m.ID, b.String())
+	return fmt.Sprintf("[#%s trimmed: %d of %d lines kept; read the file again for the rest]\n%s", m.ID, kept, len(lines), b.String())
 }

@@ -42,15 +42,20 @@ type Plan interface {
 // ---------------------------------------------------------------------------
 
 const (
-	toolRead       = "read"
-	toolWrite      = "write"
-	toolExec       = "exec"
+	toolRead       = "read_file"
+	toolWrite      = "write_file"
+	toolEdit       = "edit"
+	toolExec       = "bash"
 	toolBashOutput = "bash_output"
 	toolKillShell  = "kill_shell"
-	toolSearch     = "search"
+	toolSearch     = "grep"
+	toolGlob       = "glob"
 	toolGoal       = "goal"
-	toolTask       = "task"
+	toolTask       = "todo_write"
 )
+
+// isWriteTool reports whether a tool changes files.
+func isWriteTool(name string) bool { return name == toolWrite || name == toolEdit }
 
 // Mode constants. Required on write; optional with a default on read and
 // search. One door per call.
