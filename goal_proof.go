@@ -63,7 +63,7 @@ func (s *Session) goalProof(goal string, lastWrite int, uses map[string]toolUse)
 				if isTestCommand(argString(u.args, "command")) && execExitCode(m.Content) != 0 {
 					red = true
 				}
-			case toolWrite:
+			case toolWrite, toolEdit:
 				for _, p := range writePaths(u) {
 					if testFile.MatchString(p) {
 						wroteTest = true

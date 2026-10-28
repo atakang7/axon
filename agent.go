@@ -387,7 +387,7 @@ func (a *Agent) execTool(ctx context.Context, tc ToolCall) (Msg, error) {
 			continue
 		}
 
-		input := json.RawMessage(tc.Function.Arguments)
+		input := coerceArgs(t.Schema, json.RawMessage(tc.Function.Arguments))
 		out, err := t.Fn(withToolCall(ctx, tc.ID), input)
 		if err != nil {
 			return Msg{Role: "tool", ToolCallID: tc.ID, ToolName: tc.Function.Name, Content: err.Error(), ToolFailed: true}, err

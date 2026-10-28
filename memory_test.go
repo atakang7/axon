@@ -20,15 +20,13 @@ func TestContextMessagesTaskBlockIsTrailingAndCacheStable(t *testing.T) {
 		t.Fatalf("with no task registered, got %d messages, want 2 (no trailing block)", len(noTask))
 	}
 
-	if err := s.RegisterTask("goal", []TaskStep{{Description: "step"}}); err != nil {
-		t.Fatal(err)
-	}
+	s.Todos = []Todo{{Content: "step", Status: "in_progress"}}
 	withTask := s.ContextMessages(0)
 	if len(withTask) != 3 {
 		t.Fatalf("with a task registered, got %d messages, want 3", len(withTask))
 	}
 	last := withTask[len(withTask)-1]
-	if last.Role != "system" || !strings.Contains(last.Content, "[task]") {
+	if last.Role != "system" || !strings.Contains(last.Content, "[plan]") {
 		t.Fatalf("trailing message = %+v, want the task block", last)
 	}
 

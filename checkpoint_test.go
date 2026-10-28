@@ -370,25 +370,29 @@ func TestTheAgentCanCheckpointOnItsOwn(t *testing.T) {
 	}
 }
 
-func TestCheckpointToolIsOfferedAndExcludable(t *testing.T) {
+func TestDefaultToolsAreTheStandardSetAndExcludable(t *testing.T) {
 	cfg := baseConfig(t)
 	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	if !hasTool(a.tools, toolCheckpoint) || !hasTool(a.tools, "recall") || hasTool(a.tools, toolExplore) {
-		t.Fatal("default tools: want checkpoint and recall, no explore without an explorer")
+	var names []string
+	for _, tool := range a.tools {
+		names = append(names, tool.Name)
+	}
+	if got := strings.Join(names, " "); got != "read_file edit write_file bash bash_output kill_shell grep glob todo_write" {
+		t.Fatalf("default tools: %s", got)
 	}
 	cfg = baseConfig(t)
-	cfg.ExcludeBuiltins = []string{toolCheckpoint}
+	cfg.ExcludeBuiltins = []string{toolTask}
 	b, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	if hasTool(b.tools, toolCheckpoint) {
-		t.Fatal("checkpoint could not be excluded")
+	if hasTool(b.tools, toolTask) {
+		t.Fatal("todo_write could not be excluded")
 	}
 }
 

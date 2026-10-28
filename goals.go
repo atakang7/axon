@@ -149,7 +149,7 @@ func lastWriteAfter(s *Session, uses map[string]toolUse, from int) int {
 	last := -1
 	for i := max(from, 0); i < len(s.Messages); i++ {
 		m := s.Messages[i]
-		if m.Role == "tool" && !m.ToolFailed && uses[m.ToolCallID].name == toolWrite {
+		if m.Role == "tool" && !m.ToolFailed && isWriteTool(uses[m.ToolCallID].name) {
 			last = i
 		}
 	}
@@ -204,7 +204,7 @@ func (s *Session) goalWrites(goal string, uses map[string]toolUse) int {
 		}
 		for i := r.start + 1; i < r.end; i++ {
 			m := s.Messages[i]
-			if m.Role == "tool" && !m.ToolFailed && uses[m.ToolCallID].name == toolWrite {
+			if m.Role == "tool" && !m.ToolFailed && isWriteTool(uses[m.ToolCallID].name) {
 				last = i
 			}
 		}

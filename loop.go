@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // Step submits one user message and drives the loop until the
@@ -31,20 +30,12 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 	a.emit(ctx, Event{Kind: KindUserInput, Text: userInput})
 
-	// Every message starts free: the explorer pool looks into the request
-	// before the main model's first request.
-	if err := a.scout(ctx, userInput); err != nil {
-		a.emit(ctx, Event{Kind: KindTurnEnd})
-		return StepResult{Turn: a.session.Turn}, err
-	}
 
 	var calls []ToolCall
 	var assistantText string
-	var gather gatherTracker
-	var delegate delegateTracker
 	a.nudge = ""
 	a.turnNote = ""
-	goalNotes, echoNotes := 0, 0
+	verifyNotes, echoNotes, textCallNotes := 0, 0, 0
 
 	for iteration := 1; ; iteration++ {
 		// Checked before the model call, not after, so the cap is a bound on
@@ -91,30 +82,36 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			continue
 		}
 
+		// A tool call written as text ran nothing; it is not an answer.
+		if len(msg.ToolCalls) == 0 && textCallNotes < 2 && looksLikeTextToolCall(msg.Content) {
+			textCallNotes++
+			a.turnNote = textCallNote
+			a.turnCancel.Store(nil)
+			cancel()
+			a.emit(ctx, Event{Kind: KindInfo, Text: "the model wrote a tool call as text instead of calling it; asking it to use the tools"})
+			continue
+		}
+
 		if msg.Content != "" {
 			assistantText = msg.Content
 			a.emit(ctx, Event{Kind: KindAssistantEnd, Text: msg.Content})
 		}
 
 		if len(msg.ToolCalls) == 0 {
-			// The contract is checked before a turn may end: an unproven goal
-			// gets one more request naming what is open, and a second one
-			// only if a criterion is outright failed or stale. Two at most,
-			// so an uncheckable criterion cannot trap the turn.
-			open := a.session.openCriteria()
-			if len(open) > 0 && !a.settings.Goals.DisableNudges && (goalNotes == 0 || (goalNotes == 1 && hasBrokenCriterion(open))) {
-				goalNotes++
-				a.turnNote = a.session.goalTurnNote()
-				if goalNotes == 2 {
-					a.turnNote = brokenGoalNote(open)
-				}
+			// A turn that changed files ends after something checked them,
+			// or after one note asking for that. Once per turn, so a change
+			// that cannot be checked here cannot trap the turn.
+			v := a.session.verification()
+			if note := v.note(); note != "" && verifyNotes == 0 && !a.settings.Goals.DisableNudges {
+				verifyNotes++
+				a.turnNote = note
 				a.turnCancel.Store(nil)
 				cancel()
-				a.emit(ctx, Event{Kind: KindInfo, Text: "goal not proven yet: " + strings.Join(open, ", ")})
+				a.emit(ctx, Event{Kind: KindInfo, Text: "change not checked yet (" + v.state + "); asking for a check"})
 				continue
 			}
-			if len(open) > 0 {
-				a.emit(ctx, Event{Kind: KindInfo, Text: "turn ended with the goal unproven: " + strings.Join(open, ", ")})
+			if v.wrote && v.state != "verified" {
+				a.emit(ctx, Event{Kind: KindInfo, Text: "turn ended with the change " + v.state})
 			}
 			a.turnCancel.Store(nil)
 			cancel()
@@ -126,14 +123,6 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 			}, nil
 		}
 
-		if len(a.explorers) > 0 && !a.exploreFailed.Load() && delegate.observe(msg.ToolCalls) {
-			a.nudge += delegateNote(delegate.rounds)
-			a.emit(ctx, Event{Kind: KindInfo, Text: "the model has spent several replies locating things itself; suggesting explore"})
-		}
-		if rounds := gather.observe(msg.ToolCalls); rounds > 0 {
-			a.nudge += gatherNudge(rounds)
-			a.emit(ctx, Event{Kind: KindInfo, Text: "context gathered one item per round; asking the model to plan and batch its next lookups"})
-		}
 
 		// Consecutive read-only calls run concurrently; see toolGroups.
 		for _, group := range toolGroups(msg.ToolCalls) {

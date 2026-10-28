@@ -83,7 +83,7 @@ func TestNewAcceptsCompleteTool(t *testing.T) {
 // with a built-in the agent still has is its own error.
 func TestNewRejectsDuplicateOfBuiltin(t *testing.T) {
 	cfg := baseConfig(t)
-	cfg.Tools = []Tool{{Name: "read", Schema: okSchema, Fn: okFn}}
+	cfg.Tools = []Tool{{Name: "read_file", Schema: okSchema, Fn: okFn}}
 
 	a, err := New(cfg)
 	if err == nil {
@@ -99,8 +99,8 @@ func TestNewRejectsDuplicateOfBuiltin(t *testing.T) {
 // way to replace a built-in rather than only to remove one.
 func TestExcludedBuiltinFreesItsName(t *testing.T) {
 	cfg := baseConfig(t)
-	cfg.ExcludeBuiltins = []string{"read"}
-	cfg.Tools = []Tool{{Name: "read", Schema: okSchema, Fn: okFn}}
+	cfg.ExcludeBuiltins = []string{"read_file"}
+	cfg.Tools = []Tool{{Name: "read_file", Schema: okSchema, Fn: okFn}}
 
 	a, err := New(cfg)
 	if err != nil {
@@ -110,7 +110,7 @@ func TestExcludedBuiltinFreesItsName(t *testing.T) {
 
 	reads := 0
 	for _, tool := range a.tools {
-		if tool.Name == "read" {
+		if tool.Name == "read_file" {
 			reads++
 		}
 	}
@@ -261,7 +261,7 @@ func TestTwoAgentsShareNoShellRegistry(t *testing.T) {
 	}
 	defer b.Close()
 
-	startB := findTool(t, b, "exec")
+	startB := findTool(t, b, "bash")
 	out, err := startB.Fn(context.Background(), json.RawMessage(`{"command":"sleep 5","run_in_background":true}`))
 	if err != nil {
 		t.Fatalf("start background shell on b: %v", err)
@@ -307,7 +307,7 @@ func parseShellID(t *testing.T, out string) string {
 // wiped.
 func TestResetRebuildsSystemPromptToolsAndShells(t *testing.T) {
 	cfg := baseConfig(t)
-	cfg.ExcludeBuiltins = []string{"write"}
+	cfg.ExcludeBuiltins = []string{"write_file"}
 	cfg.Tools = []Tool{{Name: "deploy", Schema: okSchema, Fn: okFn}}
 
 	a, err := New(cfg)
@@ -316,7 +316,7 @@ func TestResetRebuildsSystemPromptToolsAndShells(t *testing.T) {
 	}
 	defer a.Close()
 
-	execTool := findTool(t, a, "exec")
+	execTool := findTool(t, a, "bash")
 	out, err := execTool.Fn(context.Background(), json.RawMessage(`{"command":"sleep 5","run_in_background":true}`))
 	if err != nil {
 		t.Fatalf("start background shell: %v", err)
@@ -338,7 +338,7 @@ func TestResetRebuildsSystemPromptToolsAndShells(t *testing.T) {
 	for _, tl := range a.tools {
 		names[tl.Name] = true
 	}
-	if names["write"] {
+	if names["write_file"] {
 		t.Fatal("Reset restored an excluded built-in")
 	}
 	if !names["deploy"] {

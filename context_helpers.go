@@ -191,7 +191,7 @@ func unresolvedToolFailures(s *Session) map[string]bool {
 		key := signatures[m.ToolCallID]
 		failed := m.ToolFailed
 		knownSuccess := !failed
-		if m.ToolName == "exec" || m.ToolName == "bash_output" {
+		if m.ToolName == toolExec || m.ToolName == toolBashOutput {
 			knownSuccess = false
 			for _, line := range strings.SplitN(m.Content, "\n", 10) {
 				var code int

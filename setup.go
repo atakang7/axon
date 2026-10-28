@@ -139,16 +139,19 @@ func closeMCP(clients []*mcpClient) {
 // it must obey. None of them gets the Session itself, and none of them reads
 // the environment — this is the single place those decisions are made.
 func builtinTools(ws *Session, shells *BackgroundShells, lim Limits, exclude []string) []Tool {
+	// The standard vocabulary (std_tools.go). The goal and checkpoint tools
+	// are gone from the model's view: verification is computed by the loop
+	// (verify.go) and the context is kept by the runtime.
 	all := []Tool{
-		ReadTool(ws, lim),
-		WriteTool(ws),
-		ExecTool(ws, shells, lim),
+		ReadFileTool(ws, lim),
+		EditTool(ws),
+		WriteFileTool(ws),
+		BashTool(ws, shells, lim),
 		BashOutputTool(shells, lim),
 		KillShellTool(shells, lim),
-		SearchTool(ws, lim),
-		TaskTool(ws),
-		GoalTool(ws),
-		RecallTool(ws),
+		GrepTool(ws, lim),
+		GlobTool(ws),
+		TodoTool(ws),
 	}
 	return withoutExcluded(all, exclude)
 }
@@ -177,12 +180,7 @@ func withoutExcluded(tools []Tool, exclude []string) []Tool {
 // and, when an explorer model is set, explore. Those two are bound to the
 // agent rather than the session, because they act on its context and models.
 func (a *Agent) ownTools() []Tool {
-	tools := builtinTools(a.session, a.shells, a.limits, nil)
-	tools = append(tools, a.checkpointTool())
-	if len(a.explorers) > 0 {
-		tools = append(tools, a.exploreTool())
-	}
-	return withoutExcluded(tools, a.excludeBuiltins)
+	return withoutExcluded(builtinTools(a.session, a.shells, a.limits, nil), a.excludeBuiltins)
 }
 
 // rebindTools rebuilds the tool list after the session or the explorer
