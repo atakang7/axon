@@ -88,18 +88,38 @@ func insideDir(path, root string) bool {
 	if root == "" {
 		return true
 	}
-	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	rel, err := filepath.Rel(canonicalDir(root), canonicalDir(path))
+	if runtime.GOOS == "windows" && err == nil {
+		// Rel is case-sensitive; Windows paths are not.
+		if r2, err2 := filepath.Rel(strings.ToLower(canonicalDir(root)), strings.ToLower(canonicalDir(path))); err2 == nil {
+			rel = r2
+		}
+	}
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // sameDir compares directories as the platform does: case-insensitively on
 // Windows, exactly elsewhere.
 func sameDir(a, b string) bool {
-	a, b = filepath.Clean(a), filepath.Clean(b)
+	a, b = canonicalDir(a), canonicalDir(b)
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
+}
+
+// canonicalDir resolves links and, on Windows, 8.3 short names, so that the
+// workspace as the process sees it (C:\Users\RUNNER~1\...) and the directory
+// bash reports (C:/Users/runneradmin/...) compare equal.
+func canonicalDir(p string) string {
+	p = filepath.Clean(p)
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	if a, err := filepath.Abs(p); err == nil {
+		p = a
+	}
+	return p
 }
 
 func shellQuote(s string) string {

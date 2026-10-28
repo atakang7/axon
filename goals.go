@@ -177,7 +177,7 @@ func (s *Session) criterionStatus(c *Criterion, uses map[string]toolUse) critSta
 				continue
 			}
 			idx, id = i, m.ID
-			if execExitCode(m.Content) == 0 && (c.Expect == "" || strings.Contains(m.Content, c.Expect)) {
+			if execExitCode(m.Content) == 0 && (c.Expect == "" || outputHas(m.Content, c.Expect)) {
 				state = critMet
 			} else {
 				state = critFailed
@@ -212,23 +212,10 @@ func (s *Session) goalWrites(goal string, uses map[string]toolUse) int {
 	return last
 }
 
-// defaultVerified is K0: a goal that changed files without recording criteria
-// is verified by any successful command after its last write.
-func (s *Session) defaultVerified(lastWrite int, uses map[string]toolUse) critStatus {
-	for i := lastWrite + 1; i < len(s.Messages); i++ {
-		m := s.Messages[i]
-		if m.Role == "tool" && !m.ToolFailed && uses[m.ToolCallID].name == toolExec && execExitCode(m.Content) == 0 {
-			return critStatus{state: critMet, evidence: m.ID}
-		}
-	}
-	return critStatus{state: critOpen}
-}
-
 // openCriteria lists the active goal's criteria that are not settled, as
-// "K1 failed" items. Changed files with no recorded criteria are open even
-// when some command succeeded afterwards: replayed sessions showed users
-// rejecting work in exactly those runs, because "a command passed" is not a
-// check anyone chose. K0 is shown in the goal block for information only.
+// "K1 failed" items. Changed files with no recorded criteria are open unless
+// the project's tests prove them (goalProof): replayed sessions showed users
+// rejecting work where merely some command succeeded afterwards.
 func (s *Session) openCriteria() []string {
 	goal := s.activeGoal()
 	if goal == "" {
@@ -238,7 +225,7 @@ func (s *Session) openCriteria() []string {
 	var out []string
 	g := s.Goals[goal]
 	if g == nil || len(g.Criteria) == 0 {
-		if s.goalWrites(goal, uses) >= 0 {
+		if w := s.goalWrites(goal, uses); w >= 0 && s.goalProof(goal, w, uses).state != critMet {
 			out = append(out, "no criteria recorded for the files you changed")
 		}
 		return out
@@ -286,8 +273,11 @@ func (s *Session) GoalBlock() string {
 	default:
 		if w := s.goalWrites(goal, uses); w >= 0 {
 			say = true
-			st := s.defaultVerified(w, uses)
-			fmt.Fprintf(&b, "\ncriteria: none recorded for the files changed (record them with goal criteria). For information only, not a criterion: a successful command after the last write: %s%s", st.state, evidenceRef(st))
+			if st := s.goalProof(goal, w, uses); st.state == critMet {
+				fmt.Fprintf(&b, "\nproven by the project's tests after the last change%s (a test failed before the change, or the change added tests)", evidenceRef(st))
+			} else {
+				b.WriteString("\ncriteria: none recorded for the files changed. Proof is either the project's tests passing after your last change, when a test failed before it or the change added tests, or criteria you record with goal criteria.")
+			}
 		}
 	}
 	if task != "" {
@@ -392,7 +382,8 @@ const goalDescription = `Record and check the contract of the current request: w
   - check: for a criterion without an oracle, cite the evidence block and a quote from it.
   - unverifiable: a criterion you cannot check from your side, with the reason.
   - continue: this message refines an earlier goal (its user message id); its criteria apply.
-Status is computed from tool output: running an oracle IS the check, you do not report it.`
+Status is computed from tool output: running an oracle IS the check, you do not report it. expect is matched ignoring whitespace and case; baseline is optional.
+When the project's tests prove the change, no criteria are needed: a bug fix whose failing test passes after the fix, or a change that adds tests and passes them. Record criteria for anything the tests do not show (a device, a page, a file the user will look at).`
 
 // goalCriterionInput is one criterion as the agent sends it.
 type goalCriterionInput struct {
@@ -641,10 +632,15 @@ func (s *Session) ActiveGoalView() *GoalView {
 		}
 	}
 	if len(v.Criteria) == 0 {
-		if s.goalWrites(goal, uses) < 0 {
+		w := s.goalWrites(goal, uses)
+		if w < 0 {
 			return nil
 		}
-		v.Unchecked = true
+		if st := s.goalProof(goal, w, uses); st.state == critMet {
+			v.Criteria = append(v.Criteria, CriterionView{ID: "tests", Text: "the project's tests pass after the change", State: critMet, Evidence: st.evidence})
+		} else {
+			v.Unchecked = true
+		}
 	}
 	return v
 }
