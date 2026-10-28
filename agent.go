@@ -226,6 +226,7 @@ func (a *Agent) completeWith(ctx context.Context, m Model, req Request, usage St
 	}
 
 	var lastErr error
+	unusable := 0
 
 	for attempt := range policy.MaxAttempts {
 		if attempt > 0 {
@@ -256,9 +257,22 @@ func (a *Agent) completeWith(ctx context.Context, m Model, req Request, usage St
 
 		if err == nil {
 			if reason := unusableReply(msg); reason != "" {
+				unusable++
+				// A reply that is only thinking ran out of output budget
+				// before it answered: the same request fails the same way.
+				// The retry gets twice the budget and a note to act. Seen
+				// 2026-10-28 with MiMo: two identical retries, 860 s, and
+				// a 15-minute task lost.
+				limit := 1
+				if msg != nil && strings.TrimSpace(msg.Reasoning) != "" {
+					reason = "the model spent its whole reply thinking and gave no answer or tool call"
+					req.Messages = withTurnNote(req.Messages, onlyThoughtNote)
+					req.MaxTokens = min(2*max(req.MaxTokens, a.settings.Model.MaxTokens, DefaultSettings().Model.MaxTokens), maxRetryTokens)
+					limit = maxThinkingRetries
+				}
 				lastErr = errors.New(reason)
 				emit(Event{Kind: KindError, Err: lastErr})
-				if attempt >= 1 {
+				if unusable > limit {
 					return nil, lastErr
 				}
 				continue
@@ -275,6 +289,18 @@ func (a *Agent) completeWith(ctx context.Context, m Model, req Request, usage St
 
 	return nil, lastErr
 }
+
+// maxThinkingRetries bounds retries of replies that were only thinking. An
+// empty reply without thinking is retried once; one that thought until its
+// budget ran out is retried with a larger budget, a few times at most.
+const maxThinkingRetries = 3
+
+// maxRetryTokens caps the output budget a retry after a thinking-only reply
+// may grow to.
+const maxRetryTokens = 64000
+
+// onlyThoughtNote follows a reply that was all thinking. It is not saved.
+const onlyThoughtNote = "[runtime note: your last reply was cut off while you were still thinking: it produced no answer and no tool call. Think briefly now, then act: call the tools for the next step, or answer.]"
 
 // toolMarkupMarkers are fragments that appear only inside a model's native
 // tool-call syntax. Providers are meant to parse that syntax into the
