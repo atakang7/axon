@@ -632,15 +632,17 @@ func (s *Session) ActiveGoalView() *GoalView {
 		}
 	}
 	if len(v.Criteria) == 0 {
-		w := s.goalWrites(goal, uses)
-		if w < 0 {
+		// The goal tool is no longer offered: the view is the verification
+		// the loop computes (verify.go), shown as one criterion.
+		ver := s.verification()
+		if !ver.wrote {
 			return nil
 		}
-		if st := s.goalProof(goal, w, uses); st.state == critMet {
-			v.Criteria = append(v.Criteria, CriterionView{ID: "tests", Text: "the project's tests pass after the change", State: critMet, Evidence: st.evidence})
-		} else {
-			v.Unchecked = true
+		state := map[string]string{"verified": critMet, "failed": critFailed}[ver.state]
+		if state == "" {
+			state = critOpen
 		}
+		v.Criteria = append(v.Criteria, CriterionView{ID: "check", Text: "checked after the last change", State: state, Evidence: ver.evidence, Oracle: ver.command})
 	}
 	return v
 }
