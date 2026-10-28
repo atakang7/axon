@@ -56,8 +56,14 @@ Recomputed from the log on every request:
   recorded no criteria is open, even if some command succeeded afterwards.
   Replaying two real sessions, 15 of 18 file-changing runs had a successful
   command after the last write, yet those are where users rejected the work:
-  "a command passed" is not a check anyone chose. K0 (any successful command
-  after the last write) is still shown, for information only.
+  "a command passed" is not a check anyone chose. Two shapes of the project's
+  own tests do prove a change without criteria (goal_proof.go, 2026-10-28):
+  red to green (a test command failed in the goal before the last write and
+  passes after it) and tests written (the goal changed a test file and a test
+  command passes after the last write). The eval showed criteria ceremony
+  costing up to half the requests of tasks whose proof was exactly that.
+- **expect** is matched ignoring whitespace and case: agents write
+  "ok example.com/x" for Go's "ok  	example.com/x".
 
 ## Where it acts
 
