@@ -39,6 +39,10 @@ type Agent struct {
 	// resets it. See WORKING_CONTEXT.md.
 	keptTokens int
 
+	// lastRoute is the model route last announced, so a route that holds is
+	// not announced again before every request.
+	lastRoute string
+
 	// usageMu guards the session's usage totals, which concurrent explore
 	// calls add to.
 	usageMu sync.Mutex
@@ -169,7 +173,11 @@ func (a *Agent) chat(ctx context.Context, tools []Tool) (*Msg, error) {
 		Tools:    toolSpecs(tools),
 		Stream: Stream{
 			Route: func(model, reason string) {
-				a.emit(ctx, Event{Kind: KindInfo, Text: "model route: " + model + " (" + reason + ")"})
+				// Said once while it holds, not before every request.
+				if route := model + " (" + reason + ")"; route != a.lastRoute {
+					a.lastRoute = route
+					a.emit(ctx, Event{Kind: KindInfo, Text: "model route: " + route})
+				}
 			},
 			Token: func(t string) {
 				a.emit(ctx, Event{Kind: KindToken, Text: t})

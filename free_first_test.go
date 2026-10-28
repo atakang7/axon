@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -79,12 +80,12 @@ func TestFreeFirstRetriesFreeOnEveryRequestAfterRateLimit(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if lookups != 2 || freeCalls != 2 || paidCalls != 1 {
+	if lookups != 1 || freeCalls != 2 || paidCalls != 1 {
 		t.Fatalf("counts: %d %d %d", lookups, freeCalls, paidCalls)
 	}
 }
 
-func TestFreeFirstCatalogChangesAreObserved(t *testing.T) {
+func TestFreeFirstCatalogChangesAreObservedAfterTTL(t *testing.T) {
 	lookups := 0
 	f := freeFirstHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -101,6 +102,7 @@ func TestFreeFirstCatalogChangesAreObserved(t *testing.T) {
 		if err != nil || m.Content != want {
 			t.Fatalf("%+v %v", m, err)
 		}
+		f.fetchedAt = f.fetchedAt.Add(-catalogTTL) // the cached catalog expires
 	}
 }
 
@@ -192,5 +194,27 @@ func TestFreeFirstExplicitFreeAndOtherProvidersAreUnchanged(t *testing.T) {
 		if _, ok := m.(*Client); !ok {
 			t.Fatal("unexpected wrapper")
 		}
+	}
+}
+
+func TestFreeFirstCatalogDecodesPricingOverridesAndIsFetchedOnce(t *testing.T) {
+	var fetches atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
+		fmt.Fprint(w, `{"data":[{"id":"vendor/model","pricing":{"prompt":"0.000001","completion":"0.000002","overrides":[{"min_prompt_tokens":1000,"prompt":"0.000002"}]}}]}`)
+	}))
+	defer srv.Close()
+	f := &freeFirstClient{catalogURL: srv.URL, catalogHTTP: srv.Client()}
+	for i := 0; i < 3; i++ {
+		models, ok := f.models(context.Background())
+		if !ok || len(models) != 1 {
+			t.Fatalf("catalog = %v, %v; want one model", models, ok)
+		}
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Fatalf("catalog fetched %d times, want once within the TTL", n)
+	}
+	if v, present, ok := (&catalogModel{Pricing: map[string]json.RawMessage{"prompt": json.RawMessage(`"0"`)}}).price("prompt"); v != 0 || !present || !ok {
+		t.Fatalf("price = %v %v %v", v, present, ok)
 	}
 }
