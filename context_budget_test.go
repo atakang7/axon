@@ -2,6 +2,7 @@ package axon
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,5 +66,39 @@ func TestInputBudgetBlocksNetworkIncludingToolSchema(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("oversized request reached network")
+	}
+}
+
+// Over the limit, stale copies go first, then the oldest results; the newest
+// messages stay, and clearing stops at the low-water mark.
+func TestClearingTakesStaleCopiesFirstThenTheOldestAndKeepsTheTail(t *testing.T) {
+	b := newRunBuilder(t)
+	b.user("work")
+	big := strings.Repeat("x", 40000)
+	b.call(toolRead, map[string]any{"path": "a.go"}, "a v1 "+big, false)
+	oldA := b.s.Messages[len(b.s.Messages)-1].ID
+	b.call(toolRead, map[string]any{"path": "b.go"}, "b "+big, false)
+	oldB := b.s.Messages[len(b.s.Messages)-1].ID
+	b.call(toolRead, map[string]any{"path": "a.go"}, "a v2 "+big, false)
+	newA := b.s.Messages[len(b.s.Messages)-1].ID
+	for i := 0; i < tailKeep; i++ {
+		b.call(toolExec, map[string]any{"command": fmt.Sprintf("echo %d", i)}, "ok "+big, false)
+	}
+	a := &Agent{session: b.s}
+	// Clearing one big result brings this total to the low-water mark.
+	if n := a.clearOldResults(contextLowWater + contextTokens(30000)); n != 1 {
+		t.Fatalf("cleared %d results, want 1", n)
+	}
+	if !msgByID(b.s, oldA).Parked || msgByID(b.s, oldB).Parked || msgByID(b.s, newA).Parked {
+		t.Fatal("the stale copy of a.go must go first, before older fresh results")
+	}
+	a.clearOldResults(1 << 30)
+	if !msgByID(b.s, oldB).Parked || !msgByID(b.s, newA).Parked {
+		t.Fatal("past the stale copies, the oldest results go")
+	}
+	for _, m := range b.s.Messages[len(b.s.Messages)-tailKeep:] {
+		if m.Parked {
+			t.Fatalf("a result in the newest %d messages was cleared", tailKeep)
+		}
 	}
 }

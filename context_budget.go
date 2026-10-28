@@ -3,7 +3,6 @@ package axon
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 // HardContextLimit is the main agent's input budget in estimated tokens,
@@ -11,6 +10,15 @@ import (
 // token_meter.go, not from a fixed bytes-per-token guess.
 const HardContextLimit = 70000
 const contextBudgetTarget = 56000
+
+// contextLowWater is where clearing stops once the context passed
+// HardContextLimit. Clearing far below the limit makes it rare: each pass
+// rewrites the middle of the context and costs the prompt cache once.
+const contextLowWater = 36000
+
+// minClearBytes is the smallest result worth clearing: its one-line stub is
+// about 150 bytes.
+const minClearBytes = 400
 
 // PrunerInputLimit bounds a checkpoint request. It is above HardContextLimit
 // because a checkpoint is asked for precisely when the context is large: it
@@ -53,83 +61,103 @@ func checkRequestBudget(req Request, model string) error {
 // so the provider's cached prefix changes every other run, not every run.
 const minFoldBatch = 2
 
-// ensureContextBudget runs before every model request. In order:
-//
-//  1. Rules, no model: finished runs beyond keep_runs fold to cards, and
-//     finished task steps except the newest fold to step cards.
-//  2. Over the checkpoint trigger: the deciding model chooses what stays.
-//  3. Still over the hard limit: fold the oldest runs and steps, then park the
-//     oldest large results of the current run.
-//
-// Step 2 can fail or keep a large working set; step 3 still guarantees that
-// no request is sent above the limit. See WORKING_CONTEXT.md.
+// ensureContextBudget keeps the next request under HardContextLimit. Below
+// it nothing changes, so the cached prefix grows untouched. Above it, old
+// tool results are cleared in place, stale copies first and then the oldest,
+// down to contextLowWater; the user's words, the model's replies and every
+// call stay. Folding whole finished requests is the last resort. See
+// WORKING_CONTEXT.md.
 func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 	model := modelName(a.model)
 	estimate := func() (int, error) {
 		return requestInputTokens(Request{Messages: a.session.ContextMessages(a.settings.Pruner.ContextWindow()), Tools: toolSpecs(tools)}, model)
 	}
-	a.foldByPolicy(ctx, estimate)
-	a.foldStepsByPolicy(ctx, estimate)
 	n, err := estimate()
 	if err != nil {
 		return err
 	}
-	if n >= a.checkpointTrigger() && a.forceCheckpoint(ctx, tools, n) {
+	if n <= HardContextLimit {
+		return nil
+	}
+	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("input budget: ~%d of %d tokens; clearing old tool results", n, HardContextLimit)})
+	before := n
+	if a.clearOldResults(n) > 0 {
 		if n, err = estimate(); err != nil {
 			return err
 		}
 	}
-	if n <= HardContextLimit {
-		return nil
-	}
-	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("input budget: ~%d of %d tokens; folding finished work", n, HardContextLimit)})
-
-	before, folded := n, 0
 	for n > contextBudgetTarget && (a.foldOldestRun() || a.foldOldestStep()) {
-		folded++
 		if n, err = estimate(); err != nil {
 			return err
 		}
 	}
-	if n > HardContextLimit && a.parkOpenRunOverflow(estimate) > 0 {
-		folded++
-		if n, err = estimate(); err != nil {
-			return err
-		}
-	}
-	if folded > 0 {
-		a.persistContext(ctx, before, n)
-	}
+	a.persistContext(ctx, before, n)
 	if n <= HardContextLimit {
 		return nil
 	}
-	return fmt.Errorf("the current request alone is ~%d tokens, above the %d input budget, with every finished run folded and the current run's older results parked", n, HardContextLimit)
+	return fmt.Errorf("the current request alone is ~%d tokens, above the %d input budget, with old results cleared and every finished request folded", n, HardContextLimit)
 }
 
-// foldByPolicy keeps only the newest KeepRuns finished runs unfolded. Runs
-// too small to gain anything stay as they are.
-func (a *Agent) foldByPolicy(ctx context.Context, estimate func() (int, error)) {
-	closed := closedRuns(a.session)
-	keep := a.settings.Pruner.keptRuns()
-	if len(closed) <= keep {
-		return
-	}
-	var due []run
-	for _, r := range closed[:len(closed)-keep] {
-		if !a.session.runFolded(r) && runBytes(a.session, r) > 1500 {
-			due = append(due, r)
+// clearOldResults clears tool results until the context is about
+// contextLowWater: copies made stale by a later read or edit of the same file
+// first, then the oldest. A cleared write also loses its body in the call
+// (the file on disk has it), which is most of what writing a new file costs.
+// The newest tailKeep messages, small results and unresolved failures stay.
+// It returns how many it cleared.
+func (a *Agent) clearOldResults(tokens int) int {
+	s := a.session
+	uses := toolUses(s)
+	callBytes := map[string]int{} // what clearing takes out of each call
+	for _, m := range s.Messages {
+		for _, tc := range m.ToolCalls {
+			callBytes[tc.ID] = len(tc.Function.Arguments) - len(stubCallArgs(tc).Function.Arguments)
 		}
 	}
-	if len(due) < minFoldBatch {
-		return
+	stale := staleResults(s) // already one line in the view: clearing gains nothing
+	weight := func(m Msg) int { return len(m.Content) + callBytes[m.ToolCallID] }
+	failures := unresolvedToolFailures(s)
+	end := len(s.Messages) - tailKeep
+	superseded := map[int]bool{}
+	last := map[string]int{} // path -> index of the newest read of it
+	for i, m := range s.Messages {
+		if m.Role != "tool" {
+			continue
+		}
+		u := uses[m.ToolCallID]
+		for _, p := range writePaths(u) {
+			if j, ok := last[p]; ok {
+				superseded[j] = true
+			}
+		}
+		for _, p := range readPaths(u) {
+			if j, ok := last[p]; ok {
+				superseded[j] = true
+			}
+			last[p] = i
+		}
 	}
-	before, _ := estimate()
-	for _, r := range due {
-		a.session.foldRun(r)
+	var order []int
+	for pass := 0; pass < 2; pass++ {
+		for i := 0; i < end; i++ {
+			m := s.Messages[i]
+			if m.Role != "tool" || m.ID == "" || m.Parked || stale[i] != "" || failures[m.ID] || weight(m) < minClearBytes || superseded[i] != (pass == 0) {
+				continue
+			}
+			order = append(order, i)
+		}
 	}
-	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("context folded: %d finished runs to run cards; originals via recall", len(due))})
-	after, _ := estimate()
-	a.persistContext(ctx, before, after)
+	cleared := 0
+	for _, i := range order {
+		if tokens <= contextLowWater {
+			break
+		}
+		m := s.Messages[i]
+		if s.Park(m.ID, "", "cleared: context over the input budget") == nil {
+			cleared++
+			tokens -= contextTokens(weight(m))
+		}
+	}
+	return cleared
 }
 
 // foldOldestRun folds the oldest finished run that is still shown in full.
@@ -153,76 +181,11 @@ func runBytes(s *Session, r run) int {
 	return n
 }
 
-// parkOpenRunOverflow is the last resort when the current run alone is over
-// budget: park its oldest large tool results, outside the tail and never an
-// unresolved failure, until the request fits the target. Originals stay
-// reachable through recall.
-func (a *Agent) parkOpenRunOverflow(estimate func() (int, error)) int {
-	s := a.session
-	start := 0
-	if runs := sessionRuns(s); len(runs) > 0 {
-		start = runs[len(runs)-1].start
-	}
-	failures := unresolvedToolFailures(s)
-	parked := 0
-	for i := start + 1; i < len(s.Messages)-tailKeep; i++ {
-		m := s.Messages[i]
-		if m.Role != "tool" || m.ID == "" || m.Parked || failures[m.ID] || len(m.Content) < 1024 {
-			continue
-		}
-		if s.Park(m.ID, truncateRunes(firstLine(strings.TrimPrefix(m.Content, "[#"+m.ID+"]\n")), 160), "context governor: current run over the input budget; original via recall") != nil {
-			continue
-		}
-		parked++
-		if n, err := estimate(); err != nil || n <= contextBudgetTarget {
-			break
-		}
-	}
-	return parked
-}
-
 func (a *Agent) persistContext(ctx context.Context, before, after int) {
 	if err := saveSessionAtomic(a.session); err != nil {
 		a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
 	}
 	a.emit(ctx, Event{Kind: KindPruneEnd, Prune: &PruneInfo{Before: before, After: after}})
-}
-
-// foldStepsByPolicy folds the open run's finished steps except the newest
-// one: the step just closed is what the next step most likely builds on. It
-// waits until the context reaches the checkpoint trigger: folding rewrites the
-// middle of the open run, which costs the prompt cache for the rest of it, so
-// it is done once, when it is needed, not after every step.
-func (a *Agent) foldStepsByPolicy(ctx context.Context, estimate func() (int, error)) {
-	if n, err := estimate(); err == nil && n < a.checkpointTrigger() {
-		return
-	}
-	uses := toolUses(a.session)
-	var finished []step
-	for _, st := range openRunSteps(a.session, uses) {
-		if st.closer != "" {
-			finished = append(finished, st)
-		}
-	}
-	if len(finished) < 2 {
-		return
-	}
-	var due []step
-	for _, st := range finished[:len(finished)-1] {
-		if stepBytes(a.session, st) > 1500 && !a.session.stepFolded(st) {
-			due = append(due, st)
-		}
-	}
-	if len(due) == 0 {
-		return
-	}
-	before, _ := estimate()
-	for _, st := range due {
-		a.session.foldStep(st)
-	}
-	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("context folded: %d finished steps to step cards; originals via recall", len(due))})
-	after, _ := estimate()
-	a.persistContext(ctx, before, after)
 }
 
 // foldOldestStep folds the oldest finished step of the open run, the newest

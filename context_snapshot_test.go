@@ -34,8 +34,8 @@ func TestContextSnapshotShowsWhatTheModelSeesAndWhy(t *testing.T) {
 	if got := states[ids[0]]; got.State != "trimmed" || !strings.Contains(got.Text, "5 of 200 lines kept") {
 		t.Fatalf("trimmed block: %+v", got.State)
 	}
-	if _, in := states[ids[1]]; in {
-		t.Fatal("a dropped result is among the blocks sent")
+	if got := states[ids[1]]; strings.Contains(got.Text, "ok  pkg") {
+		t.Fatal("a dropped result is sent in full")
 	}
 	outside := map[string]ContextBlock{}
 	for _, blk := range snap.Outside {
@@ -61,8 +61,10 @@ func TestContextSnapshotShowsWhatTheModelSeesAndWhy(t *testing.T) {
 	if stale != 0 {
 		t.Fatalf("%d stale blocks outside, want none: the open run is never rewritten", stale)
 	}
-	if last := snap.Blocks[len(snap.Blocks)-1]; last.State != "state" || !strings.Contains(last.Text, "[out of context") {
-		t.Fatalf("the request does not end with the index: %+v", last)
+	for _, blk := range snap.Blocks {
+		if strings.Contains(blk.Text, "[out of context") {
+			t.Fatalf("an index of what is out is sent: %+v", blk)
+		}
 	}
 	if len(snap.Checkpoints) != 1 || !snap.Checkpoints[0].Forced || snap.Trigger <= 0 || snap.Limit != HardContextLimit {
 		t.Fatalf("snapshot header: %+v", snap)

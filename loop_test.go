@@ -1127,11 +1127,16 @@ func TestStepStopsAtMaxIterations(t *testing.T) {
 	defer a.Close()
 
 	res, err := a.Step(context.Background(), "go")
-	if !errors.Is(err, ErrMaxIterations) {
-		t.Fatalf("Step err = %v, want ErrMaxIterations", err)
+	if err != nil {
+		t.Fatalf("Step err = %v; reaching the cap ends with a report, not an error", err)
 	}
-	if calls != 3 {
-		t.Fatalf("model called %d times, want exactly 3 (the cap)", calls)
+	if calls != 4 {
+		t.Fatalf("model called %d times, want the cap (3) and one call for the report", calls)
+	}
+	// The report call answered with a tool call: it is not run, and the
+	// runtime writes the report itself.
+	if !strings.Contains(res.Assistant, "Stopped at the step limit (3 model calls)") {
+		t.Fatalf("report = %q", res.Assistant)
 	}
 	// Partial work still comes back, so a harness can record what was attempted
 	// rather than throwing the trajectory away.

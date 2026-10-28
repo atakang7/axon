@@ -4,6 +4,29 @@ The model should see only what the work still needs, at a size where every
 request is cheap: tens of thousands of tokens, not hundreds. Everything else
 waits in the log, one `recall` away.
 
+## Over the limit: clear results, keep the story
+
+Below `HardContextLimit` (70K tokens) the context only grows, so every
+request reuses the cached prefix. Above it, tool results are cleared **in
+place**, down to `contextLowWater` (36K): copies made stale by a later read
+or edit of the same file first, then the oldest. A cleared result keeps its
+call and becomes one line, `[#m12 read host/gateway.py: 312 lines, cleared to
+save context; read the file or run the command again if you need it]`. The
+user's words, the model's replies and every call stay, so the model still
+knows what it did, in order, and what came of it. Clearing far below the
+limit makes it rare: each pass costs the prompt cache once. Folding whole
+finished requests is the last resort.
+
+Until v2.13 a pass folded whole requests first (a 70K context went to 6K and
+the agent re-read what it had known), removed results together with their
+calls into an index that pointed to a `recall` tool the default set no longer
+has, and forced checkpoints that the default tools never offered.
+
+A request that reaches `MaxIterations` ends with a report, not an error: ten
+calls before the limit the model is told how many are left, and at the limit
+it gets one call without running tools to say what is done, how it was
+checked, what is not done and the next step.
+
 ## The rule
 
 **Cheap models read; the main model decides.**
