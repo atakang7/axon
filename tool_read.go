@@ -14,16 +14,16 @@ import (
 // READ
 // ---------------------------------------------------------------------------
 
-const readDescription = `Read files, or list a directory.
-  - slice: lines [offset, offset+limit).
+const readDescription = `Read files, list a directory, or map code.
+  - slice: lines [offset, offset+limit). The default; limit defaults to enough for most whole files.
   - full: entire file.
-If path is a directory, returns its entries (subdirs marked with trailing '/'); mode is ignored.
+  - outline: declarations with line numbers ("line: text"), of a file or of every source file under a directory. The fastest way to find where things are: outline first, then read the ranges you need.
+If path is a directory (and mode is not outline), returns its tree two levels deep.
 To read several files or ranges at once, pass them all in "files" instead of
 "path": one call, one round trip. Decide everything you need first, then fetch
 it together.
-To see only a file's signatures, search it with a regex for the declaration
-keywords of that language — you know which language it is, so you can write a
-pattern that actually fits it.`
+Reading text that is already in your context and unchanged returns a pointer
+to the earlier block instead of a second copy.`
 
 // maxReadBatch bounds one batched read so a single call cannot flood context.
 const maxReadBatch = 20
@@ -64,8 +64,11 @@ func parseAndValidateReadInput(raw json.RawMessage, ws Workspace) (*readInput, s
 func ReadTool(ws Workspace, lim Limits) Tool {
 	limit := lim.ReadLines
 	one := func(p readInput, abs string) (string, error) {
+		if p.Mode == readOutline {
+			return outline(abs)
+		}
 		if info, err := os.Stat(abs); err == nil && info.IsDir() {
-			return readDirListing(abs)
+			return dirTree(abs)
 		}
 		if msg, binary := binaryFileRefusal(abs); binary {
 			return msg, nil
@@ -82,7 +85,7 @@ func ReadTool(ws Workspace, lim Limits) Tool {
 		case readFull:
 			return readFullMode(abs, lim.ReadMaxBytes)
 		default:
-			return "", fmt.Errorf("unknown mode %q: slice | full", p.Mode)
+			return "", fmt.Errorf("unknown mode %q: slice | full | outline", p.Mode)
 		}
 	}
 	return Tool{
@@ -90,12 +93,12 @@ func ReadTool(ws Workspace, lim Limits) Tool {
 		Description: readDescription,
 		Schema: obj("object", props{
 			"path":   strSchema("Relative or absolute file path. Omit when using files."),
-			"mode":   enumSchema("slice | full. Optional; defaults to slice.", readSlice, readFull),
+			"mode":   enumSchema("slice | full | outline. Optional; defaults to slice.", readSlice, readFull, readOutline),
 			"offset": intSchema("1-based start line. Used when mode=slice."),
 			"limit":  intSchema(fmt.Sprintf("Lines to return. Used when mode=slice. Default %d if omitted.", limit)),
 			"files": arr(obj("object", props{
 				"path":   strSchema("Relative or absolute file path."),
-				"mode":   enumSchema("slice | full. Optional; defaults to slice.", readSlice, readFull),
+				"mode":   enumSchema("slice | full | outline. Optional; defaults to slice.", readSlice, readFull, readOutline),
 				"offset": intSchema("1-based start line. Used when mode=slice."),
 				"limit":  intSchema("Lines to return. Used when mode=slice."),
 			}, []string{"path"})),
@@ -200,31 +203,4 @@ func readFullMode(abs string, maxBytes int) (string, error) {
 	approx := len(data) / 4
 	header := fmt.Sprintf("[full read: ~%d tokens. use mode=slice if you need only part of this file]\n", approx)
 	return header + strings.TrimRight(b.String(), "\n"), nil
-}
-
-func readDirListing(abs string) (string, error) {
-	fis, err := os.ReadDir(abs)
-	if err != nil {
-		return "", err
-	}
-	if len(fis) == 0 {
-		return "[directory: " + abs + " — empty]", nil
-	}
-	var dirs, files []string
-	for _, fi := range fis {
-		if fi.IsDir() {
-			dirs = append(dirs, fi.Name()+"/")
-		} else {
-			files = append(files, fi.Name())
-		}
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "[directory: %s — %d entries. trailing '/' = subdir. Read a specific entry next.]\n", abs, len(fis))
-	for _, d := range dirs {
-		b.WriteString(d + "\n")
-	}
-	for _, f := range files {
-		b.WriteString(f + "\n")
-	}
-	return strings.TrimRight(b.String(), "\n"), nil
 }

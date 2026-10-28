@@ -150,6 +150,7 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 			for i, result := range a.runToolGroup(turnCtx, group) {
 				tc := group[i]
+				result = a.dedupRead(result)
 				a.session.Append(result)
 
 				blockID := a.session.Messages[len(a.session.Messages)-1].ID

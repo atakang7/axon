@@ -371,14 +371,14 @@ func DefaultSettings() Settings {
 
 		Tools: ToolsConfig{
 			Read: ReadConfig{
-				Lines:    200,
+				Lines:    500,
 				MaxBytes: 2 << 20,
 			},
 			Exec: ExecConfig{
-				Timeout:      Duration(30 * time.Second),
+				Timeout:      Duration(2 * time.Minute),
 				MaxTimeout:   Duration(10 * time.Minute),
 				OutputBytes:  12000,
-				TailLines:    50,
+				TailLines:    80,
 				MaxTailLines: 500,
 				KillGrace:    Duration(2 * time.Second),
 			},

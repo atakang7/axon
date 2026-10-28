@@ -189,8 +189,14 @@ func (a *Agent) persistContext(ctx context.Context, before, after int) {
 }
 
 // foldStepsByPolicy folds the open run's finished steps except the newest
-// one: the step just closed is what the next step most likely builds on.
+// one: the step just closed is what the next step most likely builds on. It
+// waits until the context reaches the checkpoint trigger: folding rewrites the
+// middle of the open run, which costs the prompt cache for the rest of it, so
+// it is done once, when it is needed, not after every step.
 func (a *Agent) foldStepsByPolicy(ctx context.Context, estimate func() (int, error)) {
+	if n, err := estimate(); err == nil && n < a.checkpointTrigger() {
+		return
+	}
 	uses := toolUses(a.session)
 	var finished []step
 	for _, st := range openRunSteps(a.session, uses) {

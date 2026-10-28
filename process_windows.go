@@ -119,6 +119,10 @@ func gitBash() string {
 	return ""
 }
 
+// persistentShell reports whether foreground commands run in Git Bash, which
+// is what carrying shell state between them needs.
+func persistentShell() bool { return gitBash() != "" }
+
 // ShellName names the shell the exec tool runs commands in, so a prompt can
 // tell the model which syntax to use.
 func ShellName() string {

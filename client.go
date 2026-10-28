@@ -185,6 +185,23 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Msg, error) {
 	return readStream(ctx, resp.Body, req.Stream, cancel, c.cfg.IdleTimeout, c.requireCompleteStream)
 }
 
+// wireMessages is the conversation as the provider receives it. A reply's
+// reasoning is kept in the log for the user to read, never sent back: it would
+// be paid again on every later request.
+func wireMessages(msgs []Msg) []Msg {
+	for i := range msgs {
+		if msgs[i].Reasoning == "" {
+			continue
+		}
+		out := append([]Msg(nil), msgs...)
+		for j := i; j < len(out); j++ {
+			out[j].Reasoning = ""
+		}
+		return out
+	}
+	return msgs
+}
+
 func (c *Client) requestBody(req Request) ([]byte, error) {
 	tools := make([]map[string]any, len(req.Tools))
 	for i, t := range req.Tools {
@@ -205,7 +222,7 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 
 	body := map[string]any{
 		"model":          c.cfg.Provider.Model,
-		"messages":       req.Messages,
+		"messages":       wireMessages(req.Messages),
 		"stream":         true,
 		"stream_options": map[string]any{"include_usage": true},
 		"max_tokens":     maxTokens,
@@ -344,7 +361,10 @@ func (r *reply) consume(text string, stream Stream) {
 			Delta        struct {
 				Content          string `json:"content"`
 				ReasoningContent string `json:"reasoning_content"`
-				ToolCalls        []struct {
+				// OpenRouter streams a model's thinking as "reasoning";
+				// reasoning_content is the DeepSeek-native name.
+				Reasoning string `json:"reasoning"`
+				ToolCalls []struct {
 					Index    int    `json:"index"`
 					ID       string `json:"id"`
 					Type     string `json:"type"`
@@ -405,10 +425,14 @@ func (r *reply) consume(text string, stream Stream) {
 
 	delta := chunk.Choices[0].Delta
 
-	if delta.ReasoningContent != "" {
-		r.reasoningContent.WriteString(delta.ReasoningContent)
+	thinking := delta.ReasoningContent
+	if thinking == "" {
+		thinking = delta.Reasoning
+	}
+	if thinking != "" {
+		r.reasoningContent.WriteString(thinking)
 		if stream.Reasoning != nil {
-			stream.Reasoning(delta.ReasoningContent)
+			stream.Reasoning(thinking)
 		}
 	}
 

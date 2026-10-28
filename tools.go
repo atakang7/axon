@@ -55,8 +55,9 @@ const (
 // Mode constants. Required on write; optional with a default on read and
 // search. One door per call.
 const (
-	readSlice = "slice"
-	readFull  = "full"
+	readSlice   = "slice"
+	readFull    = "full"
+	readOutline = "outline"
 
 	writeSave       = "save"
 	writeReplaceStr = "replace_string"

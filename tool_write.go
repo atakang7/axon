@@ -30,18 +30,20 @@ const writeDescription = `Write to a file. Choose the mode by the size of the ch
   - replace_lines: replace lines [start_line, end_line]. Use when the text is long or awkward to quote exactly. Take the numbers from a fresh read of the file, not from memory, and include every line you intend to replace — a range that stops one line short silently deletes whatever closed the block.
   - insert_at_line: insert before start_line (1-based). Use to add without disturbing what is already there.
   - save: set the file's full contents. Correct for a new file, or when genuinely replacing nearly all of an existing one.
+  - edits: several exact replacements in one call, in one file or many: [{path, old_str, content}, ...] (path defaults to the top-level path; mode is not needed). All of them apply or none do. Use it whenever a change has more than one hunk: one call instead of one per hunk.
 
 Having just read a file is not a reason to rewrite it. A full rewrite costs output in proportion to the file's size instead of the change's, and it silently drops anything you did not carry over.
 
-Writes are atomic (tmp + rename) and each one is recorded so it can be reverted. A formatter runs after every write. For brace languages emit content flat (no indentation). For whitespace-significant languages (Python, YAML) emit indentation correctly.`
+Writes are atomic (tmp + rename) and each one is recorded so it can be reverted. Write code indented as it should stay. After a write the result reports a check of what was written: Go is gofmt'ed and its package built, JSON parsed, Python compiled, JavaScript syntax-checked. "check: FAILED" means the edit broke something: fix it before anything else.`
 
 type writeInput struct {
-	Path      string `json:"path"`
-	Mode      string `json:"mode"`
-	Content   string `json:"content"`
-	OldStr    string `json:"old_str"`
-	StartLine int    `json:"start_line"`
-	EndLine   int    `json:"end_line"`
+	Edits     []writeEdit `json:"edits"`
+	Path      string      `json:"path"`
+	Mode      string      `json:"mode"`
+	Content   string      `json:"content"`
+	OldStr    string      `json:"old_str"`
+	StartLine int         `json:"start_line"`
+	EndLine   int         `json:"end_line"`
 }
 
 func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput, string, error) {
@@ -60,6 +62,9 @@ func parseAndValidateWriteInput(raw json.RawMessage, ws Workspace) (*writeInput,
 		return nil, "", err
 	}
 
+	if len(p.Edits) > 0 {
+		return &p, "", nil
+	}
 	if strings.TrimSpace(p.Path) == "" {
 		return nil, "", fmt.Errorf("path is required")
 	}
@@ -116,27 +121,115 @@ func WriteTool(ws Workspace) Tool {
 			"old_str":    strSchema("Exact text to replace. Required when mode=replace_string."),
 			"start_line": intSchema("1-based start line. Required when mode=replace_lines or insert_at_line."),
 			"end_line":   intSchema("1-based end line, inclusive. Required when mode=replace_lines."),
-		}, []string{"path", "mode", "content"}),
+			"edits": arr(obj("object", props{
+				"path":    strSchema("File to change; defaults to the top-level path."),
+				"old_str": strSchema("Exact text to replace, unique in the file."),
+				"content": strSchema("Replacement text."),
+			}, []string{"old_str", "content"})),
+		}, nil),
 		Fn: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			p, abs, err := parseAndValidateWriteInput(raw, ws)
 			if err != nil {
 				return "", err
 			}
 
-			switch p.Mode {
-			case writeSave:
-				return writeSaveMode(ws, abs, p.Content)
-			case writeReplaceStr:
-				return writeReplaceStringMode(ws, abs, p.OldStr, p.Content)
-			case writeReplaceLn:
-				return writeReplaceLinesMode(ws, abs, p.StartLine, p.EndLine, p.Content)
-			case writeInsertAt:
-				return writeInsertAtMode(ws, abs, p.StartLine, p.Content)
+			var out string
+			paths := []string{abs}
+			switch {
+			case len(p.Edits) > 0:
+				out, paths, err = writeEdits(ws, p.Path, p.Edits)
+			case p.Mode == writeSave:
+				out, err = writeSaveMode(ws, abs, p.Content)
+			case p.Mode == writeReplaceStr:
+				out, err = writeReplaceStringMode(ws, abs, p.OldStr, p.Content)
+			case p.Mode == writeReplaceLn:
+				out, err = writeReplaceLinesMode(ws, abs, p.StartLine, p.EndLine, p.Content)
+			case p.Mode == writeInsertAt:
+				out, err = writeInsertAtMode(ws, abs, p.StartLine, p.Content)
 			default:
 				return "", fmt.Errorf("unhandled mode")
 			}
+			if err != nil {
+				return out, err
+			}
+			if check := afterWrite(ctx, paths); check != "" {
+				out += "\n" + check
+			}
+			return out, nil
 		},
 	}
+}
+
+// writeEdit is one replacement of a multi-edit write.
+type writeEdit struct {
+	Path    string `json:"path"`
+	OldStr  string `json:"old_str"`
+	Content string `json:"content"`
+}
+
+// writeEdits applies every edit or none: a change with several hunks used to
+// take one request per hunk, and a failure halfway left the files half done.
+// Edits to one file apply in order, each to the result of the one before.
+func writeEdits(ws Workspace, defaultPath string, edits []writeEdit) (string, []string, error) {
+	type file struct {
+		abs, raw, text string
+		crlf           bool
+		count          int
+	}
+	var order []*file
+	files := map[string]*file{}
+	var problems []string
+	for i, e := range edits {
+		path := e.Path
+		if strings.TrimSpace(path) == "" {
+			path = defaultPath
+		}
+		if strings.TrimSpace(path) == "" {
+			problems = append(problems, fmt.Sprintf("edit %d: path is required (per edit or at the top level)", i+1))
+			continue
+		}
+		abs := ws.ResolvePath(path)
+		f := files[abs]
+		if f == nil {
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				problems = append(problems, fmt.Sprintf("edit %d: %v", i+1, err))
+				continue
+			}
+			f = &file{abs: abs, raw: string(data)}
+			f.text, f.crlf = splitEOL(f.raw)
+			files[abs] = f
+			order = append(order, f)
+		}
+		oldStr, _ := splitEOL(e.OldStr)
+		newStr, _ := splitEOL(e.Content)
+		switch n := strings.Count(f.text, oldStr); {
+		case oldStr == "":
+			problems = append(problems, fmt.Sprintf("edit %d (%s): old_str is empty", i+1, path))
+		case oldStr == newStr:
+			problems = append(problems, fmt.Sprintf("edit %d (%s): old_str and content are identical", i+1, path))
+		case n == 0:
+			problems = append(problems, fmt.Sprintf("edit %d (%s): old_str not found — copy it exactly from a fresh read (edits to one file apply in order, so it must match the text after the earlier edits)", i+1, path))
+		case n > 1:
+			problems = append(problems, fmt.Sprintf("edit %d (%s): old_str matches %d times at %s — extend it until it is unique", i+1, path, n, matchLineSummary(f.text, oldStr)))
+		default:
+			f.text = strings.Replace(f.text, oldStr, newStr, 1)
+			f.count++
+		}
+	}
+	if len(problems) > 0 {
+		return "", nil, fmt.Errorf("no edit applied (all or none):\n%s", strings.Join(problems, "\n"))
+	}
+	var paths, parts []string
+	for _, f := range order {
+		ws.RecordEdit(f.abs, f.raw)
+		if err := WriteFileAtomic(f.abs, []byte(joinEOL(f.text, f.crlf))); err != nil {
+			return "", paths, err
+		}
+		paths = append(paths, f.abs)
+		parts = append(parts, fmt.Sprintf("%s (%d)", f.abs, f.count))
+	}
+	return fmt.Sprintf("applied %d edits: %s", len(edits), strings.Join(parts, ", ")), paths, nil
 }
 
 // writeSaveMode sets the file's full contents. Creates the file (and any

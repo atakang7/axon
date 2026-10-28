@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -14,7 +15,7 @@ import (
 // EXEC
 // ---------------------------------------------------------------------------
 
-const execDescription = `Run a shell command. tail_lines is required.
+const execDescription = `Run a shell command. Like a terminal: each command starts in the directory the previous one ended in (inside the workspace) and sees the variables earlier commands exported; the result's dir line says where it ran. Long output keeps its last tail_lines lines plus any error lines from the part cut off.
 Set run_in_background=true for any command that *might* wait — servers, watchers, HTTP clients (curl/wget against any service, including ones you just started), database clients, anything reading stdin or a socket, anything connecting to a host you don't fully control. The rule is the chance of hanging, not the certainty: if you'd be surprised by either outcome, go background. Foreground is for commands you know terminate on their own (build, vet, test, format, file I/O, deterministic CPU work). Background returns a shell_id immediately; use bash_output to read logs and kill_shell to stop.
 Stdin is always /dev/null — interactive commands (prompts, REPLs, password reads) WILL hang. Use non-interactive flags (-y, --yes, --non-interactive) instead.`
 
@@ -42,8 +43,13 @@ func parseAndValidateExecInput(raw json.RawMessage, ws Workspace, lim Limits) (*
 		return nil, "", fmt.Errorf("command is required")
 	}
 
-	if !p.RunInBackground && p.TailLines <= 0 {
-		return nil, "", fmt.Errorf("tail_lines is required and must be > 0")
+	// A missing tail_lines used to be an error, which cost a whole model
+	// request to say nothing the default could not.
+	if p.TailLines <= 0 {
+		p.TailLines = lim.ExecTailLines
+		if p.TailLines <= 0 {
+			p.TailLines = DefaultLimits().ExecTailLines
+		}
 	}
 
 	if max := lim.ExecMaxTailLines; p.TailLines > max {
@@ -67,7 +73,7 @@ func ExecTool(ws Workspace, shells *BackgroundShells, lim Limits) Tool {
 		Description: execDescription,
 		Schema: obj("object", props{
 			"command":           strSchema("Shell command."),
-			"tail_lines":        intSchema("Last N lines to keep. Required. Ignored when run_in_background=true."),
+			"tail_lines":        intSchema(fmt.Sprintf("Last N lines to keep. Default %d. Ignored when run_in_background=true.", lim.ExecTailLines)),
 			"expected_outcome":  strSchema("What success looks like. Optional but enables structured failure diagnosis."),
 			"dir":               strSchema("Optional working directory override."),
 			"timeout_seconds":   intSchema(fmt.Sprintf("Default %d. Ignored when run_in_background=true.", int(lim.ExecTimeout.Seconds()))),
@@ -79,6 +85,11 @@ func ExecTool(ws Workspace, shells *BackgroundShells, lim Limits) Tool {
 				return "", err
 			}
 
+			state := shells.shellState()
+			if strings.TrimSpace(p.Dir) == "" {
+				resolvedDir = state.startDir(ws.Dir())
+			}
+
 			if p.RunInBackground {
 				sh, err := shells.start(p.Command, resolvedDir)
 				if err != nil {
@@ -87,7 +98,17 @@ func ExecTool(ws Workspace, shells *BackgroundShells, lim Limits) Tool {
 				return formatBgStart(sh), nil
 			}
 
-			return runForegroundProcess(ctx, p, resolvedDir, lim.ExecOutputBytes, lim.ExecKillGrace)
+			display := p.Command
+			p.Command = state.wrap(p.Command)
+			out, err := runForegroundProcess(ctx, p, resolvedDir, lim.ExecOutputBytes, lim.ExecKillGrace)
+			if err != nil {
+				return "", err
+			}
+			out = "$ " + display + strings.TrimPrefix(out, "$ "+p.Command)
+			if ended := state.settle(resolvedDir, ws.Dir()); ended != "" {
+				out += "\n[now in " + ended + "; the next command starts here]"
+			}
+			return out, nil
 		},
 	}
 }
@@ -169,7 +190,44 @@ func runForegroundProcess(ctx context.Context, p *execInput, resolvedDir string,
 
 	captured, truncated := buf.snapshot()
 	tailed, hidden := tailN(captured, p.TailLines)
+	if hidden > 0 {
+		if rescued := errorLines(captured, hidden); rescued != "" {
+			tailed = rescued + "\n[tail]\n" + tailed
+		}
+	}
 	return formatExec(p.Command, cmd.Dir, code, p.ExpectedOutcome, tailed, hidden, truncated, note), nil
+}
+
+// errorPattern marks lines worth keeping from output a tail cut off. The cause
+// of a failure is often printed first (the compiler's first error, the
+// failing test's name) and the tail holds only the summary.
+var errorPattern = regexp.MustCompile(`(?i)(\berror\b|\berr:|\bfail(ed|ure|s)?\b|\bpanic\b|exception|\bfatal\b|\bundefined\b|cannot |not found|traceback|^\s*at .+:\d+)`)
+
+// maxRescuedLines bounds the error lines kept from hidden output.
+const maxRescuedLines = 25
+
+// errorLines returns the error lines among the first hidden lines of out,
+// numbered, or "" when there are none.
+func errorLines(out string, hidden int) string {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if hidden > len(lines) {
+		hidden = len(lines)
+	}
+	var kept []string
+	for i, line := range lines[:hidden] {
+		if !errorPattern.MatchString(line) {
+			continue
+		}
+		if len(kept) == maxRescuedLines {
+			kept = append(kept, "[more error lines hidden]")
+			break
+		}
+		kept = append(kept, fmt.Sprintf("%d: %s", i+1, truncateRunes(line, 400)))
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return "[error lines from the hidden part]\n" + strings.Join(kept, "\n")
 }
 
 const bashOutputDescription = `Read new output from a background shell since the last read. Status is "running" or the exit summary. Returns only the delta — calling this in a poll loop is cheap; rereading the same bytes is not.

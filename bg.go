@@ -40,6 +40,7 @@ type BackgroundShells struct {
 	shells map[string]*bgShell
 	next   int
 	dir    string
+	state  *shellState
 }
 
 // NewBackgroundShells creates an empty registry under the default log
@@ -66,6 +67,7 @@ func NewBackgroundShellsAt(root string) *BackgroundShells {
 	return &BackgroundShells{
 		shells: map[string]*bgShell{},
 		dir:    dir,
+		state:  &shellState{dir: dir},
 	}
 }
 
@@ -348,4 +350,13 @@ func formatBgStart(sh *bgShell) string {
 	b.WriteString("(use bash_output to read logs, kill_shell to stop)\n")
 
 	return b.String()
+}
+
+// shellState is the state foreground commands carry between them; a registry
+// built without a constructor carries none.
+func (r *BackgroundShells) shellState() *shellState {
+	if r == nil || r.state == nil {
+		return &shellState{}
+	}
+	return r.state
 }

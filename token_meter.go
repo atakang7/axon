@@ -81,7 +81,7 @@ func requestPayloadBytes(req Request) (int, error) {
 		Messages []Msg           `json:"messages"`
 		Tools    []ToolSpec      `json:"tools,omitempty"`
 		Format   json.RawMessage `json:"response_format,omitempty"`
-	}{req.Messages, req.Tools, req.ResponseFormat})
+	}{wireMessages(req.Messages), req.Tools, req.ResponseFormat})
 	return len(data), err
 }
 

@@ -141,6 +141,9 @@ func (a *Agent) Interrupt() bool {
 
 func (a *Agent) initSessionMessages() {
 	sys := Msg{Role: "system", Content: buildSystemPrompt(a.systemPrompt, a.tools)}
+	if brief := workspaceBrief(a.session.Dir()); brief != "" {
+		sys.Content += "\n\n" + brief
+	}
 
 	// SwitchSession loads the full conversation from disk before calling
 	// here; resetting the slice would throw that history away and the model

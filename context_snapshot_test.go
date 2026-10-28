@@ -9,7 +9,8 @@ import (
 func TestContextSnapshotShowsWhatTheModelSeesAndWhy(t *testing.T) {
 	resetMeter(t)
 	b, ids := checkpointFixture(t)
-	// A repeated search makes the first copy stale.
+	// A repeated search in the open run leaves the first copy in place: the
+	// open run is append-only, so its cached prefix holds.
 	b.call(toolSearch, map[string]any{"pattern": "0"}, "no match", false)
 	a := checkpointAgent(t, b, funcModel{})
 	var args checkpointArgs
@@ -57,8 +58,8 @@ func TestContextSnapshotShowsWhatTheModelSeesAndWhy(t *testing.T) {
 			t.Fatalf("assistant block does not name its calls: %+v", blk)
 		}
 	}
-	if stale != 1 {
-		t.Fatalf("%d stale blocks outside, want the first copy of the repeated search", stale)
+	if stale != 0 {
+		t.Fatalf("%d stale blocks outside, want none: the open run is never rewritten", stale)
 	}
 	if last := snap.Blocks[len(snap.Blocks)-1]; last.State != "state" || !strings.Contains(last.Text, "[out of context") {
 		t.Fatalf("the request does not end with the index: %+v", last)

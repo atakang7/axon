@@ -125,6 +125,29 @@ func readPaths(u toolUse) []string {
 	return out
 }
 
+// writePaths lists the files one write call changed: its path, and the path
+// of each of its edits (an edit without one changes the call's path).
+func writePaths(u toolUse) []string {
+	top := argString(u.args, "path")
+	edits, _ := u.args["edits"].([]any)
+	if len(edits) == 0 {
+		return []string{top}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, e := range edits {
+		p := top
+		if obj, ok := e.(map[string]any); ok && argString(obj, "path") != "" {
+			p = argString(obj, "path")
+		}
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // repeatKey identifies a call whose newer repetition makes an older result
 // redundant: the same single-file read with the same range, or the same
 // command or search run again.
@@ -155,10 +178,15 @@ func canonicalJSON(v map[string]any) string {
 // whose content a newer message has made redundant. Only the result is
 // replaced; its call stays, so call/result pairing is untouched.
 //
-//   - A result repeated later by the identical call (any run).
+//   - In closed runs, a result repeated later by the identical call.
 //   - In closed runs, a read of a file that was written afterwards: the disk
 //     holds the current text and the agent re-reads before editing.
 //
+// The open run is never touched: its requests share one growing prefix, and
+// the provider bills a cached prefix at a fraction of the price. Stubbing an
+// older result mid-run changed that prefix on every repeated command, so each
+// request after it paid the whole context again. Budget pressure in the open
+// run is the checkpoint's job, which rewrites once, not on every request.
 // The tail, unresolved failures and parked blocks are left alone.
 func staleResults(s *Session) map[int]string {
 	uses := toolUses(s)
@@ -179,7 +207,7 @@ func staleResults(s *Session) map[int]string {
 		if !ok {
 			continue
 		}
-		eligible := i < len(s.Messages)-tailKeep && m.ID != "" && !m.Parked && !failures[m.ID] && !m.ToolFailed
+		eligible := i < openStart && i < len(s.Messages)-tailKeep && m.ID != "" && !m.Parked && !failures[m.ID] && !m.ToolFailed
 		if key := repeatKey(u); key != "" {
 			if id, seen := newer[key]; seen {
 				if eligible {
@@ -193,7 +221,9 @@ func staleResults(s *Session) map[int]string {
 		switch u.name {
 		case toolWrite:
 			if !m.ToolFailed {
-				written[argString(u.args, "path")] = m.ID
+				for _, p := range writePaths(u) {
+					written[p] = m.ID
+				}
 			}
 		case toolRead:
 			if !eligible || i >= openStart {
@@ -226,8 +256,21 @@ func stubWriteArgs(tc ToolCall) ToolCall {
 	if json.Unmarshal([]byte(tc.Function.Arguments), &args) != nil {
 		return tc
 	}
-	content := argString(args, "content")
-	args["content"] = fmt.Sprintf("[%d characters written to %s; the file on disk is the source of truth]", len([]rune(content)), argString(args, "path"))
+	if edits, ok := args["edits"].([]any); ok {
+		for _, e := range edits {
+			if m, ok := e.(map[string]any); ok {
+				for _, key := range []string{"content", "old_str"} {
+					if v := argString(m, key); len(v) > 200 {
+						m[key] = fmt.Sprintf("[%d characters]", len([]rune(v)))
+					}
+				}
+			}
+		}
+	}
+	if _, ok := args["content"]; ok {
+		content := argString(args, "content")
+		args["content"] = fmt.Sprintf("[%d characters written to %s; the file on disk is the source of truth]", len([]rune(content)), argString(args, "path"))
+	}
 	if old := argString(args, "old_str"); len(old) > 200 {
 		args["old_str"] = fmt.Sprintf("[%d characters replaced]", len([]rune(old)))
 	}
@@ -311,7 +354,9 @@ func summarizeWork(s *Session, from, to int, uses map[string]toolUse) work {
 				}
 			case toolWrite:
 				if !m.ToolFailed {
-					add(&w.wrote, "w", argString(u.args, "path"))
+					for _, p := range writePaths(u) {
+						add(&w.wrote, "w", p)
+					}
 				}
 			case toolExec:
 				cmd := oneLine(argString(u.args, "command"), 80)
