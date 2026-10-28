@@ -54,3 +54,17 @@ reply, tool errors, repeated reads, whether a plan was written, and whether
 the last change was followed by a passing check. Together with the hidden
 tests (`grade.sh`), a harness change is good when behaviour and results
 improve across the cheap models, not just one.
+
+## First result (2026-10-28, hidden-test eval, cheap models only)
+
+| Task | Model | Before (custom tools) | After (standard tools + behaviours) |
+|---|---|---|---|
+| go-tasks-api | MiMo-V2.6-Pro | pass ×2 · 481–495 s · $0.038 | pass ×2 · **227–371 s · $0.020–0.027** |
+| py-ratelimit | MiMo-V2.6-Pro | pass ×1, one run lost · 604 s · $0.044 | pass ×2 · 275–797 s · $0.020–0.046 |
+| go-tasks-api | GLM 5.3 Flash | ground on: 59 requests, schema errors | **pass** · 430 s · $0.009 |
+| py-ratelimit | GLM 5.3 Flash | ended at request 1 (tool call as text) | **pass** · 512 s · $0.007 |
+| go-tasks-api | GLM 5.2 | — | pass · 164 s · $0.022 |
+| py-ratelimit | GLM 5.2 | — | pass · 65 s · $0.007 |
+
+8 of 8 runs passed every hidden test, on three models. No goal ceremony, no
+tool errors for MiMo, every run's last change followed by a passing check.
