@@ -87,9 +87,9 @@ func callGist(u toolUse, m Msg) string {
 		}
 		return truncateRunes(g, 160)
 	case toolSearch:
-		return truncateRunes("search "+oneLine(argString(u.args, "pattern"), 80)+" in "+orDot(argString(u.args, "path")), 160)
+		return truncateRunes("searched "+oneLine(argString(u.args, "pattern"), 80)+" in "+orDot(argString(u.args, "path")), 160)
 	case toolExec:
-		g := "exec " + oneLine(argString(u.args, "command"), 100)
+		g := "ran " + oneLine(argString(u.args, "command"), 100)
 		if code := exitCode(m.Content); code != "" {
 			g += " → exit " + code
 		}
