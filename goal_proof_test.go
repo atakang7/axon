@@ -17,7 +17,7 @@ func TestRedToGreenTestsProveAFixWithoutCriteria(t *testing.T) {
 	w.step("go test fails in pricing, fix it",
 		call(toolExec, map[string]any{"command": "go test ./..."}), // not in outputs: exit 127, red
 		call(toolWrite, map[string]any{"path": "pricing/discount.go"}),
-		then(func() { w.outputs["go test ./... 2>&1 | tail -5"] ="ok  \texample.com/shop/pricing" },
+		then(func() { w.outputs["go test ./... 2>&1 | tail -5"] = "ok  \texample.com/shop/pricing" },
 			call(toolExec, map[string]any{"command": "go test ./... 2>&1 | tail -5"})),
 		answer("fixed"),
 	)
