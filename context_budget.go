@@ -86,7 +86,22 @@ func (a *Agent) ensureContextBudget(ctx context.Context, tools []Tool) error {
 			return err
 		}
 	}
-	for n > contextBudgetTarget && (a.foldOldestRun() || a.foldOldestStep()) {
+	// Fold as many of the oldest finished requests as the gap needs, then
+	// measure once: measuring renders the whole view.
+	for n > contextBudgetTarget {
+		gap, folded := n-contextBudgetTarget, false
+		for _, r := range closedRuns(a.session) {
+			if gap <= 0 {
+				break
+			}
+			if a.session.foldRun(r) {
+				folded = true
+				gap -= contextTokens(runBytes(a.session, r))
+			}
+		}
+		if !folded && !a.foldOldestStep() {
+			break
+		}
 		if n, err = estimate(); err != nil {
 			return err
 		}
