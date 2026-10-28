@@ -202,6 +202,51 @@ func wireMessages(msgs []Msg) []Msg {
 	return msgs
 }
 
+// cacheMarked adds prompt-cache breakpoints for models that cache only where
+// the request marks it (Anthropic's, directly or through OpenRouter); every
+// other model caches a repeated prefix by itself and gets msgs unchanged.
+// Without the marks every request paid the whole context at the full price:
+// the eval of 2026-10-28 measured a 0% cache hit for Claude against 74-84%
+// for MiMo. The breakpoints are the system message, which with the tools
+// before it is the stable prefix, and the last two messages with text, so
+// each request reads the previous one's prefix from the cache. Anthropic
+// allows four.
+func cacheMarked(msgs []Msg, model string) any {
+	if !needsCacheMarks(model) || len(msgs) == 0 {
+		return msgs
+	}
+	raw, err := json.Marshal(msgs)
+	if err != nil {
+		return msgs
+	}
+	var out []map[string]any
+	if json.Unmarshal(raw, &out) != nil {
+		return msgs
+	}
+	mark := func(i int) bool {
+		text, ok := out[i]["content"].(string)
+		if !ok || text == "" {
+			return false
+		}
+		out[i]["content"] = []map[string]any{{"type": "text", "text": text, "cache_control": map[string]string{"type": "ephemeral"}}}
+		return true
+	}
+	if msgs[0].Role == "system" {
+		mark(0)
+	}
+	for i, marked := len(out)-1, 0; i > 0 && marked < 2; i-- {
+		if mark(i) {
+			marked++
+		}
+	}
+	return out
+}
+
+func needsCacheMarks(model string) bool {
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "anthropic/") || strings.HasPrefix(m, "claude")
+}
+
 func (c *Client) requestBody(req Request) ([]byte, error) {
 	tools := make([]map[string]any, len(req.Tools))
 	for i, t := range req.Tools {
@@ -222,7 +267,7 @@ func (c *Client) requestBody(req Request) ([]byte, error) {
 
 	body := map[string]any{
 		"model":          c.cfg.Provider.Model,
-		"messages":       wireMessages(req.Messages),
+		"messages":       cacheMarked(wireMessages(req.Messages), c.cfg.Provider.Model),
 		"stream":         true,
 		"stream_options": map[string]any{"include_usage": true},
 		"max_tokens":     maxTokens,
