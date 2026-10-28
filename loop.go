@@ -30,7 +30,6 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 
 	a.emit(ctx, Event{Kind: KindUserInput, Text: userInput})
 
-
 	var calls []ToolCall
 	var assistantText string
 	a.nudge = ""
@@ -122,7 +121,6 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 				Turn:      a.session.Turn,
 			}, nil
 		}
-
 
 		// Consecutive read-only calls run concurrently; see toolGroups.
 		for _, group := range toolGroups(msg.ToolCalls) {
