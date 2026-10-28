@@ -444,6 +444,19 @@ func (r *reply) consume(text string, stream Stream) {
 			detail = detail[:errorBodyLimit]
 		}
 		r.streamErr = fmt.Errorf("provider stream error: %s", detail)
+		// An error inside a 200 stream carries its real status in "code"
+		// (OpenRouter: 502 provider_unavailable). As an APIError it goes
+		// through the retry policy like any HTTP failure; as a plain error
+		// it ended the session on the first provider hiccup (twice in the
+		// eval of 2026-10-28).
+		var e struct {
+			Code json.Number `json:"code"`
+		}
+		if json.Unmarshal(chunk.Error, &e) == nil {
+			if code, err := e.Code.Int64(); err == nil && code >= 400 {
+				r.streamErr = &APIError{Status: int(code), Body: "provider stream error: " + detail}
+			}
+		}
 		return
 	}
 

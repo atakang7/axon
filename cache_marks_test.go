@@ -1,7 +1,9 @@
 package axon
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -54,5 +56,21 @@ func TestThinkingOnlyReplyIsRetriedWithMoreBudget(t *testing.T) {
 	}
 	if reqs[1].MaxTokens <= reqs[0].MaxTokens {
 		t.Fatalf("retry budget %d not above %d", reqs[1].MaxTokens, reqs[0].MaxTokens)
+	}
+}
+
+// An error inside a 200 stream is a provider failure with a status, and goes
+// through the retry policy like any HTTP failure.
+func TestStreamErrorWithStatusIsRetryable(t *testing.T) {
+	body := sseLines(`data: {"error":{"code":502,"message":"JSON error injected into SSE stream","metadata":{"error_type":"provider_unavailable"}}}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 502 {
+		t.Fatalf("err = %v, want an APIError 502", err)
+	}
+	if !(&Agent{settings: DefaultSettings()}).retryable(err) {
+		t.Fatal("a 502 inside the stream should be retried")
 	}
 }
