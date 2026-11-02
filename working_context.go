@@ -248,6 +248,26 @@ func staleResults(s *Session) map[int]string {
 // stubWriteArgs drops the full file body from a write call in a closed run.
 // The file on disk is the record; keeping its body in every later request is
 // paying for the same bytes twice.
+// stubCallArgs is a call whose result is cleared, shown without its bulk:
+// a write's body, or the tail of a long command (a heredoc that wrote a
+// script, say).
+func stubCallArgs(tc ToolCall) ToolCall {
+	if tc.Function.Name != toolExec || len(tc.Function.Arguments) < 600 {
+		return stubWriteArgs(tc)
+	}
+	var args map[string]any
+	if json.Unmarshal([]byte(tc.Function.Arguments), &args) != nil {
+		return tc
+	}
+	if cmd := argString(args, "command"); len(cmd) > 400 {
+		args["command"] = truncateRunes(cmd, 300) + fmt.Sprintf(" … [%d characters]", len([]rune(cmd)))
+	}
+	if b, err := json.Marshal(args); err == nil {
+		tc.Function.Arguments = string(b)
+	}
+	return tc
+}
+
 func stubWriteArgs(tc ToolCall) ToolCall {
 	if !isWriteTool(tc.Function.Name) || len(tc.Function.Arguments) < 600 {
 		return tc
@@ -296,8 +316,9 @@ func stubWriteArgs(tc ToolCall) ToolCall {
 // free model). And any structure that repeats — one card per run, one stub
 // per dropped result — is a template the model's attention is pulled toward.
 // So a folded run keeps only what was said (the request and the final
-// answer), all folded runs share one history note, the folded steps of a
-// request share one note, and results out of context share one index.
+// answer), all folded runs share one history note and the folded steps of a
+// request share one note. A cleared result is one line in its own tool
+// message, never an assistant turn, so it is not a reply the model can copy.
 
 // looksLikeCardEcho reports whether an assistant reply copies a runtime note
 // instead of saying or doing anything.

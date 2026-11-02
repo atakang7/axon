@@ -133,19 +133,25 @@ func (s *Session) view(windowBlocks int) ([]Msg, viewInfo) {
 		}
 	}
 
-	elided := map[string]bool{} // tool call ids whose result is out
+	// A cleared or stale result stays where it was, with its call, as one
+	// line: the model still sees what it did, in order, and what came of it;
+	// only the bulk is gone.
+	elided := map[string]bool{} // tool call ids whose result is left out entirely
+	stubs := map[int]string{}
+	stubbedCalls := map[string]bool{} // calls whose result is one line: a write's body goes too
 	if working {
 		stale := staleResults(s)
 		for i, m := range s.Messages {
 			if m.Role != "tool" || hidden[i] || m.ToolCallID == "" || !(m.Parked || stale[i] != "") {
 				continue
 			}
-			elided[m.ToolCallID] = true
 			why := "dropped"
 			if !m.Parked {
 				why = "stale"
 			}
 			info.outside = append(info.outside, outsideBlock{msg: m, why: why, line: indexLine(s, m, uses, stale[i])})
+			stubs[i] = clearedStub(m, uses, stale[i])
+			stubbedCalls[m.ToolCallID] = true
 		}
 	}
 
@@ -208,7 +214,19 @@ func (s *Session) view(windowBlocks int) ([]Msg, viewInfo) {
 			}
 			toolCalls = kept
 		}
+		if len(stubbedCalls) > 0 && len(toolCalls) > 0 {
+			stubbed := make([]ToolCall, len(toolCalls))
+			for j, tc := range toolCalls {
+				if stubbedCalls[tc.ID] {
+					tc = stubCallArgs(tc)
+				}
+				stubbed[j] = tc
+			}
+			toolCalls = stubbed
+		}
 		switch {
+		case stubs[i] != "":
+			content = stubs[i]
 		case m.Parked:
 			content = breadcrumb(m.ID, m.ParkSummary)
 			toolCalls = nil
@@ -239,13 +257,6 @@ func (s *Session) view(windowBlocks int) ([]Msg, viewInfo) {
 	if tb := s.stateBlock(); tb != "" {
 		state = append(state, tb)
 	}
-	if len(info.outside) > 0 {
-		lines := []string{"[out of context: read the files again or run the commands again for current output]"}
-		for _, o := range info.outside {
-			lines = append(lines, o.line)
-		}
-		state = append(state, strings.Join(lines, "\n"))
-	}
 	if len(state) > 0 {
 		add(Msg{Role: "system", Content: strings.Join(state, "\n\n")}, viewState)
 	}
@@ -257,6 +268,30 @@ func (s *Session) view(windowBlocks int) ([]Msg, viewInfo) {
 type viewInfo struct {
 	kinds   []string
 	outside []outsideBlock
+}
+
+// clearedStub is what a cleared or stale result shows in place of its
+// content: what the call was, its size and why the content is gone.
+func clearedStub(m Msg, uses map[string]toolUse, stale string) string {
+	what := m.ToolName
+	if u, ok := uses[m.ToolCallID]; ok {
+		if g := callGist(u, m); g != "" {
+			what = g
+		}
+	}
+	body := strings.TrimSpace(strings.TrimPrefix(m.Content, "[#"+m.ID+"]\n"))
+	size := fmt.Sprintf("%d lines", strings.Count(body, "\n")+1)
+	why := "cleared to save context; read the file or run the command again if you need it"
+	switch {
+	case !m.Parked && strings.Contains(stale, "superseded"):
+		why = "an older copy; a newer one follows"
+	case !m.Parked:
+		why = "the file was edited after this; read it again for its current content"
+	}
+	if m.Parked && m.ParkSummary != "" && m.ParkSummary != what {
+		why = oneLine(m.ParkSummary, 300) + "; " + why
+	}
+	return fmt.Sprintf("[#%s %s: %s, %s]", m.ID, what, size, why)
 }
 
 // indexLine is one result's line in the index: its id, what the call was,

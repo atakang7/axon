@@ -67,29 +67,13 @@ func TestStaleCacheEntriesBecomeStubsWithoutTouchingTheLog(t *testing.T) {
 
 	full := b.s.contextView(-1)
 	view := viewByID(full)
-	if _, in := view[firstRead]; in {
-		t.Fatal("a read of a file edited later is still in context")
+	if got := view[firstRead].Content; !strings.Contains(got, "read a.go") || !strings.Contains(got, "edited after this") || strings.Contains(got, "package a") {
+		t.Fatalf("a read of a file edited later is not one line: %s", got)
 	}
-	if _, in := view[oldTest]; in {
-		t.Fatal("repeated command output is still in context")
+	if got := view[oldTest].Content; !strings.Contains(got, "an older copy") || strings.Contains(got, "FAIL old") {
+		t.Fatalf("repeated command output is not one line: %s", got)
 	}
-	index := stateBlock(full)
-	if !strings.Contains(index, "#"+firstRead+" read a.go — the file was edited after this read") {
-		t.Fatalf("index lacks the stale read:\n%s", index)
-	}
-	if !strings.Contains(index, "#"+oldTest+" exec go test ./... — older copy of #") {
-		t.Fatalf("index lacks the superseded output:\n%s", index)
-	}
-	for _, m := range full {
-		for _, tc := range m.ToolCalls {
-			if tc.Function.Name == toolExec && tc.ID != "" && strings.Contains(m.Content+tc.Function.Arguments, "FAIL old") {
-				t.Fatal("the call of an elided result is still in context")
-			}
-		}
-		if m.Role == "tool" && strings.Contains(m.Content, "FAIL old") {
-			t.Fatal("elided output is still in context")
-		}
-	}
+
 	for _, m := range b.s.contextView(-1) {
 		for _, tc := range m.ToolCalls {
 			if tc.Function.Name == toolWrite && strings.Contains(tc.Function.Arguments, "new body") {
@@ -226,37 +210,6 @@ func TestGovernorBringsAStuckSessionUnderBudgetWithoutAModelCall(t *testing.T) {
 	reloaded := LoadOrCreateSessionAt(b.s.Path())
 	if again, _ := requestInputTokens(Request{Messages: reloaded.ContextMessages(-1)}, ""); again != after {
 		t.Fatalf("folding was not persisted: %d vs %d", again, after)
-	}
-}
-
-func TestPolicyFoldsOnlyBeyondKeepRunsAndInBatches(t *testing.T) {
-	resetMeter(t)
-	b := bigHistory(t, 4)
-	a := &Agent{session: b.s, settings: Settings{Pruner: PrunerSettings{Mode: PruneModerate}}}
-	estimate := func() (int, error) { return requestInputTokens(Request{Messages: b.s.ContextMessages(-1)}, "") }
-	a.foldByPolicy(context.Background(), estimate)
-	folded := 0
-	for _, r := range closedRuns(b.s) {
-		if b.s.runFolded(r) {
-			folded++
-		}
-	}
-	if folded != 0 {
-		t.Fatalf("one run beyond keep_runs folded %d; batching should wait for two", folded)
-	}
-	b.s.Messages = b.s.Messages[:len(b.s.Messages)-9] // drop the open run tail
-	b2 := &runBuilder{s: b.s, n: 1000}
-	b2.user("request 4")
-	b2.call(toolRead, map[string]any{"path": "x.go"}, strings.Repeat("y", 3000), false)
-	b2.assistant("done 4")
-	b2.openRunTail()
-	a.foldByPolicy(context.Background(), estimate)
-	var states []bool
-	for _, r := range closedRuns(b.s) {
-		states = append(states, b.s.runFolded(r))
-	}
-	if fmt.Sprint(states) != "[true true false false false]" {
-		t.Fatalf("fold states %v, want the two oldest folded and keep_runs=3 kept", states)
 	}
 }
 

@@ -76,9 +76,18 @@ func TestTheWorkingViewRepeatsNoShape(t *testing.T) {
 	if history != 1 || steps != 1 || notes != 2 {
 		t.Fatalf("runtime notes %d (history %d, steps %d), want exactly one of each", notes, history, steps)
 	}
-	index := stateBlock(view)
-	if strings.Count(index, "[out of context") != 1 || strings.Count(index, "\n#") < 4 {
-		t.Fatalf("the index is not one list of what is out:\n%s", index)
+	// What is out shows as one line where it was, not as a list elsewhere.
+	if strings.Contains(stateBlock(view), "[out of context") {
+		t.Fatalf("an index of what is out:\n%s", stateBlock(view))
+	}
+	cleared := 0
+	for _, m := range view {
+		if m.Role == "tool" && strings.HasPrefix(m.Content, "[#") && strings.HasSuffix(m.Content, "]") && strings.Contains(m.Content, " lines, ") {
+			cleared++
+		}
+	}
+	if cleared < 4 {
+		t.Fatalf("%d results shown as one line, want at least 4", cleared)
 	}
 	// Every call left in context still has its result, and every result its call.
 	results := map[string]bool{}

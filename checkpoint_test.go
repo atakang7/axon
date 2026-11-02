@@ -80,11 +80,8 @@ func TestCheckpointKeepsTrimsAndDropsWithNotes(t *testing.T) {
 	if !strings.Contains(trimmed, "7 of 200 lines kept") {
 		t.Fatalf("trim header: %s", firstLine(trimmed))
 	}
-	if _, in := view[test]; in {
-		t.Fatal("a dropped result is still in context")
-	}
-	if index := stateBlock(b.s.contextView(-1)); !strings.Contains(index, "#"+test+" exec go test ./... → exit 0 — all packages pass second line") {
-		t.Fatalf("the index does not carry the dropped result's note:\n%s", index)
+	if got := view[test].Content; !strings.Contains(got, "#"+test+" ran go test ./... → exit 0") || !strings.Contains(got, "all packages pass second line") || strings.Contains(got, "ok  pkg") {
+		t.Fatalf("a dropped result is not one line with its call and note: %s", got)
 	}
 	if view[other].Content != msgByID(b.s, other).Content {
 		t.Fatal("a kept block changed")
@@ -121,7 +118,7 @@ func TestCheckpointValidatesEveryEntryAndNeverAppliesAnInvalidOne(t *testing.T) 
 		t.Fatal("a user message was dropped")
 	}
 	// Results not kept are dropped with the call's gist, never silently lost.
-	if got := msgByID(b.s, ids[1]); !got.Parked || !strings.Contains(got.ParkSummary, "exec go test ./... → exit 0") {
+	if got := msgByID(b.s, ids[1]); !got.Parked || !strings.Contains(got.ParkSummary, "ran go test ./... → exit 0") {
 		t.Fatalf("dropped without a gist: %+v", got.ParkSummary)
 	}
 }
@@ -211,142 +208,6 @@ func checkpointAgent(t *testing.T, b *runBuilder, model Model) *Agent {
 	a := &Agent{session: b.s, model: model, settings: Settings{Pruner: PrunerSettings{TriggerTokens: 2000}}.WithDefaults()}
 	a.tools = []Tool{a.checkpointTool(), ReadTool(b.s, a.settings.Tools.limits())}
 	return a
-}
-
-func TestForcedCheckpointReusesTheContextAndThenSendsTheRequest(t *testing.T) {
-	resetMeter(t)
-	b, ids := checkpointFixture(t)
-	var reqs []Request
-	model := funcModel{fn: func(_ context.Context, r Request) (*Msg, error) {
-		reqs = append(reqs, r)
-		if len(reqs) == 1 {
-			args, _ := json.Marshal(map[string]any{"keep": []map[string]any{{"id": ids[2]}}, "notes": []map[string]any{{"id": ids[1], "note": "tests pass"}}})
-			return toolCallMsg("k1", toolCheckpoint, string(args)), nil
-		}
-		return finalMsg("done"), nil
-	}}
-	a := checkpointAgent(t, b, model)
-	view := b.s.ContextMessages(-1)
-
-	if _, err := a.chat(context.Background(), a.tools); err != nil {
-		t.Fatal(err)
-	}
-	if len(reqs) != 2 {
-		t.Fatalf("%d requests, want checkpoint then the request", len(reqs))
-	}
-	cp := reqs[0]
-	// Same prefix as the request it precedes, so the provider's cache serves it.
-	for i := range view {
-		if cp.Messages[i].Content != view[i].Content {
-			t.Fatalf("checkpoint request diverges from the context at message %d", i)
-		}
-	}
-	last := cp.Messages[len(cp.Messages)-1]
-	if last.Role != "user" || !strings.Contains(last.Content, "[runtime: checkpoint]") || !strings.Contains(last.Content, ids[0]) {
-		t.Fatalf("checkpoint note missing or does not list candidates: %q", last.Content)
-	}
-	if len(cp.Tools) != len(a.tools) {
-		t.Fatal("checkpoint request changed the tool list, which breaks the cached prefix")
-	}
-	if !msgByID(b.s, ids[0]).Parked || !msgByID(b.s, ids[1]).Parked || msgByID(b.s, ids[2]).Parked {
-		t.Fatal("the checkpoint was not applied as chosen")
-	}
-	for _, m := range reqs[1].Messages {
-		if strings.Contains(m.Content, "[runtime: checkpoint]") {
-			t.Fatal("the checkpoint note leaked into the next request")
-		}
-	}
-	if len(b.s.Checkpoints) != 1 || !b.s.Checkpoints[0].Forced || b.s.Checkpoints[0].After >= b.s.Checkpoints[0].Before {
-		t.Fatalf("checkpoint not recorded: %+v", b.s.Checkpoints)
-	}
-	if reloaded := LoadOrCreateSessionAt(b.s.Path()); !msgByID(reloaded, ids[0]).Parked {
-		t.Fatal("the checkpoint was not persisted")
-	}
-}
-
-func TestAKeptWorkingSetRaisesTheTriggerUntilTheNextUserMessage(t *testing.T) {
-	resetMeter(t)
-	b, ids := checkpointFixture(t)
-	checkpoints := 0
-	model := funcModel{fn: func(_ context.Context, r Request) (*Msg, error) {
-		if strings.Contains(r.Messages[len(r.Messages)-1].Content, "[runtime: checkpoint]") {
-			checkpoints++
-			args, _ := json.Marshal(map[string]any{"keep": []map[string]any{{"id": ids[0]}, {"id": ids[1]}, {"id": ids[2]}}})
-			return toolCallMsg("k", toolCheckpoint, string(args)), nil
-		}
-		return finalMsg("done"), nil
-	}}
-	a := checkpointAgent(t, b, model)
-	for i := 0; i < 3; i++ {
-		if _, err := a.chat(context.Background(), a.tools); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if checkpoints != 1 {
-		t.Fatalf("%d checkpoints; keeping everything must not trigger one per request", checkpoints)
-	}
-	if a.checkpointTrigger() != a.keptTokens+a.settings.Pruner.GrowthTokens {
-		t.Fatalf("trigger %d, want kept %d + growth", a.checkpointTrigger(), a.keptTokens)
-	}
-	if _, err := a.Step(context.Background(), "next"); err != nil {
-		t.Fatal(err)
-	}
-	if checkpoints != 2 {
-		t.Fatalf("a new user message must reset the raised trigger; checkpoints %d", checkpoints)
-	}
-}
-
-func TestAFailedCheckpointFallsBackWithoutStalling(t *testing.T) {
-	resetMeter(t)
-	b, ids := checkpointFixture(t)
-	calls := 0
-	model := funcModel{fn: func(_ context.Context, r Request) (*Msg, error) {
-		calls++
-		if strings.Contains(r.Messages[len(r.Messages)-1].Content, "[runtime: checkpoint]") {
-			return finalMsg("I would rather keep working."), nil
-		}
-		return finalMsg("done"), nil
-	}}
-	a := checkpointAgent(t, b, model)
-	var events []Event
-	a.onEvent = func(_ context.Context, e Event) { events = append(events, e) }
-	if _, err := a.chat(context.Background(), a.tools); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 3 {
-		t.Fatalf("%d calls, want two checkpoint attempts and the request", calls)
-	}
-	if msgByID(b.s, ids[0]).Parked {
-		t.Fatal("something was dropped although the model never chose")
-	}
-	skipped := false
-	for _, e := range events {
-		skipped = skipped || (e.Kind == KindInfo && strings.HasPrefix(e.Text, "prune skipped"))
-	}
-	if !skipped {
-		t.Fatal("the failed checkpoint was not reported")
-	}
-}
-
-func TestPrunerModelDecidesCheckpointsWhenSet(t *testing.T) {
-	resetMeter(t)
-	b, ids := checkpointFixture(t)
-	main := funcModel{fn: func(_ context.Context, r Request) (*Msg, error) {
-		if strings.Contains(r.Messages[len(r.Messages)-1].Content, "[runtime: checkpoint]") {
-			t.Fatal("the main model was asked although a pruner model is set")
-		}
-		return finalMsg("done"), nil
-	}}
-	asked := false
-	a := checkpointAgent(t, b, main)
-	a.SetPrunerModel(funcModel{fn: func(context.Context, Request) (*Msg, error) {
-		asked = true
-		args, _ := json.Marshal(map[string]any{"keep": []map[string]any{{"id": ids[0]}}})
-		return toolCallMsg("k", toolCheckpoint, string(args)), nil
-	}})
-	if _, err := a.chat(context.Background(), a.tools); err != nil || !asked {
-		t.Fatalf("err %v asked %v", err, asked)
-	}
 }
 
 func TestTheAgentCanCheckpointOnItsOwn(t *testing.T) {

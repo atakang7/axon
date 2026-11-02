@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Step submits one user message and drives the loop until the
@@ -40,12 +41,16 @@ func (a *Agent) Step(ctx context.Context, userInput string) (StepResult, error) 
 		// Checked before the model call, not after, so the cap is a bound on
 		// requests actually issued rather than one-past.
 		if a.maxIterations > 0 && iteration > a.maxIterations {
-			a.emit(ctx, Event{Kind: KindTurnEnd})
-			return StepResult{
-				Assistant: assistantText,
-				ToolCalls: calls,
-				Turn:      a.session.Turn,
-			}, fmt.Errorf("%w: %d", ErrMaxIterations, a.maxIterations)
+			return a.reportAtLimit(ctx, calls)
+		}
+		// The model knows its budget before it runs out, so it can leave
+		// the work in a state worth handing over.
+		if left := a.maxIterations - iteration + 1; a.maxIterations > 0 && left <= budgetWarnCalls {
+			note := fmt.Sprintf(budgetNote, left)
+			if a.turnNote != "" {
+				note = a.turnNote + "\n\n" + note
+			}
+			a.turnNote = note
 		}
 
 		turnCtx, cancel := context.WithCancel(ctx)
@@ -192,6 +197,44 @@ func (a *Agent) Run(ctx context.Context, input InputFunc) error {
 		default:
 		}
 	}
+}
+
+// budgetWarnCalls is how many model calls before the limit the model is told.
+const budgetWarnCalls = 10
+
+const budgetNote = "[runtime note: %d model calls left in this request. Finish the step you are on, run its check, and commit or save finished work. Leave the rest for the next request and say exactly where you stopped.]"
+
+const limitNote = "[runtime note: this request has reached its step limit. Do not call tools. Report now, in the user's language: what is done and how it was checked, what is not done, and the exact next step.]"
+
+// reportAtLimit ends a request that reached its step limit with a report,
+// not an error: one more call, told not to use tools. Calls it makes anyway
+// are not run and not kept, so the log stays valid; without text, the
+// runtime's own plan and check state are the report.
+func (a *Agent) reportAtLimit(ctx context.Context, calls []ToolCall) (StepResult, error) {
+	a.emit(ctx, Event{Kind: KindInfo, Text: fmt.Sprintf("step limit reached (%d model calls); asking for a report", a.maxIterations)})
+	a.turnNote = limitNote
+	msg, err := a.chat(ctx, a.tools)
+	a.turnNote = ""
+	if errors.Is(err, context.Canceled) {
+		return StepResult{Turn: a.session.Turn, ToolCalls: calls}, ErrInterrupted
+	}
+	text := ""
+	if err == nil {
+		text = msg.Content
+	}
+	if strings.TrimSpace(text) == "" {
+		text = fmt.Sprintf("Stopped at the step limit (%d model calls) before the work was finished.", a.maxIterations)
+		if st := a.session.stateBlock(); st != "" {
+			text += "\n\n" + st
+		}
+	}
+	a.session.Append(Msg{Role: "assistant", Content: text})
+	if err := a.session.Save(); err != nil {
+		a.emit(ctx, Event{Kind: KindError, Err: err, Text: "session not persisted"})
+	}
+	a.emit(ctx, Event{Kind: KindAssistantEnd, Text: text})
+	a.emit(ctx, Event{Kind: KindTurnEnd})
+	return StepResult{Assistant: text, ToolCalls: calls, Turn: a.session.Turn}, nil
 }
 
 // cardEchoNote answers a reply that copied a runtime card instead of acting.
