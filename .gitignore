@@ -1,3 +1,9 @@
 chisel
 game/
 agent/axon
+
+# Generated local indexes and session data
+.dirac-cache/
+.env
+.env.*
+!.env.example
