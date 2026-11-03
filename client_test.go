@@ -595,3 +595,19 @@ func TestClientConcurrentComplete(t *testing.T) {
 		t.Errorf("concurrent Complete: %v", err)
 	}
 }
+
+// SSE permits data fields with no space after the colon.
+func TestReadStreamAcceptsDataWithoutSpace(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	payload := strings.TrimPrefix(chunk(chunkDelta{Content: "ok"}), "data: ")
+	body := sseLines("data:"+payload, "data:[DONE]")
+	msg, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std(), true)
+	if err != nil {
+		t.Fatalf("readStream: %v", err)
+	}
+	if msg.Content != "ok" {
+		t.Fatalf("Content = %q, want ok", msg.Content)
+	}
+}
