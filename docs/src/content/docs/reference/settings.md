@@ -33,4 +33,4 @@ description: Configuration locations, environment overrides and defaults.
 
 `pruner.mode` triggers checkpoints at 48,000 (`low`), 32,000 (`moderate`) or 20,000 (`extreme`) estimated tokens. `pruner.trigger_tokens` overrides the trigger.
 
-[axon.example.yaml](../../../../axon.example.yaml) contains the complete YAML shape.
+`axon.example.yaml` in the repository root contains the complete YAML shape.
