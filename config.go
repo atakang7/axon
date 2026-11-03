@@ -75,11 +75,11 @@ func defaultDataDir() string {
 // conversation per project.
 func (s SessionConfig) SessionFile() string {
 	if path := String("AXON_SESSION_PATH"); path != "" {
-		return path
+		return expandHomePath(path)
 	}
 
 	if s.Path != "" {
-		return s.Path
+		return expandHomePath(s.Path)
 	}
 
 	return filepath.Join(s.dataDir(), "sessions", sessionKeyForCwd()+".json")
@@ -98,14 +98,24 @@ func (s SessionConfig) BackgroundLogDir(pid int) string {
 
 func (s SessionConfig) dataDir() string {
 	if dir := String("AXON_DATA_DIR"); dir != "" {
-		return dir
+		return expandHomePath(dir)
 	}
 
 	if s.DataDir != "" {
-		return s.DataDir
+		return expandHomePath(s.DataDir)
 	}
 
 	return defaultDataDir()
+}
+
+func expandHomePath(path string) string {
+	if path == "~" {
+		return homeDir()
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+		return filepath.Join(homeDir(), path[2:])
+	}
+	return path
 }
 
 // sessionKeyForCwd derives a stable per-directory key. The basename makes the

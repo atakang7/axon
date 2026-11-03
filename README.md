@@ -1,38 +1,19 @@
-<p align="center">
-  <img src="docs/public/axon-hero.svg" alt="Axon" width="880">
-</p>
+# Axon
 
-<h3 align="center">A Go runtime for tool-using LLM agents</h3>
+Axon is a Go library for running tool-using language model agents against an OpenAI-compatible streaming API. It handles model turns and session storage so an application can focus on its own interface and workflow.
 
-<p align="center">
-  Axon owns turns, tools, sessions, context pressure, retries, streaming, background processes, MCP, and events. Your application owns the product.
-</p>
+## Quick start
 
-<p align="center">
-  <a href="https://atakang7.github.io/axon/">Docs</a> ·
-  <a href="#quickstart">Quickstart</a> ·
-  <a href="#example">Example</a> ·
-  <a href="LICENSE">MIT License</a>
-</p>
+Requires Go 1.26.2 or newer and an API key for the endpoint you choose.
 
----
-
-## Quickstart
-
-```bash
+```sh
+mkdir axon-demo
+cd axon-demo
+go mod init example.com/axon-demo
 go get github.com/atakang7/axon/v2
 ```
 
-Axon uses `gopkg.in/yaml.v3` for configuration and `golang.org/x/sys/windows`
-for native Windows process jobs.
-
-On Windows, shell tools use Git for Windows Bash when installed, with a
-PowerShell fallback. Background commands and foreground cancellation use
-Windows Job Objects to terminate the whole process tree. Windows does not
-provide POSIX SIGTERM, so job termination is immediate. Linux and macOS
-continue to use POSIX process groups.
-
-Point it at any OpenAI-compatible endpoint and drive a turn:
+Create `main.go`:
 
 ```go
 package main
@@ -42,16 +23,22 @@ import (
     "fmt"
     "log"
     "os"
+    "time"
 
     "github.com/atakang7/axon/v2"
 )
 
 func main() {
+    key := os.Getenv("OPENROUTER_API_KEY")
+    if key == "" {
+        log.Fatal("OPENROUTER_API_KEY is required")
+    }
+
     model, err := axon.OpenAI(axon.ClientConfig{
         Provider: axon.Provider{
-            BaseURL: "https://openrouter.ai/api",
-            Model:   "deepseek/deepseek-v3.2",
-            APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+            BaseURL: os.Getenv("AXON_BASE_URL"),
+            Model:   os.Getenv("AXON_MODEL"),
+            APIKey:  key,
         },
     })
     if err != nil {
@@ -60,14 +47,17 @@ func main() {
 
     agent, err := axon.New(axon.Config{
         Model:        model,
-        SystemPrompt: "You are a careful coding agent.",
+        SystemPrompt: "You are a coding assistant.",
+        MaxIterations: 20,
     })
     if err != nil {
         log.Fatal(err)
     }
-    defer agent.Close() // kills background shells, closes MCP
+    defer agent.Close()
 
-    result, err := agent.Step(context.Background(), "List the files in this directory.")
+    ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+    defer cancel()
+    result, err := agent.Step(ctx, "List the files in this directory.")
     if err != nil {
         log.Fatal(err)
     }
@@ -75,55 +65,50 @@ func main() {
 }
 ```
 
-Set an API key and run:
+Run it with your endpoint settings (the model name must exist at that endpoint):
 
-```bash
-export OPENROUTER_API_KEY=sk-...
+```sh
+export AXON_BASE_URL=https://openrouter.ai/api
+export AXON_MODEL=deepseek/deepseek-v3.2
+export OPENROUTER_API_KEY='your-key'
 go run .
 ```
 
-## Example
+## Configuration
 
-The snippet above is the full agent loop — one client, one agent, one `Step`. Axon layers the rest on top when you need it:
+The example above reads the environment directly. Axon does not load `.env` files unless the application calls `axon.Load()` or `axon.LoadFrom()`.
 
-- **Tools** — file I/O, search, shell exec, background processes, all built in
-- **Sessions** — persistent, resumable; the deciding model checkpoints what stays in context, and an optional read-only explorer answers broad questions with verified quotes (see WORKING_CONTEXT.md)
-- **MCP** — connect external tool servers over stdio or HTTP
-- **Events** — a structured stream you can render into any UI
+For file-backed settings, copy `axon.example.yaml` to `~/.config/axon/axon.yaml` and `.env.example` to `~/.config/axon/.env`, then fill in the key. Call `axon.Load()`, followed by `settings.NewClient("openrouter", "deepseek/deepseek-v3.2")`. Set `AXON_CONFIG` or `AXON_ENV` to use other file locations. Keep `.env` out of source control.
 
----
+Request and stream-idle timeouts default to 30 minutes and 20 seconds. Change them through `ClientConfig` or the YAML model settings.
 
-## Documentation
+## How it works
 
-Full documentation lives at **[atakang7.github.io/axon](https://atakang7.github.io/axon/)**:
+`axon.New` binds a model to the built-in file and shell tools. Each `Step` sends a turn to the provider, executes tool calls, and returns the final reply. Sessions are stored on disk, with one default session per working directory. Applications may pass their own tools or subscribe to events.
 
-**Getting Started**
-- [What is Axon?](https://atakang7.github.io/axon/start/overview/) — What Axon is and why it exists.
-- [Quickstart](https://atakang7.github.io/axon/start/quickstart/) — Get an agent running in under a minute.
+See the [API and configuration documentation](https://atakang7.github.io/axon/) for sessions, custom tools and MCP servers.
 
-**Core Concepts**
-- [The Turn Loop](https://atakang7.github.io/axon/concepts/turn-loop/) — How `Step()` drives the agent through model calls and tool execution.
-- [Context Management](https://atakang7.github.io/axon/concepts/context/) — How Axon keeps the model's context window bounded.
-- [Sessions & Memory](https://atakang7.github.io/axon/concepts/sessions/) — Persistence, listing, switching, and undo.
-- [Events & UI](https://atakang7.github.io/axon/concepts/events/) — The structured event stream for building UIs.
+## Deployment and usage
 
-**Tools**
-- [Built-in Tools](https://atakang7.github.io/axon/tools/builtins/) — The seven tools that ship with every agent.
-- [Custom Tools](https://atakang7.github.io/axon/tools/custom/) — How to add your own tools to an agent.
-- [MCP Servers](https://atakang7.github.io/axon/tools/mcp/) — Integrate Model Context Protocol tool servers.
+Axon is a library, not a standalone service. Build and deploy the Go program that imports it. Call `Close()` when shutting down to terminate background commands and MCP clients.
 
-**Configuration**
-- [Agent Setup](https://atakang7.github.io/axon/configuration/setup/) — The two configuration surfaces and why they are separate.
-- [Runtime Policies](https://atakang7.github.io/axon/configuration/yaml/) — Every field in the configuration file.
-- [File Locations](https://atakang7.github.io/axon/configuration/locations/) — Where Axon reads and writes files.
+By default, session files live in `~/.local/share/agent/sessions/` (or under `XDG_DATA_HOME` when set). Set `AXON_DATA_DIR` to move local state.
 
-**Under the Hood**
-- [Architecture](https://atakang7.github.io/axon/internals/architecture/) — Internal design reference for contributors.
-- [Security Boundaries](https://atakang7.github.io/axon/internals/security/) — How Axon protects credentials and configuration from tools.
-- [Retry Logic](https://atakang7.github.io/axon/internals/retries/) — How Axon handles transient failures.
+To check a change to this repository:
 
+```sh
+go build ./...
+go vet ./...
+go test -race ./...
+```
 
----
+The documentation site is built separately with `cd docs && npm ci && npm run build`.
+
+## Limitations
+
+Built-in file and shell tools run with the host process's permissions. Axon is not an operating-system sandbox; restrict the agent's working directory and credentials accordingly.
+
+`Step`, `Run` and `Reset` must not run concurrently on one agent. The default turn has no iteration limit; set `MaxIterations` for unattended jobs. Providers must support streaming chat completions.
 
 ## License
 

@@ -6,11 +6,6 @@ import (
 	"path/filepath"
 )
 
-// api.go — public library API for embedding axon in Go programs.
-// Monolithic engine: no configuration of its own, embedder provides model and system prompt.
-// Built-in tools: read, write, exec, search, task, goal, recall, bash_output, kill_shell, checkpoint, and explore with an explorer model (exclude via Config.ExcludeBuiltins).
-// Concurrency: Step/Run/Reset must not be called concurrently; Interrupt is goroutine-safe.
-
 // OpenAI builds a Model for any OpenAI-compatible endpoint.
 func OpenAI(cfg ClientConfig) (Model, error) { return NewClient(cfg) }
 
