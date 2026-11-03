@@ -1,20 +1,5 @@
-// Package axon is the vocabulary an embedder builds with: the types you
-// construct, implement or inspect when you use the runtime in
-// github.com/atakang7/axon/agent.
-//
-// It exists as its own package for one reason. Everything below the public
-// API lives under internal/, which makes it unreachable — and also makes it
-// undocumentable: `go doc agent.Tool` on an alias into an internal package
-// prints the alias and stops, so a caller could not discover that a Tool has a
-// Name, a Schema or an Fn without reading the source. The types you have to
-// build belong somewhere you can read about them.
-//
-// This package is a leaf. It holds no behaviour, imports nothing from this
-// module, and every layer above may import it.
-//
-//	model, err := axon.Model(...)   // implement, or use agent.OpenAI
-//	tool := axon.Tool{...}          // construct
-//	agent.New(agent.Config{...})    // drive
+// Package axon provides a Go runtime for tool-using language model agents.
+// Applications supply the model and decide how to present each turn.
 package axon
 
 import (
