@@ -1,21 +1,23 @@
 # Axon
 
-Axon is a Go library for running tool-using language model agents against an OpenAI-compatible streaming API. It handles model turns and session storage so an application can focus on its own interface and workflow.
+Axon is a Go library that runs tool-using agents against OpenAI-compatible streaming APIs.
 
-## Quick start
+```text
++-------------+  Step()  +-------+  Complete()  +--------+  HTTP  +----------+
+| application | -------> | Agent | ----------> | Client | -----> | provider |
++-------------+          +-------+             +--------+        +----------+
+```
 
-Requires Go 1.26.2 or newer and an API key for the endpoint you choose.
+## Run
+
+Requires Go 1.26.2 or later.
 
 ```sh
 mkdir axon-demo
 cd axon-demo
 go mod init example.com/axon-demo
 go get github.com/atakang7/axon/v2
-```
-
-Create `main.go`:
-
-```go
+cat > main.go <<'EOF'
 package main
 
 import (
@@ -33,7 +35,6 @@ func main() {
     if key == "" {
         log.Fatal("OPENROUTER_API_KEY is required")
     }
-
     model, err := axon.OpenAI(axon.ClientConfig{
         Provider: axon.Provider{
             BaseURL: os.Getenv("AXON_BASE_URL"),
@@ -44,11 +45,8 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-
     agent, err := axon.New(axon.Config{
-        Model:        model,
-        SystemPrompt: "You are a coding assistant.",
-        MaxIterations: 20,
+        Model: model, SystemPrompt: "You are a coding assistant.", MaxIterations: 20,
     })
     if err != nil {
         log.Fatal(err)
@@ -63,53 +61,41 @@ func main() {
     }
     fmt.Println(result.Assistant)
 }
+EOF
+AXON_BASE_URL=https://openrouter.ai/api \
+AXON_MODEL=deepseek/deepseek-v3.2 \
+OPENROUTER_API_KEY='your-key' go run .
 ```
 
-Run it with your endpoint settings (the model name must exist at that endpoint):
+## Config
 
-```sh
-export AXON_BASE_URL=https://openrouter.ai/api
-export AXON_MODEL=deepseek/deepseek-v3.2
-export OPENROUTER_API_KEY='your-key'
-go run .
+| Var | Default | What |
+|-----|---------|------|
+| `AXON_BASE_URL` | unset | API root in the example |
+| `AXON_MODEL` | unset | Model ID in the example |
+| `OPENROUTER_API_KEY` | unset | Bearer token in the example |
+| `AXON_CONFIG` | `~/.config/axon/axon.yaml` | YAML path for `axon.Load()` |
+| `AXON_ENV` | `~/.config/axon/.env` | Credentials path for `axon.Load()` |
+| `AXON_DATA_DIR` | `~/.local/share/agent` | Session and background-log root |
+| `AXON_SESSION_PATH` | per working directory | Override session file |
+
+File-based settings use [`axon.example.yaml`](axon.example.yaml) and [`.env.example`](.env.example); the example above reads environment variables directly.
+
+## CI and release
+
+```text
++------+  push  +-------------+  calls  +--------+  needs  +---------+
+| main | -----> | release.yml | -------> | ci.yml | -------> | release |
++------+        +-------------+          +--------+          +---------+
 ```
 
-## Configuration
+Run the local checks with `go build ./...`, `go vet ./...` and `go test -race ./...`; docs build with `cd docs && npm ci && npm run build`.
 
-The example above reads the environment directly. Axon does not load `.env` files unless the application calls `axon.Load()` or `axon.LoadFrom()`.
+## Limits
 
-For file-backed settings, copy `axon.example.yaml` to `~/.config/axon/axon.yaml` and `.env.example` to `~/.config/axon/.env`, then fill in the key. Call `axon.Load()`, followed by `settings.NewClient("openrouter", "deepseek/deepseek-v3.2")`. Set `AXON_CONFIG` or `AXON_ENV` to use other file locations. Keep `.env` out of source control.
+- Built-in shell commands run with the host process's permissions, without a sandbox.
+- `Step`, `Run` and `Reset` cannot run concurrently on one agent.
+- Turns have no default iteration cap; set `MaxIterations` for unattended use.
+- Providers must serve streaming chat completions.
 
-Request and stream-idle timeouts default to 30 minutes and 20 seconds. Change them through `ClientConfig` or the YAML model settings.
-
-## How it works
-
-`axon.New` binds a model to the built-in file and shell tools. Each `Step` sends a turn to the provider, executes tool calls, and returns the final reply. Sessions are stored on disk, with one default session per working directory. Applications may pass their own tools or subscribe to events.
-
-See the [API and configuration documentation](https://atakang7.github.io/axon/) for sessions, custom tools and MCP servers.
-
-## Deployment and usage
-
-Axon is a library, not a standalone service. Build and deploy the Go program that imports it. Call `Close()` when shutting down to terminate background commands and MCP clients.
-
-By default, session files live in `~/.local/share/agent/sessions/` (or under `XDG_DATA_HOME` when set). Set `AXON_DATA_DIR` to move local state.
-
-To check a change to this repository:
-
-```sh
-go build ./...
-go vet ./...
-go test -race ./...
-```
-
-The documentation site is built separately with `cd docs && npm ci && npm run build`.
-
-## Limitations
-
-Built-in file and shell tools run with the host process's permissions. Axon is not an operating-system sandbox; restrict the agent's working directory and credentials accordingly.
-
-`Step`, `Run` and `Reset` must not run concurrently on one agent. The default turn has no iteration limit; set `MaxIterations` for unattended jobs. Providers must support streaming chat completions.
-
-## License
-
-[MIT](LICENSE)
+[Documentation](https://atakang7.github.io/axon/) | [MIT license](LICENSE)
