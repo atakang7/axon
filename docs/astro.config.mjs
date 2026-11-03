@@ -13,29 +13,43 @@ export default defineConfig({
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [
 				{
-					label: 'How to',
+					label: 'Getting Started',
 					items: [
-						{ label: 'Run an agent', slug: 'how-to/first-agent' },
-						{ label: 'Add a tool', slug: 'how-to/add-tool' },
-						{ label: 'Connect an MCP server', slug: 'how-to/connect-mcp' },
+						{ label: 'What is Axon?', slug: 'start/overview' },
+						{ label: 'Quickstart', slug: 'start/quickstart' },
 					],
 				},
 				{
-					label: 'Reference',
+					label: 'Core Concepts',
 					items: [
-						{ label: 'Go API', slug: 'reference/api' },
-						{ label: 'Settings', slug: 'reference/settings' },
-						{ label: 'Built-in tools', slug: 'reference/tools' },
-						{ label: 'Events', slug: 'reference/events' },
+						{ label: 'The Turn Loop', slug: 'concepts/turn-loop' },
+						{ label: 'Context Management', slug: 'concepts/context' },
+						{ label: 'Sessions & Memory', slug: 'concepts/sessions' },
+						{ label: 'Events & UI', slug: 'concepts/events' },
 					],
 				},
 				{
-					label: 'Explanation',
+					label: 'Tools',
 					items: [
-						{ label: 'Architecture', slug: 'explanation/architecture' },
-						{ label: 'Context checkpoints', slug: 'explanation/context' },
-						{ label: 'Retry policy', slug: 'explanation/retries' },
-						{ label: 'Tool boundaries', slug: 'explanation/security' },
+						{ label: 'Built-in Tools', slug: 'tools/builtins' },
+						{ label: 'Custom Tools', slug: 'tools/custom' },
+						{ label: 'MCP Servers', slug: 'tools/mcp' },
+					],
+				},
+				{
+					label: 'Configuration',
+					items: [
+						{ label: 'Agent Setup', slug: 'configuration/setup' },
+						{ label: 'Runtime Policies', slug: 'configuration/yaml' },
+						{ label: 'File Locations', slug: 'configuration/locations' },
+					],
+				},
+				{
+					label: 'Under the Hood',
+					items: [
+						{ label: 'Architecture', slug: 'internals/architecture' },
+						{ label: 'Security Boundaries', slug: 'internals/security' },
+						{ label: 'Retry Logic', slug: 'internals/retries' },
 					],
 				},
 			],

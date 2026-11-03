@@ -40,15 +40,13 @@ const retryPolicy = `retry:
   on_status: [429, 500, 502, 503, 504]`;
 
 const tools = [
-  { name: 'read_file', mode: 'file · tree', desc: 'Read files with line numbers or inspect a directory tree.' },
-  { name: 'edit', mode: 'exact text', desc: 'Apply exact edits to files already read and check the result.' },
-  { name: 'write_file', mode: 'save', desc: 'Write a file and check its syntax or build where supported.' },
+  { name: 'read', mode: 'slice · full', desc: 'Read files or list directories. Binary-aware, byte-capped, line-addressable.' },
+  { name: 'write', mode: '4 edit modes', desc: 'Atomic tmp + rename writes. Every edit is recorded so agent.Undo() can restore it.' },
+  { name: 'exec', mode: 'fg · bg', desc: 'Run sh -lc commands with timeout control or detach long-lived processes into managed groups.' },
   { name: 'bash_output', mode: 'delta', desc: 'Poll only output produced since the previous read, with offset and file-identity tracking.' },
   { name: 'kill_shell', mode: 'lifecycle', desc: 'Terminate a whole process group: SIGTERM, grace period, then SIGKILL when needed.' },
-  { name: 'bash', mode: 'fg · bg', desc: 'Run commands in a persistent shell with foreground timeout or background logging.' },
-  { name: 'grep', mode: 'search', desc: 'Search workspace text with bounded output.' },
-  { name: 'glob', mode: 'paths', desc: 'Find files by name pattern.' },
-  { name: 'todo_write', mode: 'plan', desc: 'Keep the current task plan in the session.' },
+  { name: 'search', mode: 'literal · regex', desc: 'Ripgrep-backed workspace search with globs, case control, and bounded results.' },
+  { name: 'task', mode: 'plan state', desc: 'Register, advance, or replan a compact multi-step goal injected into context.' },
 ];
 
 const events = [
@@ -70,7 +68,7 @@ const events = [
         while your product stays in control of behavior and UX.
       </p>
       <div class="hero-actions">
-        <a class="button button-primary" href="/axon/how-to/first-agent/">Start building <span>→</span></a>
+        <a class="button button-primary" href="/axon/start/quickstart/">Start building <span>→</span></a>
         <a class="button button-secondary" href="https://github.com/atakang7/cortex">Explore Cortex <span>↗</span></a>
       </div>
       <div class="install-line" aria-label="Go install command">
@@ -110,7 +108,7 @@ const events = [
         </div>
         <div class="terminal-status">
           <span>z-ai/glm-5.2</span>
-          <span>checkpoint: main model</span>
+          <span>pruner: deepseek/v4-flash</span>
           <span>turn 2</span>
           <span>ctx 13,868</span>
         </div>
@@ -236,7 +234,7 @@ const events = [
     <div class="turn-layout">
       <div class="turn-timeline">
         <div class="turn-step active"><span>01</span><div><b>Append user input</b><small>Increment turn, persist message, save session.</small></div></div>
-        <div class="turn-step"><span>02</span><div><b>Project context</b><small>Use the current checkpointed view of the session log.</small></div></div>
+        <div class="turn-step"><span>02</span><div><b>Project context</b><small>Recency window + parked breadcrumbs determine what the model sees.</small></div></div>
         <div class="turn-step"><span>03</span><div><b>Call model</b><small>Stream content, reasoning, tool-argument fragments, and token usage.</small></div></div>
         <div class="turn-step"><span>04</span><div><b>Resolve tool calls</b><small>Match the tool name, parse args, execute, emit events.</small></div></div>
         <div class="turn-step"><span>05</span><div><b>Persist tool results</b><small>Append results to the same session history and continue.</small></div></div>
@@ -255,7 +253,7 @@ const events = [
     <div class="section-heading split-heading">
       <div>
         <span class="section-kicker">04 · BUILT-IN CAPABILITIES</span>
-        <h2>Nine built-in tools.</h2>
+        <h2>Seven tools. Replace any of them.</h2>
       </div>
       <p>Axon ships the mundane capabilities coding agents repeatedly need. Exclude a built-in to free its name, then supply your own implementation behind the same tool surface.</p>
     </div>
@@ -276,7 +274,7 @@ const events = [
         <p>Servers, watchers, network clients, and anything that may hang can leave the foreground turn without leaving Axon’s lifecycle.</p>
       </div>
       <div class="process-flow">
-        <div><code>bash</code><small>background command</small></div><b>→</b>
+        <div><code>exec</code><small>run_in_background=true</small></div><b>→</b>
         <div><code>bash_1</code><small>process group + logfile</small></div><b>→</b>
         <div><code>bash_output</code><small>read only new bytes</small></div><b>→</b>
         <div><code>kill_shell</code><small>TERM → grace → KILL</small></div>
@@ -320,16 +318,16 @@ const events = [
     </div>
 
     <div class="context-facts">
-      <div><strong>32k</strong><span>moderate checkpoint trigger in tokens</span></div>
-      <div><strong>48k</strong><span>low checkpoint trigger in tokens</span></div>
-      <div><strong>+12k</strong><span>default token growth before another checkpoint</span></div>
+      <div><strong>30</strong><span>default recent blocks kept in full</span></div>
+      <div><strong>10k</strong><span>default token floor before the pruner is worth firing</span></div>
+      <div><strong>+5k</strong><span>default growth before another pruning pass</span></div>
       <div><strong>3 modes</strong><span>low · moderate · extreme</span></div>
     </div>
 
     <div class="context-details">
-      <article><span>WORKING VIEW</span><h3>Context projection</h3><p>ContextMessages() builds the model input from the session log and any checkpoints.</p></article>
-      <article><span>CHECKPOINT DECISION</span><h3>Deciding model</h3><p>The main model chooses what stays. Config.Pruner can supply a different model.</p></article>
-      <article><span>SESSION RECORD</span><h3>Full history survives</h3><p>Checkpointing shortens the request projection. Session.Messages retains the original log.</p></article>
+      <article><span>FREE LINE OF DEFENSE</span><h3>Recency window</h3><p>Old blocks collapse to one-line breadcrumbs without a model call. Recent active blocks stay complete.</p></article>
+      <article><span>OPTIONAL SECOND LINE</span><h3>Model-assisted pruner</h3><p>A cheaper secondary model can park stale blocks. Protected messages and edited-file evidence stay available.</p></article>
+      <article><span>RECOVERABLE BY DESIGN</span><h3>Full history survives</h3><p>Parking changes the request projection, not the session record. The runtime can still reason from durable history.</p></article>
     </div>
   </section>
 
@@ -392,7 +390,7 @@ const events = [
         <div class="event-routes">
           <div><span>↳</span><b>Terminal UI</b><small>Bubble Tea bridge</small></div>
           <div><span>↳</span><b>Plain CLI</b><small>stdout / stderr</small></div>
-          <div><span>↳</span><b>Trace log</b><small>runtime event metadata</small></div>
+          <div><span>↳</span><b>Trace log</b><small>full runtime telemetry</small></div>
           <div><span>↳</span><b>Your app</b><small>websocket, metrics, audit</small></div>
         </div>
       </div>
@@ -421,7 +419,7 @@ const events = [
       <div class="security-tools">
         <span class="security-label">TOOL CAPABILITIES</span>
         <div class="capability"><b>Workspace</b><small>Dir · ResolvePath · RecordEdit</small></div>
-        <div class="capability"><b>Session</b><small>Workspace and task state</small></div>
+        <div class="capability"><b>Plan</b><small>Register · Advance · Replan</small></div>
         <div class="capability"><b>BackgroundShells</b><small>spawn · poll · kill</small></div>
         <div class="capability"><b>Limits</b><small>flat caps only</small></div>
       </div>
@@ -471,22 +469,22 @@ const events = [
         <h2>The runtime is the part you should be able to stop thinking about.</h2>
         <p>Wire one model and one prompt. Then add the pieces your product actually needs: events, a pruner, MCP, custom tools, or a UI.</p>
         <div class="start-actions">
-          <a class="button button-primary" href="/axon/how-to/first-agent/">Read the quickstart <span>→</span></a>
-          <a class="button button-secondary" href="/axon/explanation/architecture/">Read the architecture</a>
+          <a class="button button-primary" href="/axon/start/quickstart/">Read the quickstart <span>→</span></a>
+          <a class="button button-secondary" href="/axon/internals/architecture/">Read the architecture</a>
         </div>
       </div>
       <div class="start-links">
-        <a href="/axon/reference/api/"><span>01</span><div><b>Turn loop</b><small>Step, Run, Interrupt, runtime controls</small></div><i>→</i></a>
-        <a href="/axon/explanation/context/"><span>02</span><div><b>Context management</b><small>checkpoints, session history, token triggers</small></div><i>→</i></a>
-        <a href="/axon/reference/tools/"><span>03</span><div><b>Built-in tools</b><small>nine built-in tools and their inputs</small></div><i>→</i></a>
-        <a href="/axon/reference/events/"><span>04</span><div><b>Events</b><small>build terminal, web, logs, metrics</small></div><i>→</i></a>
-        <a href="/axon/reference/settings/"><span>05</span><div><b>Runtime policy</b><small>providers, retries, limits, context</small></div><i>→</i></a>
+        <a href="/axon/concepts/turn-loop/"><span>01</span><div><b>Turn loop</b><small>Step, Run, Interrupt, runtime controls</small></div><i>→</i></a>
+        <a href="/axon/concepts/context/"><span>02</span><div><b>Context management</b><small>window, breadcrumbs, parking, pruner</small></div><i>→</i></a>
+        <a href="/axon/tools/builtins/"><span>03</span><div><b>Built-in tools</b><small>all seven tools and exact parameters</small></div><i>→</i></a>
+        <a href="/axon/concepts/events/"><span>04</span><div><b>Events</b><small>build terminal, web, logs, metrics</small></div><i>→</i></a>
+        <a href="/axon/configuration/yaml/"><span>05</span><div><b>Runtime policy</b><small>providers, retries, limits, context</small></div><i>→</i></a>
       </div>
     </div>
   </section>
 
   <footer class="home-footer">
     <div class="footer-mark"><b>AXON</b><span>Go runtime for tool-using LLM agents.</span></div>
-    <div class="footer-links"><a href="https://github.com/atakang7/axon">GitHub</a><a href="https://github.com/atakang7/cortex">Cortex</a><a href="/axon/how-to/first-agent/">Docs</a></div>
+    <div class="footer-links"><a href="https://github.com/atakang7/axon">GitHub</a><a href="https://github.com/atakang7/cortex">Cortex</a><a href="/axon/start/quickstart/">Docs</a></div>
   </footer>
 </div>

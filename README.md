@@ -1,49 +1,130 @@
-# axon
+<p align="center">
+  <img src="docs/public/axon-hero.svg" alt="Axon" width="880">
+</p>
 
-Axon is a Go runtime for developers embedding tool-using language model agents in applications.
+<h3 align="center">A Go runtime for tool-using LLM agents</h3>
 
-```text
-+-------------+  Step  +-------+  Complete  +--------+  HTTP  +----------+
-| application | -----> | Agent | ---------> | Client | ----> | provider |
-+-------------+        +-------+            +--------+        +----------+
-                         |
-                   calls v
-                      +-------+
-                      | tools |
-                      +-------+
-```
+<p align="center">
+  Axon owns turns, tools, sessions, context pressure, retries, streaming, background processes, MCP, and events. Your application owns the product.
+</p>
 
-## Quick start
+<p align="center">
+  <a href="https://atakang7.github.io/axon/">Docs</a> ·
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#example">Example</a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
 
-Requires Go 1.26.2.
+---
 
-```sh
-mkdir axon-demo && cd axon-demo
-go mod init example.com/axon-demo
+## Quickstart
+
+```bash
 go get github.com/atakang7/axon/v2
 ```
 
-Save the [agent example](docs/src/content/docs/how-to/first-agent.md) as `main.go`, set `OPENROUTER_API_KEY` and run `go run .`.
+Axon uses `gopkg.in/yaml.v3` for configuration and `golang.org/x/sys/windows`
+for native Windows process jobs.
 
-## Layout
+On Windows, shell tools use Git for Windows Bash when installed, with a
+PowerShell fallback. Background commands and foreground cancellation use
+Windows Job Objects to terminate the whole process tree. Windows does not
+provide POSIX SIGTERM, so job termination is immediate. Linux and macOS
+continue to use POSIX process groups.
 
-| Path | What it is |
-| --- | --- |
-| [Go package](README.md) | `package axon`: turn loop, tools, sessions, clients and settings |
-| [docs/](docs/README.md) | Astro Starlight documentation site |
+Point it at any OpenAI-compatible endpoint and drive a turn:
 
-## Docs
+```go
+package main
 
-- [Run an agent](docs/src/content/docs/how-to/first-agent.md)
-- [Go API](docs/src/content/docs/reference/api.md)
-- [Built-in tools](docs/src/content/docs/reference/tools.md)
-- [Settings and defaults](docs/src/content/docs/reference/settings.md)
-- [Architecture](docs/src/content/docs/explanation/architecture.md)
-- [Contributing](CONTRIBUTING.md)
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
 
-## Limits
+    "github.com/atakang7/axon/v2"
+)
 
-- The shipped client requires an OpenAI-compatible streaming endpoint.
-- `Step`, `Run` and `Reset` are not safe for concurrent calls.
-- `MaxIterations=0` leaves a turn without a model-call limit.
-- Shell tools run with the application's operating system permissions.
+func main() {
+    model, err := axon.OpenAI(axon.ClientConfig{
+        Provider: axon.Provider{
+            BaseURL: "https://openrouter.ai/api",
+            Model:   "deepseek/deepseek-v3.2",
+            APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    agent, err := axon.New(axon.Config{
+        Model:        model,
+        SystemPrompt: "You are a careful coding agent.",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer agent.Close() // kills background shells, closes MCP
+
+    result, err := agent.Step(context.Background(), "List the files in this directory.")
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(result.Assistant)
+}
+```
+
+Set an API key and run:
+
+```bash
+export OPENROUTER_API_KEY=sk-...
+go run .
+```
+
+## Example
+
+The snippet above is the full agent loop — one client, one agent, one `Step`. Axon layers the rest on top when you need it:
+
+- **Tools** — file I/O, search, shell exec, background processes, all built in
+- **Sessions** — persistent, resumable; the deciding model checkpoints what stays in context, and an optional read-only explorer answers broad questions with verified quotes (see WORKING_CONTEXT.md)
+- **MCP** — connect external tool servers over stdio or HTTP
+- **Events** — a structured stream you can render into any UI
+
+---
+
+## Documentation
+
+Full documentation lives at **[atakang7.github.io/axon](https://atakang7.github.io/axon/)**:
+
+**Getting Started**
+- [What is Axon?](https://atakang7.github.io/axon/start/overview/) — What Axon is and why it exists.
+- [Quickstart](https://atakang7.github.io/axon/start/quickstart/) — Get an agent running in under a minute.
+
+**Core Concepts**
+- [The Turn Loop](https://atakang7.github.io/axon/concepts/turn-loop/) — How `Step()` drives the agent through model calls and tool execution.
+- [Context Management](https://atakang7.github.io/axon/concepts/context/) — How Axon keeps the model's context window bounded.
+- [Sessions & Memory](https://atakang7.github.io/axon/concepts/sessions/) — Persistence, listing, switching, and undo.
+- [Events & UI](https://atakang7.github.io/axon/concepts/events/) — The structured event stream for building UIs.
+
+**Tools**
+- [Built-in Tools](https://atakang7.github.io/axon/tools/builtins/) — The seven tools that ship with every agent.
+- [Custom Tools](https://atakang7.github.io/axon/tools/custom/) — How to add your own tools to an agent.
+- [MCP Servers](https://atakang7.github.io/axon/tools/mcp/) — Integrate Model Context Protocol tool servers.
+
+**Configuration**
+- [Agent Setup](https://atakang7.github.io/axon/configuration/setup/) — The two configuration surfaces and why they are separate.
+- [Runtime Policies](https://atakang7.github.io/axon/configuration/yaml/) — Every field in the configuration file.
+- [File Locations](https://atakang7.github.io/axon/configuration/locations/) — Where Axon reads and writes files.
+
+**Under the Hood**
+- [Architecture](https://atakang7.github.io/axon/internals/architecture/) — Internal design reference for contributors.
+- [Security Boundaries](https://atakang7.github.io/axon/internals/security/) — How Axon protects credentials and configuration from tools.
+- [Retry Logic](https://atakang7.github.io/axon/internals/retries/) — How Axon handles transient failures.
+
+
+---
+
+## License
+
+[MIT](LICENSE)
