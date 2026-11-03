@@ -1,16 +1,11 @@
 ---
 title: Quickstart
-description: Run the Go library in a new module.
+description: Get an agent running in under a minute.
 ---
 
 ## Install
 
-Use Go 1.26.2 or later.
-
-```sh
-mkdir axon-demo
-cd axon-demo
-go mod init example.com/axon-demo
+```bash
 go get github.com/atakang7/axon/v2
 ```
 
@@ -31,8 +26,8 @@ import (
 func main() {
     model, err := axon.OpenAI(axon.ClientConfig{
         Provider: axon.Provider{
-            BaseURL: os.Getenv("AXON_BASE_URL"),
-            Model:   os.Getenv("AXON_MODEL"),
+            BaseURL: "https://openrouter.ai/api",
+            Model:   "deepseek/deepseek-v3.2",
             APIKey:  os.Getenv("OPENROUTER_API_KEY"),
         },
     })
@@ -57,28 +52,17 @@ func main() {
 }
 ```
 
-Save the Go snippet as `main.go`, then set your endpoint credentials and run it:
-
-```sh
-export AXON_BASE_URL=https://openrouter.ai/api
-export AXON_MODEL=deepseek/deepseek-v3.2
-export OPENROUTER_API_KEY='your-key'
-go run .
-```
-
-`Config.Model` and `Config.SystemPrompt` are required. No config file is needed for this example.
+**Required:** `Config.Model` and `Config.SystemPrompt`. Everything else has defaults.
 
 ## Multi-turn loop
 
 ```go
-if err := agent.Run(ctx, func() (string, bool) {
+agent.Run(ctx, func() (string, bool) {
     fmt.Print("> ")
     var line string
     _, err := fmt.Scanln(&line)
     return line, err == nil
-}); err != nil {
-    log.Fatal(err)
-}
+})
 ```
 
 `Run` calls `Step` for each line until the input function returns `false` or `ctx` is cancelled. Interruptions (`ErrInterrupted`) are handled — the loop continues.
@@ -109,10 +93,30 @@ defer agent.Close()
 
 `Settings.NewClient(endpoint, model)` resolves the provider from config, applies model settings, and returns a working `Model` in one call.
 
+## With pruner
+
+```go
+prunerModel, _ := axon.OpenAI(axon.ClientConfig{
+    Provider: axon.Provider{
+        BaseURL: "https://openrouter.ai/api",
+        Model:   "qwen/qwen3.6-flash",    // cheap, fast
+        APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+    },
+})
+
+agent, _ := axon.New(axon.Config{
+    Model:        mainModel,
+    Pruner:       prunerModel,
+    SystemPrompt: "...",
+})
+```
+
+The pruner is a secondary model that parks stale context. Use a cheap flash-tier model. See [Context Management](/axon/concepts/context/) for details.
+
 ## With events
 
 ```go
-agent, err := axon.New(axon.Config{
+agent, _ := axon.New(axon.Config{
     Model:        model,
     SystemPrompt: "...",
     OnEvent: func(ctx context.Context, e axon.Event) {
@@ -126,14 +130,16 @@ agent, err := axon.New(axon.Config{
         }
     },
 })
-if err != nil {
-    log.Fatal(err)
-}
-defer agent.Close()
 ```
 
 See [Events](/axon/concepts/events/) for the full kind reference.
 
-## Operational notes
+## Best practices
 
-Call `Close()` when finished so background shells and MCP subprocesses exit. `Step`, `Run` and `Reset` are not safe to call concurrently on a single agent; `Interrupt()` can be called from another goroutine. Unattended agents should set `MaxIterations`.
+1. **Always `defer agent.Close()`** — kills background shells, closes MCP subprocesses.
+2. **Use `Settings.NewClient()`** when loading from config.
+3. **Keep system prompts instructional** — Axon appends tool schemas automatically.
+4. **Enable the pruner for long sessions** — context grows unbounded without it.
+5. **Background all network commands** — if it *might* hang, set `run_in_background: true`.
+6. **Concurrency:** `Step`/`Run`/`Reset` are not concurrent-safe. `Interrupt()` is the only goroutine-safe method.
+7. **Tool schema is always required** — even for no-arg tools use `map[string]any{"type": "object"}`.

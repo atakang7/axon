@@ -7,9 +7,3 @@ agent/axon
 .env
 .env.*
 !.env.example
-
-# Local build and test outputs
-/axon
-/axon.exe
-*.test
-coverage.out

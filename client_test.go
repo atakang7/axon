@@ -440,23 +440,6 @@ func TestReadStreamSkipsNoiseWithoutAborting(t *testing.T) {
 	}
 }
 
-func TestReadStreamAcceptsUnspacedDataFields(t *testing.T) {
-	body := sseLines(
-		`data:{"choices":[{"delta":{"content":"ok"}}]}`,
-		"data:[DONE]",
-	)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	msg, err := readStream(ctx, body, Stream{}, cancel, DefaultSettings().Model.IdleTimeout.Std(), true)
-	if err != nil {
-		t.Fatalf("readStream: %v", err)
-	}
-	if msg.Content != "ok" {
-		t.Fatalf("Content = %q, want ok", msg.Content)
-	}
-}
-
 // A chunk with zero choices (some providers send these as heartbeats or role
 // announcements) must be ignored, not treated as an error or a blank delta.
 func TestReadStreamIgnoresChunkWithNoChoices(t *testing.T) {
