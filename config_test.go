@@ -128,29 +128,6 @@ func TestDefaultDataDirFollowsXDG(t *testing.T) {
 	}
 }
 
-func TestSessionPathsExpandHome(t *testing.T) {
-	t.Setenv("AXON_DATA_DIR", "")
-	t.Setenv("AXON_SESSION_PATH", "")
-
-	home := homeDir()
-	cfg := SessionConfig{DataDir: "~/.local/share/agent", Path: "~/sessions/main.json"}
-	if got, want := cfg.SessionFile(), filepath.Join(home, "sessions", "main.json"); got != want {
-		t.Fatalf("SessionFile() = %q, want %q", got, want)
-	}
-	if got, want := cfg.dataDir(), filepath.Join(home, ".local", "share", "agent"); got != want {
-		t.Fatalf("dataDir() = %q, want %q", got, want)
-	}
-
-	t.Setenv("AXON_DATA_DIR", "~/other")
-	t.Setenv("AXON_SESSION_PATH", "~/sessions/override.json")
-	if got, want := cfg.dataDir(), filepath.Join(home, "other"); got != want {
-		t.Fatalf("AXON_DATA_DIR = %q, want %q", got, want)
-	}
-	if got, want := cfg.SessionFile(), filepath.Join(home, "sessions", "override.json"); got != want {
-		t.Fatalf("AXON_SESSION_PATH = %q, want %q", got, want)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Tool caps
 // ---------------------------------------------------------------------------

@@ -390,10 +390,7 @@ func readStream(ctx context.Context, body io.Reader, stream Stream, cancel conte
 // consume applies one SSE line. Anything unparseable is skipped: a malformed
 // keep-alive or comment must not abort an otherwise healthy stream.
 func (r *reply) consume(text string, stream Stream) {
-	if !strings.HasPrefix(text, "data:") {
-		return
-	}
-	data := strings.TrimPrefix(strings.TrimPrefix(text, "data:"), " ")
+	data := strings.TrimPrefix(text, "data: ")
 	if data == "[DONE]" {
 		r.complete = true
 		return
