@@ -1,57 +1,25 @@
 ---
 title: Security Boundaries
-description: How Axon protects credentials and configuration from tools.
+description: Tool privileges and credential handling.
 ---
 
-## The Boundary
+Built-in tools receive `Limits` rather than provider settings, but run with the host process's permissions.
 
-Tools execute code and modify state on behalf of the LLM. To limit blast radius, Axon enforces strict isolation between tools and the agent's core infrastructure.
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                         Agent                                    │
-│                                                                  │
-│  ┌────────────────────┐  ┌─────────────────────────────────┐    │
-│  │    Settings         │  │       Tools                     │    │
-│  │  (has API keys,     │  │  (receive only Limits —         │    │
-│  │   provider config)  │  │   cannot reach API keys,        │    │
-│  │                     │  │   provider config, or session)  │    │
-│  └────────────────────┘  └─────────────────────────────────┘    │
-│           │                          │                           │
-│           │ Limits = Settings.       │ Workspace interface       │
-│           │   Tools.limits()         │   Dir()                   │
-│           │                          │   ResolvePath()           │
-│           ▼                          │   RecordEdit()            │
-│  ┌────────────────────┐              │                           │
-│  │     Limits          │◄─────────────┘                          │
-│  │  (flat caps only,   │                                         │
-│  │   no credentials)   │  Plan interface (task tool)             │
-│  └────────────────────┘    RegisterTask()                        │
-│                            AdvanceTask()                         │
-│                            ReplanTask()                          │
-└──────────────────────────────────────────────────────────────────┘
+```text
++----------+  limits  +---------------+  commands  +------+
+| Settings | -------> | built-in Tool | ----------> | host |
++----------+          +---------------+             +------+
 ```
 
-## What Tools Cannot Do
+| Boundary | Behavior |
+|----------|----------|
+| `Config.Settings` | Stores provider credentials and runtime policy |
+| `Limits` | Holds caps passed to built-in tools |
+| `Tool.Fn` | Can access anything captured by a custom closure |
+| `bash` | Runs host commands; not a sandbox |
+| `MCPServer.Env` | Adds values to the subprocess environment |
 
-A tool's function signature is `func(ctx context.Context, args json.RawMessage) (string, error)`. Because of this signature, tools **cannot**:
+## Limits
 
-1. **Access API keys** — The `Settings` struct is completely inaccessible to tools.
-2. **Read conversation history** — Tools cannot see past interactions or the session log.
-3. **Modify configuration** — Tools cannot change the model, system prompt, or pruner settings.
-4. **Call other tools directly** — Tools have no reference to the agent's tool registry.
-
-## What Tools Receive
-
-Tools are constructed by `setup.go` before being passed to the agent. During construction, built-in tools are given exactly what they need:
-
-1. **Limits:** A flat struct containing caps (e.g., `ReadMaxBytes`, `ExecTimeout`). No credentials.
-2. **Workspace:** An interface for resolving paths safely and recording edits for `agent.Undo()`.
-3. **Plan:** An interface specifically for the `task` tool to interact with the current plan.
-4. **BackgroundShells:** A registry for the `exec`, `bash_output`, and `kill_shell` tools to manage long-running processes.
-
-Custom tools follow the same rule: you provide the closure, and the tool can only access what you explicitly capture in that closure.
-
-## MCP Subprocesses
-
-MCP servers run as separate OS processes. They receive their environment variables (`MCPServer.Env`) at startup, but they cannot read the agent's environment or access the agent's memory space.
+- Do not pass secrets to an agent whose shell tools can read the process environment.
+- Run untrusted workloads inside your own sandbox with restricted file and network access.
