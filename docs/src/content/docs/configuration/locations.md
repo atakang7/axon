@@ -1,47 +1,22 @@
 ---
 title: File Locations
-description: Where Axon reads and writes files.
+description: Configuration and session paths.
 ---
 
-## Config files
+Axon reads YAML and credentials only when the application calls `Load` or `LoadFrom`.
 
-| File | Default | Override |
-|------|---------|----------|
-| `axon.yaml` | `~/.config/axon/axon.yaml` | `$AXON_CONFIG` |
-| `.env` | `~/.config/axon/.env` | `$AXON_ENV` |
+| Var | Default | What |
+|-----|---------|------|
+| `AXON_CONFIG` | `~/.config/axon/axon.yaml` | Settings file |
+| `AXON_ENV` | `~/.config/axon/.env` | Credential file |
+| `AXON_DATA_DIR` | `~/.local/share/agent` | Session and background logs |
+| `AXON_SESSION_PATH` | per working directory | Session JSON override |
+| `XDG_CONFIG_HOME` | `~/.config` | Base config directory |
+| `XDG_DATA_HOME` | `~/.local/share` | Base data directory |
 
-Both follow XDG: `$XDG_CONFIG_HOME/axon/` when set.
+The default session path is `{data_dir}/sessions/{basename}-{12-hex-digit-hash}.json`.
 
-## State files
+## Limits
 
-| File | Default | Override |
-|------|---------|----------|
-| Session data | `~/.local/share/agent/` | `$AXON_DATA_DIR` or `session.data_dir` in yaml |
-| Session file | derived from cwd hash | `$AXON_SESSION_PATH` or `session.path` in yaml |
-| Background logs | `{data_dir}/bg/{pid}/` | follows data_dir |
-
-## Session file derivation
-
-Each working directory gets its own session file: `{data_dir}/sessions/{basename}-{hash}.json`.
-
-The basename makes the file recognizable. The hash (SHA-256 of the absolute path, 6 bytes) keeps two same-named directories apart.
-
-```
-~/.local/share/agent/sessions/
-├── myproject-a3f2c1d8e9f0.json
-├── backend-7b2e4d1c5a3f.json
-└── ...
-```
-
-## Environment variables
-
-Only four survive. All say *where something is*, never *what it contains*.
-
-| Variable | Purpose |
-|----------|---------|
-| `AXON_CONFIG` | Path to `axon.yaml` |
-| `AXON_ENV` | Path to `.env` |
-| `AXON_DATA_DIR` | Where state is written |
-| `AXON_SESSION_PATH` | Pin one session file |
-
-`AXON_DATA_DIR` and `AXON_SESSION_PATH` override the config rather than defaulting under it — their purpose is to redirect state without editing a file (e.g., a container mounting a volume, or a test that must not touch the developer's real session).
+- `AXON_SESSION_PATH` and `AXON_DATA_DIR` override YAML paths.
+- Keep the credentials file out of Git.

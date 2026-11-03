@@ -1,77 +1,27 @@
 ---
 title: Turn Loop
-description: How Step() drives the agent through model calls and tool execution.
+description: One user turn, including model and tool calls.
 ---
 
-## Step
+`agent.Step(ctx, input)` runs model requests until the agent finishes or returns an error.
 
-`agent.Step(ctx, "user input")` is the core operation. It submits one user message and drives the loop until the model emits text with no further tool calls.
-
-```
-Step(ctx, "user input")
-│
-├─ session.Turn++
-├─ session.Append(user message)
-├─ session.Save()
-│
-└─ loop {
-     │
-     ├─ Pruner check (see Context Management)
-     │
-     ├─ model.Complete(Request{
-     │     Messages: session.ContextMessages(window),
-     │     Tools:    toolSpecs(all tools),
-     │     Stream:   { Token, Reasoning, ToolArgs, Usage }
-     │   })
-     │
-     ├─ if no tool calls → return StepResult
-     │
-     └─ for each tool call:
-          ├─ find tool by name
-          ├─ call Fn(ctx, args)
-          ├─ append result to session
-          └─ continue loop
-   }
+```text
++-------------+  Step()  +-------+  Complete()  +-------+
+| application | -------> | Agent | ----------> | Model |
++-------------+          +-------+             +-------+
 ```
 
-## StepResult
+The `Agent` executes returned `Tool.Fn` calls, saves results to `Session` and repeats.
 
-```go
-type StepResult struct {
-    Assistant string      // final assistant text
-    ToolCalls []ToolCall   // all tool calls made this turn
-    Turn      int          // turn counter
-}
-```
+| Method | Result |
+|--------|--------|
+| `Step(ctx, text)` | `StepResult` with assistant text, tool calls and turn number |
+| `Run(ctx, input)` | Repeated `Step` calls until input ends |
+| `Interrupt()` | Cancels the active turn; safe from another goroutine |
+| `Reset()` | Resets the session and background processes |
+| `Undo()` | Restores the last tracked file edit |
 
-## Run
+## Limits
 
-`agent.Run(ctx, inputFunc)` calls `Step` for each line the input function returns.
-
-```go
-type InputFunc func() (string, bool)
-```
-
-Returns `(line, true)` per turn, `("", false)` when exhausted. Interruptions are handled — the loop continues after `ErrInterrupted`.
-
-## Interrupt
-
-```go
-ok := agent.Interrupt() // cancel in-flight model call
-```
-
-Goroutine-safe. Returns `false` if no turn is active. The interrupted `Step` returns `ErrInterrupted`.
-
-## Runtime controls
-
-```go
-agent.SetModel(newModel)                    // swap model mid-session
-agent.SetPrunerModel(cheapModel)            // swap or enable pruner
-agent.SetPruneMode(axon.PruneExtreme)       // change pruning aggressiveness
-
-agent.Reset()                               // wipe session, kill bg shells, rebuild tools
-path, ok := agent.Undo()                    // revert last file edit atomically
-dir, err := agent.Cd("/new/path")           // change working directory
-```
-
-All of these must not be called while `Step` is running.
+- `Step`, `Run` and `Reset` must not run concurrently on one agent.
+- `MaxIterations` defaults to no limit; set it for batch use.
